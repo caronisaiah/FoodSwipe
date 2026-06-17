@@ -40,5 +40,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# claude code — keep shared project settings, ignore personal/local ones
+# claude code — local/machine-specific settings (not shared)
+.claude/settings.json
 .claude/settings.local.json
