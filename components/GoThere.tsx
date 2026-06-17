@@ -1,13 +1,15 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import type { Video } from "@/lib/types";
 import { useManualVideos } from "@/lib/storage";
 import { videoSourceHref } from "@/lib/video";
 
 /**
  * The profile's "Go there" actions. Client-side so the "Reviews" link reflects
- * the SAME merged (seed + manually-attached) set the carousel shows, and uses
- * VideoEmbed's own `videoSourceHref` so it never disagrees about what's linkable.
+ * the SAME merged set the carousel shows — seed + shared (persisted backend) +
+ * local (localStorage) — using `videoSourceHref` so it never disagrees about
+ * what's linkable. The shared fetch is best-effort (falls back to seed/local).
  */
 export default function GoThere({
   restaurantId,
@@ -19,7 +21,25 @@ export default function GoThere({
   directionsUrl: string;
 }) {
   const { videos: manualVideos } = useManualVideos(restaurantId);
-  const reviewsHref = [...seedVideos, ...manualVideos]
+  const [shared, setShared] = useState<Video[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/restaurants/${restaurantId}/videos`);
+        const data = (await res.json()) as { videos?: Video[] };
+        if (!cancelled) setShared(Array.isArray(data.videos) ? data.videos : []);
+      } catch {
+        if (!cancelled) setShared([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [restaurantId]);
+
+  const reviewsHref = [...seedVideos, ...shared, ...manualVideos]
     .map(videoSourceHref)
     .find((h): h is string => !!h);
 

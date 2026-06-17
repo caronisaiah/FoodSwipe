@@ -159,12 +159,23 @@ export function enforceVideoInvariants(video: Video): Video {
 
   const isRealSource = sourceType === "real-post" && sourceUrl !== undefined;
 
+  // A non-linkable clip must not carry a "real post" credit (a stale/tampered
+  // row could say "Original post by @chef"). Neutralize attribution when the
+  // status is blocked. (source-link-only / embeddable keep their honest credit,
+  // including legit creator-profile sources, which are intentionally !isRealSource.)
+  const attributionText = blocked
+    ? legalDisplayStatus === "unavailable"
+      ? `${video.platform} source unavailable`
+      : `Illustrative ${video.platform} preview`
+    : video.attributionText;
+
   return {
     ...video,
     embedUrl: finalEmbed,
     sourceUrl,
     legalDisplayStatus,
     isRealSource,
+    attributionText,
   };
 }
 

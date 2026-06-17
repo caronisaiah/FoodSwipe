@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import type {
   LegalDisplayStatus,
@@ -10,15 +10,15 @@ import type {
   VideoSourceType,
 } from "@/lib/types";
 import { RESTAURANTS, getRestaurantById } from "@/lib/seed/restaurants";
-import { useManualVideos } from "@/lib/storage";
 import { normalizeVideo } from "@/lib/video";
 import VideoEmbed from "@/components/VideoEmbed";
 
 /*
   Internal demo tool — NOT a public feature.
-  Lets a tester attach a video reference to a seeded restaurant to see how real
-  sources would render. Stored in localStorage only (no server db in v1), so
-  added clips appear on that restaurant's profile during this browser session.
+  v1.2: attached videos are saved to a SHARED Postgres backend (via the admin
+  API, protected by FOODSWIPE_ADMIN_SECRET) so deployed testers see the same
+  real-media profiles. The YouTube resolve flow from v1.1 is unchanged. Restaurants
+  still live in seed data; only video attachments are persisted.
 */
 
 const PLATFORMS: Platform[] = ["TikTok", "Instagram", "YouTube", "Web"];
@@ -97,18 +97,64 @@ function toVideo(f: FormState, id: string): Video {
   };
 }
 
+type Msg = { type: "ok" | "err"; text: string } | null;
+
 export default function AdminVideos() {
   const [form, setForm] = useState<FormState>(INITIAL);
-  const { entries, addManualVideo, removeManualVideo, clearManualVideos } =
-    useManualVideos();
+
+  // Session-only admin secret (NOT persisted) — sent as a header to the API.
+  const [adminSecret, setAdminSecret] = useState("");
 
   // v1.1 YouTube resolve flow
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [resolving, setResolving] = useState(false);
   const [resolveError, setResolveError] = useState<string | null>(null);
 
+  // v1.2 backend attach + persisted list
+  const [attaching, setAttaching] = useState(false);
+  const [attachMsg, setAttachMsg] = useState<Msg>(null);
+  const [persisted, setPersisted] = useState<Video[]>([]);
+  const [persistError, setPersistError] = useState<string | null>(null);
+
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
+
+  // Load a restaurant's shared/persisted videos (event/effect-driven; setState
+  // only happens after the await, never synchronously inside an effect body).
+  const reloadPersisted = useCallback(async (restaurantId: string) => {
+    try {
+      const res = await fetch(`/api/restaurants/${restaurantId}/videos`);
+      const data = (await res.json()) as { videos?: Video[]; error?: string };
+      setPersisted(Array.isArray(data.videos) ? data.videos : []);
+      setPersistError(data.error ?? null);
+    } catch {
+      setPersisted([]);
+      setPersistError("Could not load saved videos.");
+    }
+  }, []);
+
+  // Load on restaurant change. Inlined (not the callback) so setState only runs
+  // in the async continuation, never synchronously in the effect body.
+  useEffect(() => {
+    const id = form.restaurantId;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/restaurants/${id}/videos`);
+        const data = (await res.json()) as { videos?: Video[]; error?: string };
+        if (cancelled) return;
+        setPersisted(Array.isArray(data.videos) ? data.videos : []);
+        setPersistError(data.error ?? null);
+      } catch {
+        if (cancelled) return;
+        setPersisted([]);
+        setPersistError("Could not load saved videos.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [form.restaurantId]);
 
   async function resolveYouTube() {
     if (!youtubeUrl.trim() || resolving) return;
@@ -120,8 +166,6 @@ export default function AdminVideos() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url: youtubeUrl,
-          // pass any creator/caption the tester already typed; the server
-          // falls back to honest defaults when these are blank
           creatorHandle: form.creatorHandle,
           creatorDisplayName: form.creatorDisplayName,
           caption: form.caption,
@@ -133,7 +177,6 @@ export default function AdminVideos() {
         return;
       }
       const v = data.video;
-      // Populate the form with the normalized result; preview + save reuse it.
       setForm((f) => ({
         ...f,
         platform: v.platform,
@@ -153,29 +196,81 @@ export default function AdminVideos() {
     }
   }
 
-  const canAdd = form.caption.trim().length > 0 && form.creatorHandle.trim().length > 0;
-  // Preview the ENFORCED result so the tester can't be misled by an inconsistent
-  // combo (e.g. embeddable + bad URL downgrades; placeholder can't be linkable).
-  const previewRaw = toVideo(form, "admin-preview");
-  const preview = normalizeVideo(previewRaw) ?? previewRaw;
+  const canAttach =
+    form.caption.trim().length > 0 && form.creatorHandle.trim().length > 0;
 
-  function add() {
-    if (!canAdd) return;
-    // crypto.randomUUID avoids id/key collisions on same-ms or double-fire adds.
-    const id = `manual-${crypto.randomUUID()}`;
-    const cleaned = normalizeVideo(toVideo(form, id));
-    if (!cleaned) return;
-    addManualVideo({ restaurantId: form.restaurantId, video: cleaned });
-    // Keep the restaurant/platform selection; clear the per-clip text fields.
-    setForm((f) => ({
-      ...f,
-      sourceUrl: "",
-      embedUrl: "",
-      creatorHandle: "",
-      creatorDisplayName: "",
-      caption: "",
-    }));
+  // Preview the ENFORCED result so the tester can't be misled by a bad combo.
+  const preview = normalizeVideo(toVideo(form, "admin-preview")) ?? toVideo(form, "admin-preview");
+
+  async function attach() {
+    if (!canAttach || attaching) return;
+    if (!adminSecret.trim()) {
+      setAttachMsg({ type: "err", text: "Enter the admin secret first." });
+      return;
+    }
+    const cleaned = normalizeVideo(toVideo(form, "pending"));
+    if (!cleaned) {
+      setAttachMsg({ type: "err", text: "Video data is invalid." });
+      return;
+    }
+    setAttaching(true);
+    setAttachMsg(null);
+    try {
+      const res = await fetch("/api/admin/videos", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-foodswipe-admin-secret": adminSecret,
+        },
+        body: JSON.stringify({ restaurantId: form.restaurantId, video: cleaned }),
+      });
+      const data = (await res.json()) as { video?: Video; error?: string };
+      if (!res.ok || !data.video) {
+        setAttachMsg({
+          type: "err",
+          text: data.error ?? `Attach failed (${res.status}).`,
+        });
+        return;
+      }
+      setAttachMsg({ type: "ok", text: "Saved to the shared library." });
+      setForm((f) => ({
+        ...f,
+        sourceUrl: "",
+        embedUrl: "",
+        creatorHandle: "",
+        creatorDisplayName: "",
+        caption: "",
+      }));
+      await reloadPersisted(form.restaurantId);
+    } catch {
+      setAttachMsg({ type: "err", text: "Network error — could not reach the server." });
+    } finally {
+      setAttaching(false);
+    }
   }
+
+  async function removePersisted(id: string) {
+    if (!adminSecret.trim()) {
+      setAttachMsg({ type: "err", text: "Enter the admin secret to remove." });
+      return;
+    }
+    try {
+      const res = await fetch(`/api/admin/videos/${id}`, {
+        method: "DELETE",
+        headers: { "x-foodswipe-admin-secret": adminSecret },
+      });
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as { error?: string };
+        setAttachMsg({ type: "err", text: d.error ?? "Remove failed." });
+        return;
+      }
+      await reloadPersisted(form.restaurantId);
+    } catch {
+      setAttachMsg({ type: "err", text: "Network error removing video." });
+    }
+  }
+
+  const restaurantName = getRestaurantById(form.restaurantId)?.name ?? "restaurant";
 
   return (
     <div className="mx-auto min-h-dvh w-full max-w-md px-4 pb-16 pt-[max(env(safe-area-inset-top),1rem)]">
@@ -183,9 +278,9 @@ export default function AdminVideos() {
       <div className="mb-5 rounded-2xl border border-pink/40 bg-pink/10 p-3 text-sm text-cream">
         <p className="font-display font-bold text-pink">⚠️ Internal demo tool</p>
         <p className="mt-1 text-xs text-cream/80">
-          Not a public feature. Saves to this browser only (localStorage) — no
-          server, no database. Added clips show on that restaurant&apos;s profile
-          this session. Don&apos;t paste anything you wouldn&apos;t legally embed.
+          Not a public feature. Attached videos save to a shared backend (requires
+          the admin secret) so all testers see them. Don&apos;t paste anything you
+          wouldn&apos;t legally embed.
         </p>
       </div>
 
@@ -195,6 +290,18 @@ export default function AdminVideos() {
           ← Back to app
         </Link>
       </header>
+
+      {/* Admin secret (session only) */}
+      <div className="mb-5">
+        <Field label="Admin secret" hint="session only — not stored">
+          <Input
+            value={adminSecret}
+            onChange={setAdminSecret}
+            placeholder="FOODSWIPE_ADMIN_SECRET"
+            type="password"
+          />
+        </Field>
+      </div>
 
       {/* YouTube resolver (v1.1) */}
       <div className="mb-5 rounded-2xl bg-surface p-3 ring-1 ring-inset ring-white/10">
@@ -328,72 +435,69 @@ export default function AdminVideos() {
 
         <button
           type="button"
-          onClick={add}
-          aria-disabled={!canAdd}
-          aria-describedby="add-video-help"
+          onClick={attach}
+          aria-disabled={!canAttach || attaching}
+          aria-describedby="attach-help"
           className={`w-full rounded-full bg-brand-gradient py-3 font-bold text-ink shadow-lg shadow-coral/20 transition active:scale-[0.98] ${
-            canAdd ? "" : "opacity-40"
+            canAttach && !attaching ? "" : "opacity-40"
           }`}
         >
-          Attach to {getRestaurantById(form.restaurantId)?.name ?? "restaurant"}
+          {attaching ? "Saving…" : `Attach to ${restaurantName}`}
         </button>
-        <p id="add-video-help" className="text-center text-xs text-haze">
-          {canAdd
-            ? "Saves to this browser only (localStorage)."
+        <p id="attach-help" className="text-center text-xs text-haze">
+          {canAttach
+            ? "Saves to the shared backend (needs the admin secret above)."
             : "Creator handle and caption are required."}
         </p>
+        {attachMsg && (
+          <p
+            role="status"
+            className={`text-center text-xs ${attachMsg.type === "ok" ? "text-mint" : "text-coral"}`}
+          >
+            {attachMsg.text}
+          </p>
+        )}
       </div>
 
-      {/* Added clips */}
+      {/* Persisted (shared) videos for the selected restaurant */}
       <div className="mt-8">
-        <div className="mb-2 flex items-center justify-between">
-          <h2 className="font-display text-lg font-semibold text-cream">
-            Added this session ({entries.length})
-          </h2>
-          {entries.length > 0 && (
-            <button
-              type="button"
-              onClick={clearManualVideos}
-              className="text-xs text-haze underline-offset-2 hover:text-coral hover:underline"
-            >
-              Clear all
-            </button>
-          )}
-        </div>
-
-        {entries.length === 0 ? (
+        <h2 className="mb-2 font-display text-lg font-semibold text-cream">
+          Saved for {restaurantName} ({persisted.length})
+        </h2>
+        {persistError && (
+          <p className="mb-2 text-xs text-coral">{persistError}</p>
+        )}
+        {persisted.length === 0 ? (
           <p className="text-sm text-haze">
-            Nothing added yet. Attached clips appear here and on the restaurant
-            profile.
+            No shared videos yet. Attached clips appear here and on the restaurant
+            profile for every tester.
           </p>
         ) : (
           <ul className="space-y-2">
-            {entries.map((e) => (
+            {persisted.map((v) => (
               <li
-                key={e.video.id}
+                key={v.id}
                 className="flex items-center gap-3 rounded-2xl bg-surface p-3 ring-1 ring-inset ring-white/5"
               >
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-semibold text-cream">
-                    {getRestaurantById(e.restaurantId)?.name ?? e.restaurantId}
+                    {v.creatorDisplayName ?? v.creatorHandle}
                     <span className="ml-2 font-normal text-haze">
-                      {e.video.platform} · {e.video.legalDisplayStatus}
+                      {v.platform} · {v.legalDisplayStatus}
                     </span>
                   </p>
-                  <p className="truncate text-xs text-haze">
-                    {e.video.creatorHandle} — {e.video.caption}
-                  </p>
+                  <p className="truncate text-xs text-haze">{v.caption}</p>
                 </div>
                 <Link
-                  href={`/restaurants/${e.restaurantId}`}
+                  href={`/restaurants/${form.restaurantId}`}
                   className="shrink-0 rounded-full bg-white/10 px-2.5 py-1 text-xs font-semibold text-cream ring-1 ring-inset ring-white/15 hover:bg-white/20"
                 >
                   View
                 </Link>
                 <button
                   type="button"
-                  onClick={() => removeManualVideo(e.video.id)}
-                  aria-label="Remove"
+                  onClick={() => removePersisted(v.id)}
+                  aria-label={`Hide ${v.caption}`}
                   className="shrink-0 rounded-full p-1.5 text-haze hover:bg-white/10 hover:text-coral"
                 >
                   ✕
@@ -433,13 +537,16 @@ function Input({
   value,
   onChange,
   placeholder,
+  type = "text",
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
+  type?: string;
 }) {
   return (
     <input
+      type={type}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
