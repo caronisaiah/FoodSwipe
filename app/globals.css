@@ -1,26 +1,125 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/*
+  FoodSwipe design system — "dark immersive, video-first".
+  Tailwind v4 CSS-first config: tokens declared here generate utilities
+  (e.g. --color-coral -> bg-coral / text-coral, --font-display -> font-display).
+*/
+@theme {
+  /* Surfaces — deep, near-black charcoals so video + accents pop */
+  --color-ink: #08080a;
+  --color-ink-2: #0e0e12;
+  --color-surface: #161620;
+  --color-surface-2: #1f1f2b;
+  --color-line: #2a2a37;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  /* Accents — appetizing warm coral->pink, lime for "fresh/save" energy */
+  --color-coral: #ff5a5f;
+  --color-flame: #ff7a45;
+  --color-pink: #ff2e7e;
+  --color-lime: #c8ff4d;
+  --color-mint: #4ee59a;
+
+  /* Text */
+  --color-cream: #f6f5f3;
+  --color-haze: #a6a6b3;
+
   --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-space-grotesk);
+
+  /* Motion */
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-ink);
+  color: var(--color-cream);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* prevent the rubber-band/scroll behind full-screen swipe cards */
+  overscroll-behavior-y: none;
+}
+
+/* High-contrast keyboard focus everywhere — don't rely on color-only rings. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--color-coral);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Hide scrollbars where we want a clean app surface, keep scrollability */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Reusable gradient text for headings / brand moments */
+.text-gradient {
+  background-image: linear-gradient(
+    100deg,
+    var(--color-flame),
+    var(--color-coral) 45%,
+    var(--color-pink)
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.bg-brand-gradient {
+  background-image: linear-gradient(
+    100deg,
+    var(--color-flame),
+    var(--color-coral) 50%,
+    var(--color-pink)
+  );
+}
+
+/* Ambient glow used behind the phone frame on desktop */
+.ambient-glow::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(60% 50% at 20% 0%, rgba(255, 122, 69, 0.18), transparent 60%),
+    radial-gradient(50% 50% at 90% 20%, rgba(255, 46, 126, 0.16), transparent 55%),
+    radial-gradient(60% 60% at 50% 100%, rgba(200, 255, 77, 0.08), transparent 60%);
+  pointer-events: none;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface) 25%,
+    var(--color-surface-2) 50%,
+    var(--color-surface) 75%
+  );
+  background-size: 800px 100%;
+  animation: shimmer 1.6s linear infinite;
 }
