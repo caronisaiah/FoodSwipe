@@ -92,6 +92,42 @@ dominate, and adds no fake precision.
 
 ---
 
+## 🔌 v1.1 — real YouTube embeds (backend ingestion slice)
+
+The smallest real-media ingestion path: paste a YouTube URL into the internal
+`/admin/videos` tool → it's validated + normalized **server-side** → saved (still
+localStorage) → rendered as an actual `youtube-nocookie` embed on the profile.
+
+- **Resolver** ([`lib/youtube.ts`](lib/youtube.ts)) — pure: extracts the 11-char
+  video id from `watch?v=`, `youtu.be/ID`, `/shorts/ID`, `/embed/ID` (extra query
+  params are fine), builds the canonical `watch?v=ID` + the embed
+  `youtube-nocookie.com/embed/ID`, then runs it through `normalizeVideo` →
+  `real-post` · `embeddable` · `isRealSource`.
+- **Route** ([`app/api/resolve/youtube/route.ts`](app/api/resolve/youtube/route.ts))
+  — `POST {url, creatorHandle?, creatorDisplayName?, caption?}` → `{ video }` or
+  `{ error }`. Validates server-side; client input is never trusted.
+- **No YouTube Data API key** — we don't fetch the title/creator, so we never
+  invent them: unknown creator shows **"Unknown creator"**, caption defaults to
+  **"YouTube food-review video"**. "View original" links to the canonical watch URL.
+- Only allowlisted YouTube hosts can iframe; admin-added videos remain
+  **localStorage-only**; nothing is scraped, downloaded, cropped, or rehosted.
+
+**Manual test checklist** (paste into `/admin/videos` → Resolve):
+
+| Input | Expected |
+| --- | --- |
+| `https://www.youtube.com/watch?v=M7lc1UVf-VE` | resolves → inline embed |
+| `https://youtu.be/M7lc1UVf-VE` | resolves → inline embed |
+| `https://www.youtube.com/shorts/M7lc1UVf-VE` | resolves → inline embed |
+| `https://www.youtube.com/embed/M7lc1UVf-VE` | resolves → inline embed |
+| `https://example.com/watch?v=M7lc1UVf-VE` | error — non-YouTube host |
+| `not a url` | error — malformed URL |
+| `https://www.youtube.com/watch?v=short` | error — invalid video id |
+
+Then **Attach** and open the restaurant profile — the clip plays inline.
+
+---
+
 ## 🧱 Tech stack
 
 - **Next.js 16** (App Router) + **React 19**

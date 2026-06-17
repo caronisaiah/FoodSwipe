@@ -102,8 +102,56 @@ export default function AdminVideos() {
   const { entries, addManualVideo, removeManualVideo, clearManualVideos } =
     useManualVideos();
 
+  // v1.1 YouTube resolve flow
+  const [youtubeUrl, setYoutubeUrl] = useState("");
+  const [resolving, setResolving] = useState(false);
+  const [resolveError, setResolveError] = useState<string | null>(null);
+
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
+
+  async function resolveYouTube() {
+    if (!youtubeUrl.trim() || resolving) return;
+    setResolving(true);
+    setResolveError(null);
+    try {
+      const res = await fetch("/api/resolve/youtube", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: youtubeUrl,
+          // pass any creator/caption the tester already typed; the server
+          // falls back to honest defaults when these are blank
+          creatorHandle: form.creatorHandle,
+          creatorDisplayName: form.creatorDisplayName,
+          caption: form.caption,
+        }),
+      });
+      const data: { video?: Video; error?: string } = await res.json();
+      if (!res.ok || !data.video) {
+        setResolveError(data.error ?? "Could not resolve that URL.");
+        return;
+      }
+      const v = data.video;
+      // Populate the form with the normalized result; preview + save reuse it.
+      setForm((f) => ({
+        ...f,
+        platform: v.platform,
+        sourceUrl: v.sourceUrl ?? "",
+        embedUrl: v.embedUrl ?? "",
+        sourceType: v.sourceType,
+        legalDisplayStatus: v.legalDisplayStatus,
+        matchConfidence: v.matchConfidence,
+        creatorHandle: v.creatorHandle,
+        creatorDisplayName: v.creatorDisplayName ?? "",
+        caption: v.caption,
+      }));
+    } catch {
+      setResolveError("Network error — could not reach the resolver.");
+    } finally {
+      setResolving(false);
+    }
+  }
 
   const canAdd = form.caption.trim().length > 0 && form.creatorHandle.trim().length > 0;
   // Preview the ENFORCED result so the tester can't be misled by an inconsistent
@@ -147,6 +195,42 @@ export default function AdminVideos() {
           ← Back to app
         </Link>
       </header>
+
+      {/* YouTube resolver (v1.1) */}
+      <div className="mb-5 rounded-2xl bg-surface p-3 ring-1 ring-inset ring-white/10">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-haze">
+          Resolve from YouTube
+        </p>
+        <div className="flex gap-2">
+          <input
+            value={youtubeUrl}
+            onChange={(e) => setYoutubeUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") resolveYouTube();
+            }}
+            placeholder="https://www.youtube.com/watch?v=…"
+            aria-label="YouTube URL"
+            className="min-w-0 flex-1 rounded-xl bg-ink-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze/60 focus:ring-coral/60"
+          />
+          <button
+            type="button"
+            onClick={resolveYouTube}
+            disabled={resolving || youtubeUrl.trim() === ""}
+            className="shrink-0 rounded-xl bg-white/10 px-3 py-2 text-sm font-semibold text-cream ring-1 ring-inset ring-white/15 transition hover:bg-white/20 disabled:opacity-40"
+          >
+            {resolving ? "Resolving…" : "Resolve"}
+          </button>
+        </div>
+        {resolveError && (
+          <p role="alert" className="mt-2 text-xs text-coral">
+            {resolveError}
+          </p>
+        )}
+        <p className="mt-2 text-[10px] leading-relaxed text-haze">
+          Paste a YouTube watch / Shorts / embed / youtu.be link. We build a
+          privacy-enhanced youtube-nocookie embed — no API key, nothing downloaded.
+        </p>
+      </div>
 
       {/* Live preview */}
       <div className="mb-5">
