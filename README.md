@@ -13,6 +13,10 @@ to public sources with full platform and creator attribution.
 > Shorts video through `/admin/videos` and displayed it on restaurant profiles
 > across desktop and phone. This proves shared backend video persistence works
 > outside `localStorage`.
+>
+> **v1.3 proof.** Deployed resolver successfully enriched a YouTube Shorts URL
+> using `YOUTUBE_API_KEY`, prefilled title/channel/thumbnail/publishedAt, attached
+> it to a restaurant profile, and displayed the enriched video in production.
 
 **Current status:** working prototype on seeded Washington, DC data. Video
 attachments persist to a shared Postgres table (Neon); restaurants remain seeded
@@ -26,8 +30,8 @@ in the repository. Mobile-first, dark, video-forward design.
   drag, Skip/Save controls, and arrow-key support. Cards are ordered by the
   preferences captured at onboarding.
 - **Video-first profiles** — each restaurant reads like a creator profile: a hero
-  clip, a scrollable review carousel, dish highlights, "best for" occasions, and
-  social-proof metrics.
+  clip, up to three same-size review videos, dish highlights, "best for"
+  occasions, and social-proof metrics.
 - **Transparent ranking** — a readable weighted score (craving, vibe, budget,
   dietary, distance, freshness, and video coverage). Every card states why it
   matched. No black-box scoring and no invented precision.
@@ -302,6 +306,14 @@ Architecture seams kept stable so the product can grow:
 - Restaurants are hand-authored seed data (18 spots), not ingested.
 - Seed clips are honest placeholders or real discovery-search links; genuine
   embeds are added through the admin tool.
+- **A profile shows at most 3 videos**, in a vertical same-size stack, ordered
+  deterministically (real-post → embeddable → enriched → newer → original). This
+  is a **display rule, not a database/admin limit** — the backend may store more
+  active videos per restaurant (for future ranking/moderation/replacement); the
+  public profile renders only the top 3.
+- **YouTube thumbnails are video-preview assets only** — never used as a
+  restaurant hero/profile image. Google Places restaurant imagery is
+  intentionally deferred.
 - Video attachments are shared across devices via Postgres; legacy `localStorage`
   clips remain as a labeled fallback. Both appear on profiles, not in the feed
   deck (which keeps a stable hero).

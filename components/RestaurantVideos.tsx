@@ -3,19 +3,71 @@
 import { useEffect, useState } from "react";
 import type { Video } from "@/lib/types";
 import { useManualVideos } from "@/lib/storage";
-import { videoHasSource } from "@/lib/video";
+import { videoCanEmbed, videoSourceHref } from "@/lib/video";
 import VideoEmbed from "@/components/VideoEmbed";
 
+/** Public profiles show at most this many videos (a DISPLAY rule, not a DB/admin
+ * limit — the backend may store more for future ranking/moderation). */
+const MAX_PROFILE_VIDEOS = 3;
+
 type Origin = "seed" | "shared" | "local";
+interface Item {
+  video: Video;
+  origin: Origin;
+  index: number;
+}
+
+// Higher tier = better source affordance (embeddable > source-link > none).
+function sourceTier(v: Video): number {
+  if (videoCanEmbed(v)) return 2;
+  if (videoSourceHref(v)) return 1;
+  return 0;
+}
+
+// How "enriched" a clip is (official metadata present).
+function richness(v: Video): number {
+  return (
+    (v.thumbnailUrl ? 1 : 0) +
+    (v.publishedAt ? 1 : 0) +
+    (v.creatorDisplayName ? 1 : 0)
+  );
+}
+
+function publishedTime(v: Video): number {
+  if (!v.publishedAt) return -Infinity;
+  const t = Date.parse(v.publishedAt);
+  return Number.isNaN(t) ? -Infinity : t;
+}
 
 /**
- * The profile's "Watch the reviews" carousel. Merges three sources, all read-only
- * here and never rehosted:
- *  - seed   : the hand-authored clips shipped in the repo
- *  - shared : videos attached via /admin/videos, persisted in the backend (v1.2)
- *  - local  : legacy per-browser localStorage demo clips (fallback, labeled)
- * The shared fetch is best-effort: if the API/DB is unavailable the seed (and
- * any local) clips still render — the profile never breaks.
+ * Deterministic, transparent display order (NOT the feed ranking engine):
+ *   real-post → embeddable/source-link → richer metadata → newer → original order.
+ */
+function compareForDisplay(a: Item, b: Item): number {
+  const realA = a.video.sourceType === "real-post" ? 1 : 0;
+  const realB = b.video.sourceType === "real-post" ? 1 : 0;
+  if (realA !== realB) return realB - realA;
+
+  const tierA = sourceTier(a.video);
+  const tierB = sourceTier(b.video);
+  if (tierA !== tierB) return tierB - tierA;
+
+  const richA = richness(a.video);
+  const richB = richness(b.video);
+  if (richA !== richB) return richB - richA;
+
+  const timeA = publishedTime(a.video);
+  const timeB = publishedTime(b.video);
+  if (timeA !== timeB) return timeB - timeA;
+
+  return a.index - b.index; // preserve original order as the final tie-breaker
+}
+
+/**
+ * The profile's video section. Merges three read-only sources — seed (shipped),
+ * shared (backend, v1.2), and local (legacy localStorage) — then shows only the
+ * top `MAX_PROFILE_VIDEOS` in a clean vertical, same-size stack. Nothing is ever
+ * downloaded or rehosted; each clip renders through the legal-safe `VideoEmbed`.
  */
 export default function RestaurantVideos({
   restaurantId,
@@ -45,12 +97,25 @@ export default function RestaurantVideos({
     };
   }, [restaurantId]);
 
-  const items: { video: Video; origin: Origin }[] = [
+  const merged: Item[] = [
     ...seedVideos.map((video) => ({ video, origin: "seed" as const })),
     ...shared.map((video) => ({ video, origin: "shared" as const })),
     ...localVideos.map((video) => ({ video, origin: "local" as const })),
-  ];
-  const linkable = items.filter((it) => videoHasSource(it.video)).length;
+  ].map((it, index) => ({ ...it, index }));
+
+  const display = [...merged].sort(compareForDisplay).slice(0, MAX_PROFILE_VIDEOS);
+
+  // Empty/fallback state — no "Watch the reviews" wall when there's nothing.
+  if (display.length === 0) {
+    return (
+      <section>
+        <h2 className="font-display text-lg font-semibold text-cream">Reviews</h2>
+        <p className="mt-1 text-sm text-haze">No food videos yet for this spot.</p>
+      </section>
+    );
+  }
+
+  const moreThanShown = merged.length > display.length;
 
   return (
     <section>
@@ -59,22 +124,18 @@ export default function RestaurantVideos({
           Watch the reviews
         </h2>
         <p className="text-xs text-haze">
-          {items.length} {items.length === 1 ? "source" : "sources"}
-          {linkable > 0 ? ` · ${linkable} with a working link` : ""} · previews
-          only, never rehosted
+          {display.length} {display.length === 1 ? "clip" : "clips"}
+          {moreThanShown ? ` (top ${MAX_PROFILE_VIDEOS} of ${merged.length})` : ""} ·
+          previews only, never rehosted
         </p>
       </div>
 
-      <div
-        role="group"
-        aria-label="Review clips — scroll horizontally"
-        tabIndex={0}
-        className="no-scrollbar -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1"
-      >
-        {items.map(({ video, origin }, i) => (
+      {/* Vertical, same-size stack (mobile-first), capped at MAX_PROFILE_VIDEOS. */}
+      <div className="flex flex-col gap-3">
+        {display.map(({ video, origin }, i) => (
           <div
             key={`${origin}-${video.id}`}
-            className="relative aspect-[9/16] w-44 shrink-0 snap-start overflow-hidden rounded-2xl ring-1 ring-white/10"
+            className="relative aspect-video w-full overflow-hidden rounded-2xl ring-1 ring-white/10"
           >
             <VideoEmbed
               video={video}
