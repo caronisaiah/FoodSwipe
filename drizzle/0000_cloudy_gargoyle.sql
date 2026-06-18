@@ -1,0 +1,21 @@
+CREATE TABLE "restaurant_videos" (
+	"id" text PRIMARY KEY NOT NULL,
+	"restaurant_id" text NOT NULL,
+	"platform" text NOT NULL,
+	"source_url" text,
+	"embed_url" text,
+	"creator_handle" text NOT NULL,
+	"creator_display_name" text,
+	"caption" text NOT NULL,
+	"thumbnail_url" text,
+	"attribution_text" text NOT NULL,
+	"published_at" text,
+	"discovered_at" text,
+	"is_real_source" boolean DEFAULT false NOT NULL,
+	"source_type" text NOT NULL,
+	"match_confidence" text NOT NULL,
+	"legal_display_status" text NOT NULL,
+	"status" text DEFAULT 'active' NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);

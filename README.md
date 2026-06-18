@@ -176,6 +176,25 @@ npm run db:generate    # emit SQL migration files into ./drizzle
 npm run db:studio      # browse the table
 ```
 
+### ⚠️ Testing note — corporate TLS interception / managed laptops
+
+On a managed/corporate laptop the network may **intercept TLS**. Node uses its
+own CA bundle (not the OS trust store), so the Neon HTTP driver's `fetch` — and
+`drizzle-kit push` (WebSocket) — can fail with `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`
+/ `fetch failed`, even when `curl` and the browser work. This is an environment
+trust issue, **not** an app bug.
+
+- **Do NOT** disable TLS verification (never set `NODE_TLS_REJECT_UNAUTHORIZED=0`).
+- Only if IT provides an **approved corporate root CA**, point Node at it:
+  `NODE_EXTRA_CA_CERTS=C:\path\to\corp-ca.pem` for the Node process (the server
+  and any `db:*` step). This trusts the same CA the OS already does — it does
+  **not** weaken verification.
+- Otherwise, prove the Neon round-trip from a **deployment** (e.g. Vercel) or a
+  **non-intercepted network** — the HTTP driver connects normally there.
+- `npm run db:push` needs a WebSocket / clean network; if it's blocked, run
+  `npm run db:generate` and apply `./drizzle/*.sql` where the DB is reachable
+  (or let the deploy environment run it).
+
 ### v1.2 manual QA checklist
 
 1. Without `DATABASE_URL`: app still builds/runs; profiles show seed videos; the
