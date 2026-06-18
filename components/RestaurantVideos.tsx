@@ -135,7 +135,7 @@ export default function RestaurantVideos({
         {display.map(({ video, origin }, i) => (
           <div
             key={`${origin}-${video.id}`}
-            className="relative aspect-video w-full overflow-hidden rounded-2xl ring-1 ring-white/10"
+            className="relative aspect-[4/5] w-full overflow-hidden rounded-2xl ring-1 ring-white/10"
           >
             <VideoEmbed
               video={video}
