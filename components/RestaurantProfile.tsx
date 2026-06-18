@@ -1,9 +1,8 @@
 import Link from "next/link";
 import type { Restaurant } from "@/lib/types";
-import { priceLabel } from "@/lib/options";
 import { cuisineEmoji } from "@/lib/emoji";
 import TagPill from "@/components/TagPill";
-import VideoEmbed from "@/components/VideoEmbed";
+import RestaurantHero from "@/components/RestaurantHero";
 import RestaurantVideos from "@/components/RestaurantVideos";
 import GoThere from "@/components/GoThere";
 import MetricBadge, { formatCount } from "@/components/MetricBadge";
@@ -36,22 +35,18 @@ export default function RestaurantProfile({ restaurant: r }: { restaurant: Resta
         <SaveButton restaurantId={r.id} />
       </div>
 
-      {/* Hero clip */}
-      <div className="relative mx-4 mt-1 aspect-[4/5] overflow-hidden rounded-[28px] ring-1 ring-white/10">
-        <VideoEmbed video={r.videos[0]} posterEmoji={poster} fill />
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-4 pt-16">
-          <h1 className="font-display text-3xl font-bold leading-tight text-white drop-shadow">
-            {r.name}
-          </h1>
-          <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-white/85">
-            <span>📍 {r.neighborhood}</span>
-            <span aria-hidden>·</span>
-            <span>{r.distanceMiles.toFixed(1)} mi away</span>
-            <span aria-hidden>·</span>
-            <span className="font-semibold text-mint">{priceLabel(r.priceLevel)}</span>
-          </p>
-        </div>
-      </div>
+      {/* Hero — real Google Place Photo when available, else the placeholder/video.
+          A Place Photo replaces the video as the hero, which also removes the old
+          "videos[0] shown as both hero and first review clip" duplication. */}
+      <RestaurantHero
+        restaurantId={r.id}
+        fallbackVideo={r.videos[0]}
+        posterEmoji={poster}
+        name={r.name}
+        neighborhood={r.neighborhood}
+        distanceMiles={r.distanceMiles}
+        priceLevel={r.priceLevel}
+      />
 
       <div className="space-y-7 px-4 pt-6">
         {/* Tags */}

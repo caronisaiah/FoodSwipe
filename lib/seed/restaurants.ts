@@ -191,6 +191,8 @@ export const RESTAURANTS: Restaurant[] = [
     name: "Le Diplomate",
     neighborhood: "Logan Circle",
     address: "1601 14th St NW, Washington, DC",
+    // Verified via Google Maps + Waze (single location). v1.5 photo proof.
+    googlePlaceId: "ChIJgYIki-m3t4kRZImvuN_pp9Q",
     lat: 38.911,
     lng: -77.032,
     distanceMiles: 1.3,
@@ -319,6 +321,8 @@ export const RESTAURANTS: Restaurant[] = [
     name: "Ben's Chili Bowl",
     neighborhood: "U Street",
     address: "1213 U St NW, Washington, DC",
+    // Verified via Waze (single location). v1.5 photo proof.
+    googlePlaceId: "ChIJM_l-a-a3t4kRQa_lW1A7W8k",
     lat: 38.917,
     lng: -77.029,
     distanceMiles: 1.5,
@@ -479,6 +483,8 @@ export const RESTAURANTS: Restaurant[] = [
     name: "Sushi Taro",
     neighborhood: "Dupont Circle",
     address: "1503 17th St NW, Washington, DC",
+    // Verified via Google Maps (single location). v1.5 photo proof.
+    googlePlaceId: "ChIJxSAeOsG3t4kR0DMcgNu5kVQ",
     lat: 38.911,
     lng: -77.038,
     distanceMiles: 1.2,

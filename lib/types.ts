@@ -152,6 +152,14 @@ export interface Restaurant {
   name: string;
   neighborhood: string;
   address: string;
+  /**
+   * Optional Google Place ID — the ONLY Google datum we ever store long-term
+   * (Google's policy explicitly permits caching Place IDs indefinitely). When
+   * set, the profile hero shows a real Google Place Photo, fetched fresh
+   * server-side and never downloaded/stored/rehosted. Absent -> the hero falls
+   * back to the existing video-style placeholder. See `lib/places.ts`.
+   */
+  googlePlaceId?: string;
   /** Placeholder coordinates — not used for real distance yet. */
   lat: number;
   lng: number;
@@ -176,6 +184,19 @@ export interface Restaurant {
 
   /** At least one source clip — the hero. Non-empty tuple so `videos[0]` is safe. */
   videos: [Video, ...Video[]];
+}
+
+/**
+ * A restaurant identity photo resolved from Google Places (New) at request time.
+ * Ephemeral by contract: `photoUri` is a short-lived Google URL that is NEVER
+ * downloaded, stored, or rehosted (see `lib/places.ts`). `attributions` MUST be
+ * displayed wherever the photo is shown (Google Places policy).
+ */
+export interface PlacePhoto {
+  /** Ephemeral googleusercontent image URL (contains no API key). Do NOT persist. */
+  photoUri: string;
+  /** Required photo author attribution(s): a display name and an optional link. */
+  attributions: { displayName: string; uri?: string }[];
 }
 
 /** User-selected discovery preferences captured during onboarding. */

@@ -129,6 +129,45 @@ restaurants stay in [`lib/seed/restaurants.ts`](lib/seed/restaurants.ts).
   fetch is best-effort. The database client is lazy, so the app builds and runs
   without a database (the persisted list is simply empty and writes return `503`).
 
+### Restaurant photos (Google Places)
+
+A restaurant's profile hero should be the restaurant itself — food, storefront,
+or interior — not a video thumbnail. When a seeded restaurant carries a
+`googlePlaceId` and `GOOGLE_MAPS_API_KEY` is set, the hero shows a real **Google
+Place Photo**; otherwise it falls back to the existing video-style placeholder. A
+YouTube thumbnail is never promoted to a hero.
+
+This is a deliberately small, legal-safe proof wired on **3 restaurants** (Le
+Diplomate, Ben's Chili Bowl, Sushi Taro):
+
+- **Store only the Place ID.** `googlePlaceId` is the *only* Google datum kept
+  long-term, in [`lib/seed/restaurants.ts`](lib/seed/restaurants.ts) — Google's
+  policy explicitly permits caching Place IDs indefinitely. Restaurants stay in
+  the seed; nothing moves into the database.
+- **Fetch everything else fresh.** [`lib/places.ts`](lib/places.ts) (server-only)
+  makes two minimal, field-masked calls per render: Place Details (New) for the
+  first photo's `name` + `authorAttributions` (mask
+  `photos.name,photos.authorAttributions`), then Place Photo (New) media with
+  `skipHttpRedirect=true` for an ephemeral `photoUri`. The read route is
+  [`/api/restaurants/[id]/photo`](app/api/restaurants/[id]/photo/route.ts);
+  [`RestaurantHero`](components/RestaurantHero.tsx) consumes it client-side.
+- **Never rehost.** The browser loads Google's ephemeral `photoUri` (a
+  googleusercontent URL with no API key) **directly**. We never download, store,
+  crop, proxy, or rehost the bytes — `next/image` is intentionally *not* used
+  here because it would proxy the image through `/_next/image`.
+- **Always attribute.** Any `authorAttributions` Google returns are displayed on
+  the photo, as the policy requires.
+- **Caching decision: `no-store`.** Google forbids caching the photo `name` (it
+  can expire), and we never persist `photoUri` or attribution, so the route sends
+  `Cache-Control: no-store` and every request resolves fresh. This is the
+  conservative, policy-correct choice; a future version could add a short,
+  policy-compliant edge cache if call volume warrants it.
+- **Degrades cleanly.** Missing key, missing/stale Place ID, place not found, no
+  photos, or any quota/network error all resolve to the placeholder hero — the
+  profile never breaks. Place IDs were verified from public map URLs and should
+  be re-confirmed with Google's Place ID Finder; Google also recommends
+  refreshing Place IDs older than 12 months.
+
 ### Ranking
 
 [`lib/recommendations.ts`](lib/recommendations.ts) is a pure, readable weighted
@@ -184,6 +223,7 @@ Environment variables go in `.env` (which is gitignored). Use `.env` rather than
 DATABASE_URL="postgresql://USER:PASSWORD@HOST/DB?sslmode=require"   # Neon connection string (shared persistence)
 FOODSWIPE_ADMIN_SECRET="a-long-random-string"                       # gate for admin writes
 YOUTUBE_API_KEY="..."                                              # optional — YouTube metadata enrichment
+GOOGLE_MAPS_API_KEY="..."                                          # optional — Google Place Photos on profiles
 ```
 
 `DATABASE_URL` and `FOODSWIPE_ADMIN_SECRET` enable shared persistence (the app
@@ -192,6 +232,15 @@ YouTube URL prefills the real title, channel, thumbnail, and date; without it,
 resolving still works with generic metadata. Get a key from the Google Cloud
 console — create a project, enable the **YouTube Data API v3**, and create an API
 key. The key is read server-side only and never logged.
+
+`GOOGLE_MAPS_API_KEY` is optional too: with it, restaurants that carry a
+`googlePlaceId` show a real Google Place Photo as their profile hero; without it
+(or on any failure) the hero falls back to the existing placeholder. Get a key
+from the Google Cloud console — enable the **Places API (New)** and create an API
+key. Like the others it is **server-only**: it is read only in `lib/places.ts`,
+sent to Google via the `X-Goog-Api-Key` header, never prefixed with
+`NEXT_PUBLIC_`, never exposed to the client, and never logged. See
+[Restaurant photos](#restaurant-photos-google-places) for the legal-safe flow.
 
 Create the table once. The simplest path:
 
@@ -254,6 +303,7 @@ app/
   admin/videos/page.tsx      "/admin/videos" (internal, noindex)
   api/resolve/youtube/route.ts          POST  resolve a YouTube URL
   api/restaurants/[id]/videos/route.ts  GET   active persisted videos
+  api/restaurants/[id]/photo/route.ts   GET   fresh Google Place Photo (or null)
   api/admin/videos/route.ts             POST  attach a video (admin secret)
   api/admin/videos/[id]/route.ts        DELETE soft-delete (admin secret)
 
@@ -263,6 +313,7 @@ components/
   SwipeDeck.tsx              Gesture, animation, controls, empty state
   RestaurantCard.tsx         The swipe card
   RestaurantProfile.tsx      Full profile (server-rendered)
+  RestaurantHero.tsx         Profile hero: Google Place Photo or placeholder
   RestaurantVideos.tsx       Review carousel: seed + shared + local
   GoThere.tsx                Profile "Go there" links
   SavedClient.tsx            Saved list
@@ -273,9 +324,10 @@ components/
   AppShell.tsx / BottomNav.tsx    Mobile frame and navigation
 
 lib/
-  types.ts                   Domain types (Restaurant, Video, ...)
+  types.ts                   Domain types (Restaurant, Video, PlacePhoto, ...)
   video.ts                   Legal-safe core: normalize, enforce, embed allowlist
   youtube.ts                 YouTube URL resolver
+  places.ts                  Server-only Google Place Photo resolver
   adminAuth.ts               Admin-secret check for write routes
   options.ts                 Controlled vocab and labels for onboarding
   recommendations.ts         Ranking
@@ -312,8 +364,13 @@ Architecture seams kept stable so the product can grow:
   active videos per restaurant (for future ranking/moderation/replacement); the
   public profile renders only the top 3.
 - **YouTube thumbnails are video-preview assets only** — never used as a
-  restaurant hero/profile image. Google Places restaurant imagery is
-  intentionally deferred.
+  restaurant hero/profile image.
+- **Profile heroes can be real Google Place Photos**, currently proven on 3
+  restaurants with a `googlePlaceId` (see [Restaurant photos](#restaurant-photos-google-places)).
+  Only the Place ID is stored; photos are fetched fresh, attributed, never
+  rehosted, and absent a key/photo the hero falls back to the placeholder. Feed
+  cards do not use Google photos; Google ratings, reviews, and maps are out of
+  scope.
 - Video attachments are shared across devices via Postgres; legacy `localStorage`
   clips remain as a labeled fallback. Both appear on profiles, not in the feed
   deck (which keeps a stable hero).
