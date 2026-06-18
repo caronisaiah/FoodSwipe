@@ -188,11 +188,12 @@ function Credit({ video }: { video: Video }) {
   return (
     <p className="truncate text-sm font-semibold text-white drop-shadow">
       {primary}
-      {video.creatorDisplayName && (
-        <span className="ml-1 font-normal text-white/70">
-          {video.creatorHandle}
-        </span>
-      )}
+      {video.creatorDisplayName &&
+        video.creatorHandle !== video.creatorDisplayName && (
+          <span className="ml-1 font-normal text-white/70">
+            {video.creatorHandle}
+          </span>
+        )}
     </p>
   );
 }

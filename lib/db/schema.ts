@@ -17,9 +17,10 @@ export const restaurantVideos = pgTable("restaurant_videos", {
   creatorHandle: text("creator_handle").notNull(),
   creatorDisplayName: text("creator_display_name"),
   caption: text("caption").notNull(),
-  // thumbnailUrl + publishedAt are round-tripped through the Video type but not
-  // yet populated by any writer (no YouTube Data API in v1.x) — reserved for a
-  // later ingestion pass; today they persist as NULL.
+  // thumbnailUrl + publishedAt are populated when optional YouTube Data API
+  // enrichment succeeds (YOUTUBE_API_KEY set); otherwise they persist as NULL.
+  // The thumbnail is stored by reference only (never downloaded/rehosted) and
+  // is re-validated as an https URL via normalizeVideo on read.
   thumbnailUrl: text("thumbnail_url"),
   attributionText: text("attribution_text").notNull(),
   publishedAt: text("published_at"),

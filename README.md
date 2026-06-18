@@ -91,9 +91,17 @@ Rules in force everywhere:
 then builds the canonical watch URL plus a privacy-enhanced
 `youtube-nocookie.com/embed/ID` and runs it through the normalizer. The work
 happens server-side in [`/api/resolve/youtube`](app/api/resolve/youtube/route.ts);
-client input is never trusted. No YouTube Data API key is used, so titles and
-creators are never invented — an unknown creator is shown as "Unknown creator"
-and the caption defaults to a generic label.
+client input is never trusted.
+
+**Optional metadata enrichment.** If `YOUTUBE_API_KEY` is set, the resolver also
+calls the official Data API (`videos.list`) for that exact id and prefills the
+title, channel, thumbnail, and publish date. It is best-effort: a missing key or
+a failed request falls back to generic values, and the response reports a
+`metadataStatus` (`enriched` / `missing-api-key` / `not-found` / `failed`).
+Without a key, titles and creators are never invented — an unknown creator shows
+as "Unknown creator" and the caption defaults to a generic label. This is
+single-URL enrichment only: no search, no discovery, no scraping, and no video is
+downloaded or rehosted (the thumbnail is referenced by URL, not stored).
 
 YouTube **Shorts** are the priority format, matching the product's short-form
 focus; standard watch URLs are supported as a fallback.
@@ -165,14 +173,21 @@ features require one.
 
 ## Database and environment
 
-Two environment variables enable shared persistence. Put them in `.env` (which is
-gitignored). Use `.env` rather than `.env.local`: Next.js reads both, but the
-drizzle-kit CLI only auto-loads `.env`.
+Environment variables go in `.env` (which is gitignored). Use `.env` rather than
+`.env.local`: Next.js reads both, but the drizzle-kit CLI only auto-loads `.env`.
 
 ```bash
-DATABASE_URL="postgresql://USER:PASSWORD@HOST/DB?sslmode=require"   # Neon connection string
+DATABASE_URL="postgresql://USER:PASSWORD@HOST/DB?sslmode=require"   # Neon connection string (shared persistence)
 FOODSWIPE_ADMIN_SECRET="a-long-random-string"                       # gate for admin writes
+YOUTUBE_API_KEY="..."                                              # optional — YouTube metadata enrichment
 ```
+
+`DATABASE_URL` and `FOODSWIPE_ADMIN_SECRET` enable shared persistence (the app
+still runs without them). `YOUTUBE_API_KEY` is optional: with it, resolving a
+YouTube URL prefills the real title, channel, thumbnail, and date; without it,
+resolving still works with generic metadata. Get a key from the Google Cloud
+console — create a project, enable the **YouTube Data API v3**, and create an API
+key. The key is read server-side only and never logged.
 
 Create the table once. The simplest path:
 
@@ -301,8 +316,8 @@ Architecture seams kept stable so the product can grow:
 
 ## Roadmap
 
-1. **Metadata enrichment** — use the YouTube Data API to populate real titles,
-   creators, thumbnails, and publish dates for attached videos.
+1. **Bulk metadata back-fill** — per-resolve YouTube enrichment ships today; next,
+   back-fill titles, creators, thumbnails, and dates for already-attached videos.
 2. **Broader ingestion** — official oEmbed and discovery for additional platforms,
    with a moderation and quality pass.
 3. **Accounts and synced saves** — light authentication so saved restaurants and

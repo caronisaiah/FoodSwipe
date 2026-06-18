@@ -1,14 +1,20 @@
-import { buildYouTubeVideo } from "@/lib/youtube";
+import {
+  buildYouTubeVideo,
+  fetchYouTubeMetadata,
+  resolveYouTubeUrl,
+} from "@/lib/youtube";
 
 /*
-  POST /api/resolve/youtube  (internal, v1.1)
-  -------------------------------------------
+  POST /api/resolve/youtube  (internal)
+  -------------------------------------
   Body: { url: string, creatorHandle?, creatorDisplayName?, caption? }
-  Returns: { video } (a normalized, legal-safe, embeddable Video) or { error }.
+  Returns: { video, metadataStatus } or { error }.
 
-  Server-side so client input is never trusted: the URL is validated + the
-  Video is built and run through lib/video's normalizeVideo here. We only ever
-  produce a youtube-nocookie embed URL, store nothing, and use no API key.
+  Server-side so client input is never trusted. The URL is validated and the
+  Video is normalized via lib/video. If YOUTUBE_API_KEY is set we additionally
+  fetch official metadata (videos.list) to prefill title/channel/thumbnail/date
+  — best-effort, with `metadataStatus` reporting the outcome. We only ever
+  produce a youtube-nocookie embed URL; no scraping, downloading, or rehosting.
 */
 
 export async function POST(request: Request): Promise<Response> {
@@ -25,20 +31,31 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "Missing 'url'." }, { status: 400 });
   }
 
-  const video = buildYouTubeVideo({
-    url,
-    creatorHandle: typeof b.creatorHandle === "string" ? b.creatorHandle : undefined,
-    creatorDisplayName:
-      typeof b.creatorDisplayName === "string" ? b.creatorDisplayName : undefined,
-    caption: typeof b.caption === "string" ? b.caption : undefined,
-  });
-
-  if (!video) {
+  const resolved = resolveYouTubeUrl(url);
+  if (!resolved) {
     return Response.json(
       { error: "Not a valid YouTube video URL (expected watch / youtu.be / shorts / embed)." },
       { status: 422 },
     );
   }
 
-  return Response.json({ video });
+  // Optional enrichment — falls back gracefully (missing key / not-found / failed).
+  const { status: metadataStatus, metadata } = await fetchYouTubeMetadata(
+    resolved.videoId,
+  );
+
+  const video = buildYouTubeVideo({
+    url,
+    creatorHandle: typeof b.creatorHandle === "string" ? b.creatorHandle : undefined,
+    creatorDisplayName:
+      typeof b.creatorDisplayName === "string" ? b.creatorDisplayName : undefined,
+    caption: typeof b.caption === "string" ? b.caption : undefined,
+    metadata,
+  });
+
+  if (!video) {
+    return Response.json({ error: "Could not build video." }, { status: 422 });
+  }
+
+  return Response.json({ video, metadataStatus });
 }

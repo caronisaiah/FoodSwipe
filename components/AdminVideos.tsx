@@ -9,6 +9,7 @@ import type {
   Video,
   VideoSourceType,
 } from "@/lib/types";
+import type { MetadataStatus } from "@/lib/youtube";
 import { RESTAURANTS, getRestaurantById } from "@/lib/seed/restaurants";
 import { normalizeVideo } from "@/lib/video";
 import VideoEmbed from "@/components/VideoEmbed";
@@ -47,6 +48,9 @@ interface FormState {
   sourceType: VideoSourceType;
   matchConfidence: MatchConfidence;
   legalDisplayStatus: LegalDisplayStatus;
+  // Carried (set by resolve, not directly edited) so they persist on attach.
+  thumbnailUrl: string;
+  publishedAt: string;
 }
 
 const INITIAL: FormState = {
@@ -60,6 +64,15 @@ const INITIAL: FormState = {
   sourceType: "manual-seed",
   matchConfidence: "manual",
   legalDisplayStatus: "source-link-only",
+  thumbnailUrl: "",
+  publishedAt: "",
+};
+
+const METADATA_STATUS_TEXT: Record<MetadataStatus, string> = {
+  enriched: "Enriched with official YouTube metadata.",
+  "missing-api-key": "No YOUTUBE_API_KEY set — generic metadata used.",
+  "not-found": "Video not found via the YouTube API — generic metadata used.",
+  failed: "YouTube metadata request failed — generic metadata used.",
 };
 
 function buildAttribution(f: FormState): string {
@@ -94,6 +107,8 @@ function toVideo(f: FormState, id: string): Video {
     sourceType: f.sourceType,
     matchConfidence: f.matchConfidence,
     legalDisplayStatus: f.legalDisplayStatus,
+    thumbnailUrl: f.thumbnailUrl.trim() || undefined,
+    publishedAt: f.publishedAt.trim() || undefined,
   };
 }
 
@@ -105,10 +120,11 @@ export default function AdminVideos() {
   // Session-only admin secret (NOT persisted) — sent as a header to the API.
   const [adminSecret, setAdminSecret] = useState("");
 
-  // v1.1 YouTube resolve flow
+  // YouTube resolve flow (+ v1.3 metadata status)
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [resolving, setResolving] = useState(false);
   const [resolveError, setResolveError] = useState<string | null>(null);
+  const [metaStatus, setMetaStatus] = useState<MetadataStatus | null>(null);
 
   // v1.2 backend attach + persisted list
   const [attaching, setAttaching] = useState(false);
@@ -160,18 +176,22 @@ export default function AdminVideos() {
     if (!youtubeUrl.trim() || resolving) return;
     setResolving(true);
     setResolveError(null);
+    setMetaStatus(null);
     try {
       const res = await fetch("/api/resolve/youtube", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: youtubeUrl,
-          creatorHandle: form.creatorHandle,
-          creatorDisplayName: form.creatorDisplayName,
-          caption: form.caption,
-        }),
+        // URL only: the resolver fills fields from official metadata (or a
+        // generic fallback) and the admin edits them afterward. Sending the
+        // current form would let a previous resolve's values leak into the next
+        // one and be treated as admin-typed overrides.
+        body: JSON.stringify({ url: youtubeUrl }),
       });
-      const data: { video?: Video; error?: string } = await res.json();
+      const data: {
+        video?: Video;
+        error?: string;
+        metadataStatus?: MetadataStatus;
+      } = await res.json();
       if (!res.ok || !data.video) {
         setResolveError(data.error ?? "Could not resolve that URL.");
         return;
@@ -188,7 +208,10 @@ export default function AdminVideos() {
         creatorHandle: v.creatorHandle,
         creatorDisplayName: v.creatorDisplayName ?? "",
         caption: v.caption,
+        thumbnailUrl: v.thumbnailUrl ?? "",
+        publishedAt: v.publishedAt ?? "",
       }));
+      setMetaStatus(data.metadataStatus ?? null);
     } catch {
       setResolveError("Network error — could not reach the resolver.");
     } finally {
@@ -333,9 +356,28 @@ export default function AdminVideos() {
             {resolveError}
           </p>
         )}
+        {metaStatus && (
+          <p
+            className={`mt-2 text-xs ${metaStatus === "enriched" ? "text-mint" : "text-haze"}`}
+          >
+            {METADATA_STATUS_TEXT[metaStatus]}
+          </p>
+        )}
+        {metaStatus === "enriched" && (
+          <div className="mt-2 rounded-lg bg-ink-2 p-2 text-[11px] text-haze">
+            <p className="truncate text-cream">{form.caption}</p>
+            <p className="truncate">
+              {form.creatorDisplayName || form.creatorHandle}
+              {form.publishedAt ? ` · ${form.publishedAt.slice(0, 10)}` : ""}
+              {form.thumbnailUrl ? " · thumbnail captured" : ""}
+            </p>
+          </div>
+        )}
         <p className="mt-2 text-[10px] leading-relaxed text-haze">
           Paste a YouTube watch / Shorts / embed / youtu.be link. We build a
-          privacy-enhanced youtube-nocookie embed — no API key, nothing downloaded.
+          privacy-enhanced youtube-nocookie embed. With a YOUTUBE_API_KEY set, the
+          title, channel, thumbnail, and date are prefilled; without one, generic
+          metadata is used. No search or discovery, nothing downloaded.
         </p>
       </div>
 

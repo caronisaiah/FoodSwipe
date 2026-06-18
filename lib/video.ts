@@ -125,6 +125,22 @@ function optionalString(v: unknown): string | undefined {
 }
 
 /**
+ * Validate an external image URL (e.g. a YouTube thumbnail) before it is stored
+ * or interpolated into a CSS `url("...")`. Must be a well-formed https URL with
+ * no characters that could break out of the CSS string; otherwise dropped.
+ */
+function safeImageUrl(v: unknown): string | undefined {
+  const s = optionalString(v);
+  if (!s) return undefined;
+  if (/[\s"'()\\<>]/.test(s)) return undefined;
+  try {
+    return new URL(s).protocol === "https:" ? s : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Enforce the legal-safe invariants on an already-typed Video. Pure +
  * idempotent — safe to run on trusted seed data or admin input. After this:
  *  - embedUrl only survives if it's on the embed allowlist;
@@ -211,7 +227,7 @@ export function normalizeVideo(raw: unknown): Video | null {
     creatorHandle: optionalString(r.creatorHandle) ?? "@unknown",
     creatorDisplayName: optionalString(r.creatorDisplayName),
     caption: typeof r.caption === "string" ? r.caption : "",
-    thumbnailUrl: optionalString(r.thumbnailUrl),
+    thumbnailUrl: safeImageUrl(r.thumbnailUrl),
     attributionText: optionalString(r.attributionText) ?? `${platform} preview`,
     publishedAt: optionalString(r.publishedAt),
     discoveredAt: optionalString(r.discoveredAt),

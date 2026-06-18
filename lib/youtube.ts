@@ -2,12 +2,17 @@ import type { Video } from "./types";
 import { normalizeVideo } from "./video";
 
 /**
- * v1.1 YouTube URL resolver — the smallest real-media ingestion slice.
+ * YouTube URL resolver + optional metadata enrichment.
  *
- * Pure + dependency-free. Turns a pasted YouTube URL into a legal-safe,
- * embeddable Video reference. We do NOT call the YouTube Data API (no key) and
- * we never download/store/rehost video — only build canonical + privacy-enhanced
- * embed URLs and run them through the existing `normalizeVideo` enforcement.
+ * The URL parsing (extractYouTubeId / resolveYouTubeUrl / buildYouTubeVideo) is
+ * pure and works with no API key. If `YOUTUBE_API_KEY` is set, the route can
+ * additionally call the official Data API `videos.list` for that exact id to
+ * prefill the title/channel/thumbnail/publishedAt (v1.3). Enrichment is
+ * best-effort: a missing key or a failed request falls back to generic metadata.
+ *
+ * We never download/store/rehost video — only build canonical + privacy-enhanced
+ * embed URLs (and store the official thumbnail URL by reference), then run
+ * everything through `normalizeVideo`. No scraping, no search/discovery.
  */
 
 // Hosts we accept as INPUT (broader than the embed allowlist in lib/video).
@@ -88,33 +93,112 @@ export function resolveYouTubeUrl(raw: unknown): YouTubeResolution | null {
   };
 }
 
+const clean = (v: unknown): string | undefined =>
+  typeof v === "string" && v.trim() !== "" ? v.trim() : undefined;
+
+/* ---- Optional metadata enrichment (YouTube Data API, v1.3) ---- */
+
+export type MetadataStatus =
+  | "enriched"
+  | "missing-api-key"
+  | "not-found"
+  | "failed";
+
+export interface YouTubeMetadata {
+  title?: string;
+  channelTitle?: string;
+  thumbnailUrl?: string;
+  publishedAt?: string;
+}
+
+/** Pick the best available thumbnail URL from a snippet.thumbnails object. */
+function pickThumbnail(thumbnails: unknown): string | undefined {
+  if (!thumbnails || typeof thumbnails !== "object") return undefined;
+  const t = thumbnails as Record<string, { url?: unknown } | undefined>;
+  for (const size of ["maxres", "standard", "high", "medium", "default"]) {
+    const url = t[size]?.url;
+    if (typeof url === "string" && url.trim() !== "") return url.trim();
+  }
+  return undefined;
+}
+
+/**
+ * Fetch official metadata for a video id via the Data API `videos.list`
+ * (part=snippet). Optional + best-effort: returns a status so the caller can
+ * fall back. Requires `YOUTUBE_API_KEY` (read from env, never logged). Never
+ * throws — network/parse failures resolve to `{ status: "failed" }`.
+ */
+export async function fetchYouTubeMetadata(
+  videoId: string,
+): Promise<{ status: MetadataStatus; metadata?: YouTubeMetadata }> {
+  const key = process.env.YOUTUBE_API_KEY;
+  if (!key) return { status: "missing-api-key" };
+  if (!YOUTUBE_ID_RE.test(videoId)) return { status: "not-found" };
+
+  try {
+    const endpoint = new URL("https://www.googleapis.com/youtube/v3/videos");
+    endpoint.searchParams.set("part", "snippet");
+    endpoint.searchParams.set("id", videoId);
+    endpoint.searchParams.set("key", key);
+
+    const res = await fetch(endpoint, { headers: { accept: "application/json" } });
+    if (!res.ok) return { status: "failed" };
+
+    const data = (await res.json()) as {
+      items?: { snippet?: Record<string, unknown> }[];
+    };
+    const snippet = data.items?.[0]?.snippet;
+    if (!snippet) return { status: "not-found" };
+
+    return {
+      status: "enriched",
+      metadata: {
+        title: clean(snippet.title),
+        channelTitle: clean(snippet.channelTitle),
+        thumbnailUrl: pickThumbnail(snippet.thumbnails),
+        publishedAt: clean(snippet.publishedAt),
+      },
+    };
+  } catch {
+    return { status: "failed" };
+  }
+}
+
 export interface YouTubeBuildInput {
   url: string;
   creatorHandle?: string;
   creatorDisplayName?: string;
   caption?: string;
+  /** Optional official metadata (from fetchYouTubeMetadata) to prefill from. */
+  metadata?: YouTubeMetadata;
 }
 
-const clean = (v: unknown): string | undefined =>
-  typeof v === "string" && v.trim() !== "" ? v.trim() : undefined;
-
 /**
- * Build a normalized, legal-safe Video from a YouTube URL + optional creator
- * info. Returns null for non-YouTube / invalid URLs. We do NOT invent creator
- * or title metadata — unknown creator falls back to "Unknown creator" and the
- * caption to a generic, honest default.
+ * Build a normalized, legal-safe Video from a YouTube URL, optional admin-typed
+ * fields, and optional official metadata. Precedence is conservative:
+ * admin-typed value > official metadata > honest generic fallback. We never
+ * invent metadata — without a key/match, caption/creator stay generic.
  */
 export function buildYouTubeVideo(input: YouTubeBuildInput): Video | null {
   const resolved = resolveYouTubeUrl(input.url);
   if (!resolved) return null;
 
-  const handle = clean(input.creatorHandle);
-  const displayName = clean(input.creatorDisplayName);
-  const caption = clean(input.caption) ?? "YouTube food-review video";
-  const knownCreator = displayName ?? handle;
-  const attributionText = knownCreator
-    ? `Original post by ${knownCreator} on YouTube`
-    : "YouTube video — creator not verified";
+  const meta = input.metadata;
+  const channel = clean(meta?.channelTitle);
+  const caption =
+    clean(input.caption) ?? clean(meta?.title) ?? "YouTube food-review video";
+  const displayName = clean(input.creatorDisplayName) ?? channel;
+  const handle = clean(input.creatorHandle) ?? channel ?? "Unknown creator";
+  const thumbnailUrl = clean(meta?.thumbnailUrl);
+  const publishedAt = clean(meta?.publishedAt);
+
+  const knownCreator =
+    displayName ?? (handle !== "Unknown creator" ? handle : undefined);
+  const attributionText = channel
+    ? `YouTube video by ${channel}`
+    : knownCreator
+      ? `Original post by ${knownCreator} on YouTube`
+      : "YouTube video — creator not verified";
 
   // normalizeVideo re-validates everything (embed allowlist, real-source rule,
   // enum coercion) so the resolver can't bypass the legal-safe invariants.
@@ -123,10 +207,12 @@ export function buildYouTubeVideo(input: YouTubeBuildInput): Video | null {
     platform: "YouTube",
     sourceUrl: resolved.sourceUrl,
     embedUrl: resolved.embedUrl,
-    creatorHandle: handle ?? "Unknown creator",
+    creatorHandle: handle,
     creatorDisplayName: displayName,
     caption,
+    thumbnailUrl,
     attributionText,
+    publishedAt,
     discoveredAt: new Date().toISOString().slice(0, 10),
     isRealSource: true,
     sourceType: "real-post",
