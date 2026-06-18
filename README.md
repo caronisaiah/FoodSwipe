@@ -1,389 +1,315 @@
-# 🍔 FoodSwipe — MVP v1
+# FoodSwipe
 
-**Swipe through restaurants powered by real food-review videos.**
+Swipe-based restaurant discovery powered by short-form food-review video. Instead
+of scrolling written reviews, you swipe through restaurant cards built around the
+kind of food video people actually watch on TikTok, Reels, and YouTube Shorts.
 
-FoodSwipe is a swipe-based restaurant discovery prototype. Instead of reading
-reviews, you swipe through restaurant cards built around short-form food-review
-video — Tinder for where to eat. **v1** turns the polished v0 placeholder into a
-more credible *real-media* prototype: a richer video data model, an honest
-status-driven video display, and an internal tool to test attaching real video
-sources — still with seeded Washington, DC data and no production database.
+**Strategy: aggregation-first.** Restaurant profiles are designed to pull together
+public review content from TikTok, Instagram, YouTube, and the web. The product
+never downloads, crops, stores, or rehosts third-party video — it embeds or links
+to public sources with full platform and creator attribution.
 
-> **Strategic note:** the product is *aggregation-first* — restaurant profiles
-> are designed to eventually pull together public review content from TikTok,
-> Instagram, YouTube and the web. v0 ships with hand-authored seed data and a
-> video component that's ready to drop real embeds into. No scraping, no
-> creator accounts, no rehosted video.
+> **v1.2 persistence proof.** The deployed app successfully attached a YouTube
+> Shorts video through `/admin/videos` and displayed it on restaurant profiles
+> across desktop and phone. This proves shared backend video persistence works
+> outside `localStorage`.
+
+**Current status:** working prototype on seeded Washington, DC data. Video
+attachments persist to a shared Postgres table (Neon); restaurants remain seeded
+in the repository. Mobile-first, dark, video-forward design.
 
 ---
 
-## ✨ What's in v0
+## Features
 
-| Screen | Route | What it does |
+- **Swipe discovery** — a full-screen, one-card-at-a-time deck with physics-based
+  drag, Skip/Save controls, and arrow-key support. Cards are ordered by the
+  preferences captured at onboarding.
+- **Video-first profiles** — each restaurant reads like a creator profile: a hero
+  clip, a scrollable review carousel, dish highlights, "best for" occasions, and
+  social-proof metrics.
+- **Transparent ranking** — a readable weighted score (craving, vibe, budget,
+  dietary, distance, freshness, and video coverage). Every card states why it
+  matched. No black-box scoring and no invented precision.
+- **Legal-safe video** — what renders is driven by each clip's display status; a
+  placeholder is never presented as a real post, and only allowlisted YouTube
+  hosts can be embedded.
+- **Shared persistence** — videos attached through the internal admin tool are
+  stored in Postgres, so every device and browser sees the same profiles.
+
+## Screens and routes
+
+| Route | Purpose |
+| --- | --- |
+| `/` | Onboarding and landing — preference picker (location, distance, budget, cravings, vibe, dietary). Persists to `localStorage`, then continues to the feed. Doubles as the settings screen. |
+| `/feed` | The swipe deck. Drag or tap Skip/Save; cards are ranked by preferences. |
+| `/restaurants/[id]` | Restaurant profile: hero clip, metrics, what to order, best-for, review carousel, and external links. Statically generated per seeded id. |
+| `/saved` | Saved (right-swiped) restaurants, with quick removal and profile links. |
+| `/admin/videos` | Internal, non-public tool to resolve and attach review videos. `noindex`, admin-secret gated. |
+
+API routes:
+
+| Route | Method | Purpose |
 | --- | --- | --- |
-| **Onboarding / Landing** | `/` | Brand moment + preference picker (location, distance, budget, cravings, vibe, dietary). Persists to `localStorage`, then → feed. Doubles as the "Tune" settings screen. |
-| **Swipe feed** | `/feed` | Full-screen, one-card-at-a-time deck. Drag or tap **Skip / Save**. Cards are ranked by your preferences. |
-| **Restaurant profile** | `/restaurants/[id]` | "Creator profile for a restaurant": hero clip, hype metrics, what to order, best-for, source-video carousel, external links. |
-| **Saved** | `/saved` | Everything you right-swiped, with a quick unsave + links to profiles. |
-
-**Core experience details**
-
-- **Swipe gestures** — physics-based drag (framer-motion) with rotate, fling,
-  and `SAVE` / `SKIP` stamps. Visible buttons too (desktop-friendly), plus
-  **← / →** keyboard shortcuts.
-- **Ranking** — a simple, transparent weighted score (no fake "AI") in
-  [`lib/recommendations.ts`](lib/recommendations.ts) using craving, vibe, budget,
-  dietary, distance, trend and freshness. Every card shows an honest
-  *"why this matches you."*
-- **Legal-safe video** — videos are **never** downloaded or rehosted. Display is
-  driven by each clip's `legalDisplayStatus` (see v1 below); attribution is
-  always shown and a placeholder is never passed off as a real post.
+| `/api/resolve/youtube` | POST | Resolve a YouTube URL to a normalized, embeddable video reference. |
+| `/api/restaurants/[id]/videos` | GET | Public read of active persisted videos for a restaurant. |
+| `/api/admin/videos` | POST | Attach a video to a restaurant (admin-secret gated). |
+| `/api/admin/videos/[id]` | DELETE | Soft-delete a persisted video (admin-secret gated). |
 
 ---
 
-## 🆕 What changed in v1
+## How it works
 
-**1. Richer video data model** ([`lib/types.ts`](lib/types.ts)) — `Video` now
-carries `creatorDisplayName?`, `publishedAt?`, `discoveredAt?`, `isRealSource`,
-`sourceType` (`real-post` · `creator-profile` · `placeholder` · `manual-seed`),
-`matchConfidence` (`high`/`medium`/`low`/`manual`), and `legalDisplayStatus`
-(`embeddable` · `source-link-only` · `placeholder-only` · `unavailable`).
+### Video model and legal-safe display
 
-**2. Honest, status-driven [`VideoEmbed`](components/VideoEmbed.tsx)** — how a clip renders:
+Each video carries a small set of fields ([`lib/types.ts`](lib/types.ts)) that
+make honest display enforceable rather than aspirational: `sourceType`
+(`real-post` / `creator-profile` / `placeholder` / `manual-seed`),
+`matchConfidence`, `isRealSource`, and `legalDisplayStatus`. The single
+enforcement core is [`lib/video.ts`](lib/video.ts) — it normalizes untrusted
+input, applies the embed allowlist, and decides what affordance each clip gets.
 
 | `legalDisplayStatus` | Renders | External link |
 | --- | --- | --- |
-| `embeddable` (+ `embedUrl`) | official iframe embed | "View source" |
-| `source-link-only` | rich preview card | "View original" (only if `real-post`) / else "View source" |
-| `placeholder-only` | rich preview card | **none** — shows a "Source placeholder" chip |
-| `unavailable` | muted preview | **none** — shows "Source unavailable" |
+| `embeddable` (with an allowlisted embed URL) | official iframe embed | "View source" |
+| `source-link-only` | preview card | "View original" for a genuine `real-post`, otherwise "View source" |
+| `placeholder-only` | preview card | none — shows a "Source placeholder" chip |
+| `unavailable` | muted preview | none — shows "Source unavailable" |
 
-Platform + creator credit are always shown. A placeholder is **never** labeled
-as a real post, and "View original" appears only for a genuine `real-post`.
+Rules in force everywhere:
 
-**3. Internal video intake tool** — [`/admin/videos`](app/admin/videos/page.tsx)
-(client, `noindex`, clearly banner-labeled *internal demo, not public*). Enter a
-restaurant + platform + URLs + creator + `sourceType`/`matchConfidence`/
-`legalDisplayStatus`, see a **live preview**, and attach it. In v1 this stored
-to `localStorage` only; **as of v1.2 attaching persists to a shared backend**
-(see the v1.2 section below) so all testers see the clip — localStorage remains
-only as a labeled legacy/fallback path.
-
-**4. More credible seed** — captions, creator display names, dates and varied
-source types/statuses. Honest by construction: most seed clips are
-`placeholder-only`; the linked ones point at **real working YouTube/Google
-searches** ("where reviews live"), never a fabricated post URL. `real-post` +
-`embeddable` are reserved for the admin tool (paste a genuine URL).
-
-**5. Video-forward UI** — the card gives the clip more room and trims filler
-pills; the profile carousel ([`RestaurantVideos`](components/RestaurantVideos.tsx))
-shows the source count and merges manual clips.
-
-**6. Ranking** — a small `videoStrength` factor
-([`lib/recommendations.ts`](lib/recommendations.ts)) gives a *modest* boost to
-restaurants with more / more-credible video coverage. It tilts ties; it doesn't
-dominate, and adds no fake precision.
-
-### Legal-safe video rules (still in force)
 - Never download, crop, store, or rehost third-party video.
-- Always show platform + creator attribution.
-- Prefer official embeds / oEmbed / source links over scraping.
-- Never imply a placeholder is a real post; "View original" only for `real-post`.
+- Always show platform and creator attribution.
+- Prefer official embeds, oEmbed, and source links over scraping.
+- Only allowlisted YouTube hosts can be embedded; a placeholder is never labeled
+  a real post, and "View original" appears only for a verified `real-post`.
+
+### YouTube ingestion
+
+[`lib/youtube.ts`](lib/youtube.ts) extracts the video id from `watch?v=`,
+`youtu.be/ID`, `/shorts/ID`, or `/embed/ID` (extra query parameters are fine),
+then builds the canonical watch URL plus a privacy-enhanced
+`youtube-nocookie.com/embed/ID` and runs it through the normalizer. The work
+happens server-side in [`/api/resolve/youtube`](app/api/resolve/youtube/route.ts);
+client input is never trusted. No YouTube Data API key is used, so titles and
+creators are never invented — an unknown creator is shown as "Unknown creator"
+and the caption defaults to a generic label.
+
+YouTube **Shorts** are the priority format, matching the product's short-form
+focus; standard watch URLs are supported as a fallback.
+
+### Shared persistence
+
+Videos attached through the admin tool persist to a single Postgres table,
+`restaurant_videos` ([`lib/db/schema.ts`](lib/db/schema.ts)), via the Neon
+serverless HTTP driver and Drizzle ORM. Only video attachments are persisted —
+restaurants stay in [`lib/seed/restaurants.ts`](lib/seed/restaurants.ts).
+
+- Reads ([`/api/restaurants/[id]/videos`](app/api/restaurants/[id]/videos/route.ts))
+  are public, validate the restaurant id, re-normalize every row through
+  `lib/video`, and degrade to an empty list if the database is unreachable so
+  profiles never break.
+- Writes ([`/api/admin/videos`](app/api/admin/videos/route.ts)) and soft-deletes
+  are gated by a single shared secret (`FOODSWIPE_ADMIN_SECRET`), sent as the
+  `x-foodswipe-admin-secret` header and compared in constant time. This is
+  deliberately minimal write protection, not an account system.
+- Profiles merge seed, shared (Postgres), and legacy local clips; the shared
+  fetch is best-effort. The database client is lazy, so the app builds and runs
+  without a database (the persisted list is simply empty and writes return `503`).
+
+### Ranking
+
+[`lib/recommendations.ts`](lib/recommendations.ts) is a pure, readable weighted
+sum over craving, vibe, budget, dietary fit, distance, freshness, and a modest
+video-coverage factor. It is easy to reason about and produces the honest
+"why this matches you" copy shown on each card.
 
 ---
 
-## 🔌 v1.1 — real YouTube embeds (backend ingestion slice)
+## Tech stack
 
-The smallest real-media ingestion path: paste a YouTube URL into the internal
-`/admin/videos` tool → it's validated + normalized **server-side** → saved (still
-localStorage) → rendered as an actual `youtube-nocookie` embed on the profile.
+- Next.js 16 (App Router) and React 19
+- TypeScript (strict)
+- Tailwind CSS v4 (CSS-first `@theme` tokens)
+- framer-motion for swipe gestures and transitions
+- Neon Postgres and Drizzle ORM for shared video persistence
+- `localStorage` for client preferences and saved restaurants
 
-- **Resolver** ([`lib/youtube.ts`](lib/youtube.ts)) — pure: extracts the 11-char
-  video id from `watch?v=`, `youtu.be/ID`, `/shorts/ID`, `/embed/ID` (extra query
-  params are fine), builds the canonical `watch?v=ID` + the embed
-  `youtube-nocookie.com/embed/ID`, then runs it through `normalizeVideo` →
-  `real-post` · `embeddable` · `isRealSource`.
-- **Route** ([`app/api/resolve/youtube/route.ts`](app/api/resolve/youtube/route.ts))
-  — `POST {url, creatorHandle?, creatorDisplayName?, caption?}` → `{ video }` or
-  `{ error }`. Validates server-side; client input is never trusted.
-- **No YouTube Data API key** — we don't fetch the title/creator, so we never
-  invent them: unknown creator shows **"Unknown creator"**, caption defaults to
-  **"YouTube food-review video"**. "View original" links to the canonical watch URL.
-- Only allowlisted YouTube hosts can iframe; admin-added videos remain
-  **localStorage-only**; nothing is scraped, downloaded, cropped, or rehosted.
-
-**Manual test checklist** (paste into `/admin/videos` → Resolve):
-
-| Input | Expected |
-| --- | --- |
-| `https://www.youtube.com/watch?v=M7lc1UVf-VE` | resolves → inline embed |
-| `https://youtu.be/M7lc1UVf-VE` | resolves → inline embed |
-| `https://www.youtube.com/shorts/M7lc1UVf-VE` | resolves → inline embed |
-| `https://www.youtube.com/embed/M7lc1UVf-VE` | resolves → inline embed |
-| `https://example.com/watch?v=M7lc1UVf-VE` | error — non-YouTube host |
-| `not a url` | error — malformed URL |
-| `https://www.youtube.com/watch?v=short` | error — invalid video id |
-
-Then **Attach** and open the restaurant profile — the clip plays inline.
+Design direction is dark and video-forward — deep charcoal surfaces, warm
+coral-to-pink accents, and a display typeface — intended to feel like short-form
+video rather than a reviews site or a dashboard.
 
 ---
 
-## 🗄️ v1.2 — shared video persistence (Neon Postgres + Drizzle)
-
-Manually attached/resolved videos now live in a small **shared backend** so every
-deployed tester sees the same real-media profiles — not just their own browser.
-**Only video attachments are persisted; restaurants stay in
-[`lib/seed/restaurants.ts`](lib/seed/restaurants.ts).**
-
-- **Stack** — [Neon](https://neon.tech) Postgres + [Drizzle ORM](https://orm.drizzle.team)
-  (HTTP driver, serverless-friendly) via Next route handlers.
-- **One table** `restaurant_videos` ([`lib/db/schema.ts`](lib/db/schema.ts)) mirroring
-  the `Video` type, plus `status` (`active`/`hidden`), `createdAt`, `updatedAt`.
-- **API**
-  - `GET /api/restaurants/[id]/videos` — public; validates the seed id, returns
-    active persisted videos, each re-normalized through `lib/video`. Degrades
-    gracefully (empty list) if the DB is unreachable, so profiles never break.
-  - `POST /api/admin/videos` — **admin-secret protected**; validates the seed id,
-    runs `normalizeVideo`, inserts. Returns the saved video.
-  - `DELETE /api/admin/videos/[id]` — admin-secret protected; **soft-delete** only
-    (`status = hidden`).
-- **Auth** — minimal, not a real account system: a single shared secret in
-  `FOODSWIPE_ADMIN_SECRET`, sent as the `x-foodswipe-admin-secret` header
-  (constant-time compared). The admin UI takes it as a session-only input.
-- **Display** — `RestaurantVideos` merges **seed + shared (backend) + local
-  (legacy localStorage, labeled)** clips; the shared fetch is best-effort.
-- The lazy DB client means the app **builds and runs without a database**
-  (persisted list is just empty / writes return `503`).
-
-### Environment variables (put them in `.env`, gitignored)
-
-Use **`.env`** (not `.env.local`): Next reads both, but the **drizzle-kit CLI only
-auto-loads `.env`**, so this keeps the app and `db:push` on the same value.
+## Getting started
 
 ```bash
-DATABASE_URL="postgresql://USER:PASSWORD@HOST/DB?sslmode=require"  # Neon connection string
-FOODSWIPE_ADMIN_SECRET="some-long-random-string"                   # gate for admin writes
+npm install
+npm run dev      # http://localhost:3000
 ```
 
-### One-time DB setup
+Other scripts:
 
 ```bash
-# 1) Create a Neon project; copy its connection string into .env as DATABASE_URL
-# 2) Create the table from the Drizzle schema:
-npm run db:push        # drizzle-kit push  (simplest for MVP)
-# optional:
-npm run db:generate    # emit SQL migration files into ./drizzle
+npm run build    # production build (also type-checks)
+npm run start    # serve the production build
+npm run lint     # eslint
+```
+
+The app is mobile-first. On desktop it renders as a centered phone-width column;
+use your browser's device toolbar or narrow the window for the intended
+experience. The app runs fully without a database — only the shared-persistence
+features require one.
+
+---
+
+## Database and environment
+
+Two environment variables enable shared persistence. Put them in `.env` (which is
+gitignored). Use `.env` rather than `.env.local`: Next.js reads both, but the
+drizzle-kit CLI only auto-loads `.env`.
+
+```bash
+DATABASE_URL="postgresql://USER:PASSWORD@HOST/DB?sslmode=require"   # Neon connection string
+FOODSWIPE_ADMIN_SECRET="a-long-random-string"                       # gate for admin writes
+```
+
+Create the table once. The simplest path:
+
+```bash
+npm run db:push        # apply the schema with drizzle-kit
+# or:
+npm run db:generate    # emit SQL migrations into ./drizzle
 npm run db:studio      # browse the table
 ```
 
-### ⚠️ Testing note — corporate TLS interception / managed laptops
+If `db:push` cannot connect — see the note below — apply the committed migration
+[`drizzle/0000_cloudy_gargoyle.sql`](drizzle/0000_cloudy_gargoyle.sql) directly in
+the Neon SQL editor instead.
 
-On a managed/corporate laptop the network may **intercept TLS**. Node uses its
-own CA bundle (not the OS trust store), so the Neon HTTP driver's `fetch` — and
-`drizzle-kit push` (WebSocket) — can fail with `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`
-/ `fetch failed`, even when `curl` and the browser work. This is an environment
-trust issue, **not** an app bug.
+### Managed laptops and corporate TLS interception
 
-- **Do NOT** disable TLS verification (never set `NODE_TLS_REJECT_UNAUTHORIZED=0`).
-- Only if IT provides an **approved corporate root CA**, point Node at it:
-  `NODE_EXTRA_CA_CERTS=C:\path\to\corp-ca.pem` for the Node process (the server
-  and any `db:*` step). This trusts the same CA the OS already does — it does
-  **not** weaken verification.
-- Otherwise, prove the Neon round-trip from a **deployment** (e.g. Vercel) or a
-  **non-intercepted network** — the HTTP driver connects normally there.
-- `npm run db:push` needs a WebSocket / clean network; if it's blocked, run
-  `npm run db:generate` and apply `./drizzle/*.sql` where the DB is reachable
-  (or let the deploy environment run it).
+On a managed/corporate network, TLS may be intercepted. Node uses its own CA
+bundle rather than the OS trust store, so the Neon driver's HTTPS request and
+`drizzle-kit push` (which needs a WebSocket) can fail with
+`UNABLE_TO_GET_ISSUER_CERT_LOCALLY` even though `curl` and the browser work. This
+is an environment trust issue, not an application bug.
 
-### v1.2 manual QA checklist
-
-1. Without `DATABASE_URL`: app still builds/runs; profiles show seed videos; the
-   admin "Saved for …" list is empty; **Attach → 503** "Database not configured".
-2. With `DATABASE_URL` + `FOODSWIPE_ADMIN_SECRET` set and `npm run db:push` done:
-   - `/admin/videos`: enter the secret, **Resolve** a YouTube URL (v1.1), **Attach** →
-     success; it appears under "Saved for {restaurant}".
-   - Open that restaurant's profile (in another browser / incognito) → the clip
-     shows and **plays inline** (shared, not per-browser).
-   - Wrong/blank secret → Attach returns **401**; bad restaurant id → **400**;
-     junk video → **422**.
-   - **✕** on a saved row soft-hides it (status `hidden`); it disappears from the
-     profile and the list but is not hard-deleted.
-3. Seed videos and the v1.1 YouTube resolver still work.
+- Do not disable TLS verification (`NODE_TLS_REJECT_UNAUTHORIZED=0`).
+- If IT provides an approved corporate root CA, point Node at it with
+  `NODE_EXTRA_CA_CERTS`. This trusts the same CA the OS already does; it does not
+  weaken verification.
+- Otherwise, exercise the database from a deployment or a non-intercepted network
+  — the HTTP driver connects normally there.
 
 ---
 
-## 🧱 Tech stack
+## Deployment
 
-- **Next.js 16** (App Router) + **React 19**
-- **TypeScript** (strict)
-- **Tailwind CSS v4** (CSS-first `@theme` tokens)
-- **framer-motion** — swipe gestures + transitions
-- **Neon Postgres + Drizzle ORM** — shared persistence for video attachments (v1.2)
-- **localStorage** — client prefs/saves + legacy demo videos. The app still runs
-  **without** a database (the persisted list is empty; admin writes return `503`).
+The app deploys cleanly to Vercel:
 
-Design direction: **dark immersive, video-first** — deep charcoal surfaces,
-coral→pink→lime accents, Space Grotesk display type. Built to feel like
-short-form video, not like Yelp or a SaaS dashboard.
+1. Import the GitHub repository in Vercel (Next.js is auto-detected; defaults are
+   fine).
+2. Add `DATABASE_URL` and `FOODSWIPE_ADMIN_SECRET` as environment variables, then
+   deploy (or redeploy if the variables were added after the first build).
+3. Create the `restaurant_videos` table once — via the Neon SQL editor using the
+   committed migration, or `db:push` from a non-intercepted network.
 
----
-
-## 🚀 Run it locally
-
-```bash
-npm install        # install dependencies
-npm run dev        # start the dev server  → http://localhost:3000
-```
-
-Other commands:
-
-```bash
-npm run build      # production build (also type-checks)
-npm run start      # serve the production build
-npm run lint       # eslint
-```
-
-> 📱 **Best viewed mobile-width.** On desktop the app renders as a centered
-> phone-width column — open your browser devtools device toolbar (or just narrow
-> the window) for the intended experience.
+The build does not require a database; routes read environment variables at
+request time. Because deployment runs on a clean network, the Neon driver
+connects normally, which is the environment where shared persistence was proven.
 
 ---
 
-## 📂 Project structure
+## Project structure
 
 ```
 app/
-  layout.tsx                 Root layout: fonts, metadata, viewport, ambient bg
-  globals.css                Tailwind v4 @theme design tokens + utilities
-  page.tsx                   "/"  → onboarding/landing
+  layout.tsx                 Root layout: fonts, metadata, viewport
+  globals.css                Tailwind v4 @theme tokens and utilities
+  page.tsx                   "/" onboarding and landing
   feed/page.tsx              "/feed"
   saved/page.tsx             "/saved"
-  restaurants/[id]/page.tsx  "/restaurants/[id]" (SSG for all seeded ids)
-  restaurants/[id]/not-found.tsx
-  admin/videos/page.tsx      "/admin/videos" (internal video intake demo, noindex)
-  api/resolve/youtube/route.ts        POST — YouTube URL → embeddable Video (v1.1)
-  api/restaurants/[id]/videos/route.ts GET — active persisted videos (v1.2)
-  api/admin/videos/route.ts           POST — attach video (admin-secret) (v1.2)
-  api/admin/videos/[id]/route.ts      DELETE — soft-delete (admin-secret) (v1.2)
+  restaurants/[id]/page.tsx  "/restaurants/[id]" (static per seeded id)
+  restaurants/[id]/not-found.tsx        404 for an unknown restaurant id
+  admin/videos/page.tsx      "/admin/videos" (internal, noindex)
+  api/resolve/youtube/route.ts          POST  resolve a YouTube URL
+  api/restaurants/[id]/videos/route.ts  GET   active persisted videos
+  api/admin/videos/route.ts             POST  attach a video (admin secret)
+  api/admin/videos/[id]/route.ts        DELETE soft-delete (admin secret)
 
 components/
-  PreferenceOnboarding.tsx   Landing + preference picker (client)
-  FeedClient.tsx             Ranks deck, owns feed state (client)
-  SwipeDeck.tsx              Gesture/animation, buttons, empty state (client)
-  RestaurantCard.tsx         The swipe card (presentational)
+  PreferenceOnboarding.tsx   Landing and preference picker
+  FeedClient.tsx             Ranks the deck and owns feed state
+  SwipeDeck.tsx              Gesture, animation, controls, empty state
+  RestaurantCard.tsx         The swipe card
   RestaurantProfile.tsx      Full profile (server-rendered)
-  RestaurantVideos.tsx       Profile carousel — seed + shared(DB) + local (client)
-  GoThere.tsx                Profile "Go there" links (client)
-  SavedClient.tsx            Saved list (client)
-  AdminVideos.tsx            Internal intake: resolve + attach to backend (client)
-  VideoEmbed.tsx             Legal-safe, status-driven video display
-  SaveButton.tsx             Heart toggle on profiles (client)
+  RestaurantVideos.tsx       Review carousel: seed + shared + local
+  GoThere.tsx                Profile "Go there" links
+  SavedClient.tsx            Saved list
+  AdminVideos.tsx            Internal intake: resolve and attach to backend
+  VideoEmbed.tsx             Status-driven, legal-safe video display
+  SaveButton.tsx             Save toggle on profiles
   TagPill.tsx / MetricBadge.tsx   Presentational primitives
-  AppShell.tsx / BottomNav.tsx    Mobile frame + nav
+  AppShell.tsx / BottomNav.tsx    Mobile frame and navigation
 
 lib/
-  types.ts                   Restaurant, Video, ManualVideoEntry, …
-  video.ts                   Legal-safe core: normalize/enforce, embed allowlist, gating
-  youtube.ts                 YouTube URL resolver (v1.1)
-  adminAuth.ts               Admin-secret check for write routes (v1.2)
-  options.ts                 Controlled vocab + labels for the onboarding UI
-  recommendations.ts         The ranking function (+ videoStrength)
-  storage.ts                 localStorage hooks (prefs, swipes, legacy manual videos)
-  emoji.ts                   cuisine → emoji for placeholders
-  db/schema.ts               Drizzle table: restaurant_videos (v1.2)
-  db/index.ts                Lazy Neon/Drizzle client (null without DATABASE_URL)
-  db/videos.ts               Persisted video data-access (row ↔ Video)
-  seed/restaurants.ts        18 Washington, DC restaurants (the mock dataset)
+  types.ts                   Domain types (Restaurant, Video, ...)
+  video.ts                   Legal-safe core: normalize, enforce, embed allowlist
+  youtube.ts                 YouTube URL resolver
+  adminAuth.ts               Admin-secret check for write routes
+  options.ts                 Controlled vocab and labels for onboarding
+  recommendations.ts         Ranking
+  storage.ts                 localStorage hooks (prefs, saves, legacy clips)
+  emoji.ts                   Cuisine to placeholder glyph
+  db/schema.ts               Drizzle table: restaurant_videos
+  db/index.ts                Lazy Neon/Drizzle client
+  db/videos.ts               Persisted video data access
+  seed/restaurants.ts        18 seeded Washington, DC restaurants
 
-drizzle.config.ts            drizzle-kit config (db:push / generate / studio)
+drizzle.config.ts            drizzle-kit configuration
+drizzle/                     Generated SQL migrations
 ```
 
-### Architecture notes (so v1 can grow cleanly)
+Architecture seams kept stable so the product can grow:
 
-- **`lib/types.ts` is the contract.** The same shapes can back a real DB +
-  ingestion pipeline — only the data source changes.
-- **Persistence seams:** `lib/storage.ts` (localStorage: prefs/saves/legacy demo)
-  and `lib/db/` (Neon/Postgres: shared video attachments, behind the API routes).
-- **`VideoEmbed` is the only video seam.** Add an `embedUrl` (e.g.
-  `youtube-nocookie`) per video and real embeds light up; everything else is
-  unchanged.
-- **Ranking is isolated and pure** in `lib/recommendations.ts`, easy to evolve.
+- `lib/types.ts` is the data contract; the same shapes can back a real ingestion
+  pipeline.
+- Persistence has two seams: `lib/storage.ts` (client preferences and saves) and
+  `lib/db/` (shared video attachments, behind the API routes).
+- `VideoEmbed` plus `lib/video.ts` is the only video-display surface.
+- Ranking is isolated and pure in `lib/recommendations.ts`.
 
 ---
 
-## 🧠 Assumptions made
+## Scope and limitations
 
-- **Greenfield build** — the directory was empty, so the app was scaffolded with
-  `create-next-app` (Tailwind v4 + App Router) and follows its conventions.
-- **Dependencies:** `framer-motion` (swipe physics) from v0; `drizzle-orm` +
-  `@neondatabase/serverless` (+ dev `drizzle-kit`) added in v1.2 for shared
-  video persistence — all explicitly in scope for their milestones.
-- **Distances are static placeholders** (no geolocation). The brief asked for
-  `distanceMiles` as a placeholder.
-- **`sourceUrl`s point at the platform/creator**, not at fabricated specific
-  posts — honest placeholders for the future aggregation pipeline.
-- **Video placeholders are the norm in v0** (no `embedUrl`s seeded) to avoid
-  misattributing real creators' content. The embed path is built and ready.
-- **Onboarding edits persist live** and the landing also serves as the "Tune"
-  screen, so the CTA simply navigates to the feed.
-
----
-
-## ⚠️ Known limitations (intentional)
-
-- No real data ingestion — all 18 restaurants are hand-authored mock data.
-- Seed clips are honest **placeholders** / real **discovery-search** links; no
-  real embeds are wired in the seed (the admin tool is how you test a real one).
-- Attached videos persist to a **shared Postgres backend** (v1.2, cross-device);
-  localStorage demo clips remain only as a labeled legacy/fallback. Both surface
-  on **profiles**, not in the feed deck (which keeps a stable hero).
-- User **prefs/saves are still `localStorage`-only** — per-browser, no accounts.
-- Admin writes are gated by a single shared secret (`FOODSWIPE_ADMIN_SECRET`),
-  not a real auth/account system.
-- Distance/coords are placeholders; no maps or geolocation.
-- Out of scope per brief: scraping, creator/owner accounts, payments,
-  reservations, comments, social, full auth, and moving restaurants into the DB.
+- Restaurants are hand-authored seed data (18 spots), not ingested.
+- Seed clips are honest placeholders or real discovery-search links; genuine
+  embeds are added through the admin tool.
+- Video attachments are shared across devices via Postgres; legacy `localStorage`
+  clips remain as a labeled fallback. Both appear on profiles, not in the feed
+  deck (which keeps a stable hero).
+- User preferences and saves are `localStorage` only — per browser, no accounts.
+- Admin writes are protected by a single shared secret, not a full auth system.
+- Distances and coordinates are placeholders; no maps or geolocation.
+- Intentionally out of scope: scraping, creator or owner accounts, payments,
+  reservations, comments, social features, full authentication, and moving
+  restaurants into the database.
 
 ---
 
-## ✅ Manual QA checklist (v1)
+## Roadmap
 
-1. `/` — set some preferences (cravings/vibe/budget); they persist on reload.
-2. `/feed` — swipe a few cards (drag + buttons + ←/→). Cards show video, tags,
-   "why this matches you", and a trend/freshness badge.
-3. `/saved` — right-swiped spots appear and persist across reloads; unsave works.
-4. `/restaurants/[id]` — open a profile (e.g. **bad-saint**): hero clip, metrics,
-   dish list, "best for", and a **Watch the reviews** carousel. Confirm a
-   `source-link-only` clip shows **View source** and a `placeholder-only` clip
-   shows a **Source placeholder** chip with **no** link — and nothing says
-   "View original" for a non-real source.
-5. `/admin/videos` — internal banner is visible. Pick a restaurant, fill creator
-   + caption, tweak `legalDisplayStatus`, watch the **live preview** change,
-   **Attach**, then open that restaurant's profile and see the clip (flagged
-   "demo add"). Remove / Clear all work.
-6. `npm run lint` and `npm run build` pass.
-
----
-
-## 🔭 Recommended next steps after v1
-
-1. **Data layer** — move the seed into a DB (Postgres/Prisma or a hosted
-   service) behind the same `lib/types.ts` shapes; replace `lib/storage.ts`
-   read paths with an API while keeping the hook signatures.
-2. **Real embeds + discovery** — wire official **oEmbed** / search APIs to
-   populate real `sourceUrl`/`embedUrl` and flip clips to `source-link-only` /
-   `embeddable`; `VideoEmbed` already renders them honestly.
-3. **Accounts + synced saves** — light auth so saves follow the user across
-   devices; persist swipe history server-side to power ranking.
-4. **Real distance** — geolocation + a geocoding/maps provider for true
-   `distanceMiles` and a "near me" sort.
-5. **Smarter ranking** — feed swipe history back into the score (learn from
-   skips/saves), add diversity so the deck isn't all one cuisine.
-6. **Ingestion pipeline (the core bet)** — the aggregation service that finds and
-   attaches public review videos to restaurant profiles, with a moderation/quality
-   pass. Creator-submitted content can layer on as a later growth loop.
-
----
-
-_Prototype only. AI-assisted code — review for accuracy and security before use
-in production or company deliverables._
+1. **Metadata enrichment** — use the YouTube Data API to populate real titles,
+   creators, thumbnails, and publish dates for attached videos.
+2. **Broader ingestion** — official oEmbed and discovery for additional platforms,
+   with a moderation and quality pass.
+3. **Accounts and synced saves** — light authentication so saved restaurants and
+   swipe history follow the user across devices.
+4. **Real distance** — geolocation and a maps provider for true distances and a
+   "near me" sort.
+5. **Smarter ranking** — feed swipe history back into the score and add cuisine
+   diversity.
+6. **Restaurants in the database** — graduate seed data into the persistence layer
+   behind the existing type contract.
