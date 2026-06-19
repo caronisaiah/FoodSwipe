@@ -85,7 +85,7 @@ export default function SwipeDeck({
   }
 
   return (
-    <div className="flex h-full flex-col gap-4">
+    <div className="flex h-full flex-col">
       {/* Screen-reader feedback + usage hint */}
       <p role="status" aria-live="polite" className="sr-only">
         {announcement}
@@ -119,32 +119,6 @@ export default function SwipeDeck({
           scored={top}
           onDecide={handleDecide}
         />
-      </div>
-
-      {/* Controls (always visible for non-touch users) */}
-      <div className="flex items-center justify-center gap-5">
-        <ControlButton
-          label="Skip"
-          onClick={() => cardRef.current?.swipe("left")}
-          className="border-white/15 text-haze hover:border-coral hover:text-coral"
-        >
-          <span aria-hidden>✕</span>
-        </ControlButton>
-        <Link
-          href={`/restaurants/${top.restaurant.id}`}
-          aria-label="View full profile"
-          className="flex h-12 w-12 items-center justify-center rounded-full border border-white/15 text-lg text-haze transition hover:border-cream hover:text-cream"
-        >
-          <span aria-hidden>↗</span>
-        </Link>
-        <ControlButton
-          label="Save"
-          big
-          onClick={() => cardRef.current?.swipe("right")}
-          className="border-mint/40 bg-mint/10 text-mint hover:bg-mint/20"
-        >
-          <span aria-hidden>♥</span>
-        </ControlButton>
       </div>
     </div>
   );
@@ -242,39 +216,13 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
           SKIP
         </motion.div>
 
-        <RestaurantCard scored={scored} />
+        <RestaurantCard scored={scored} onSave={() => leave("right")} />
       </motion.div>
     );
   },
 );
 
 /* -------------------------------------------------------------------------- */
-
-function ControlButton({
-  children,
-  label,
-  onClick,
-  className = "",
-  big = false,
-}: {
-  children: React.ReactNode;
-  label: string;
-  onClick: () => void;
-  className?: string;
-  big?: boolean;
-}) {
-  const size = big ? "h-16 w-16 text-3xl" : "h-14 w-14 text-2xl";
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      className={`flex ${size} items-center justify-center rounded-full border transition active:scale-90 ${className}`}
-    >
-      {children}
-    </button>
-  );
-}
 
 function EmptyState({
   savedCount,

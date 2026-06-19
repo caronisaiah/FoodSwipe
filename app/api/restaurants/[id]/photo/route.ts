@@ -1,5 +1,6 @@
 import { getRestaurantById } from "@/lib/seed/restaurants";
 import { getPlacePhoto } from "@/lib/places";
+import { logoUrl } from "@/lib/logos";
 
 /*
   GET /api/restaurants/[id]/photo  (public read, v1.5)
@@ -27,15 +28,21 @@ export async function GET(
     return Response.json({ error: "Unknown restaurant." }, { status: 404 });
   }
 
-  // No Place ID -> no Google call at all; the hero uses its clean fallback.
+  // The brand-logo fallback URL is built server-side (token never reaches the
+  // client) and returned alongside the photo, so a single fetch powers the whole
+  // hero ladder: Place Photo -> logo -> placeholder. (The profile hero ignores
+  // this field; it builds its own logo URL server-side.)
+  const logo = logoUrl(restaurant.websiteDomain);
+
+  // No Place ID -> no Google call at all; the hero uses its logo/placeholder fallback.
   if (!restaurant.googlePlaceId) {
-    return noStoreJson({ photo: null, status: "missing-google-place-id" });
+    return noStoreJson({ photo: null, status: "missing-google-place-id", logoUrl: logo });
   }
 
   // Result carries `photo` (null on any failure) plus a SAFE diagnostic `status`
   // (+ optional numeric httpStatus / Google error enum) — no key, no raw body.
   const result = await getPlacePhoto(restaurant.googlePlaceId);
-  return noStoreJson(result);
+  return noStoreJson({ ...result, logoUrl: logo });
 }
 
 function noStoreJson(body: unknown): Response {

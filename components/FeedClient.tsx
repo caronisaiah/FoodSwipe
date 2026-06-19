@@ -25,9 +25,10 @@ export default function FeedClient() {
     <div className="flex min-h-0 flex-1 flex-col px-4 pb-3 pt-4">
       <header className="mb-3 flex shrink-0 items-center justify-between">
         <div>
-          <p className="font-display text-xl font-bold leading-none">
-            <span className="text-gradient">Food</span>
-            <span className="text-cream">Swipe</span>
+          <p className="font-display text-xl font-extrabold leading-none tracking-tight">
+            <span className="bg-gradient-to-r from-[#ffb86f] to-[#ff9900] bg-clip-text text-transparent">
+              FoodSwipe
+            </span>
           </p>
           <p className="mt-1 text-xs text-haze">📍 {preferences.location}</p>
         </div>

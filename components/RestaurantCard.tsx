@@ -1,128 +1,184 @@
+"use client";
+
 import Link from "next/link";
+import { useState } from "react";
 import type { ScoredRestaurant } from "@/lib/types";
 import { priceLabel } from "@/lib/options";
 import { cuisineEmoji } from "@/lib/emoji";
 import { formatCount } from "@/components/MetricBadge";
-import TagPill from "@/components/TagPill";
-import VideoEmbed from "@/components/VideoEmbed";
+import HeroMedia from "@/components/HeroMedia";
 
 interface RestaurantCardProps {
   scored: ScoredRestaurant;
-  /** Hide the profile link (e.g. when the card sits behind the top one). */
+  /** Interactive top card shows the action rail + CTA; peek cards don't. */
   interactive?: boolean;
+  /** Save (right-swipe) trigger, wired by the deck on the top card only. */
+  onSave?: () => void;
 }
 
 /**
- * The swipe card. Visual hierarchy: immersive video up top, a content sheet
- * below where the restaurant's "personality" reads at a glance. Purely
- * presentational — gestures + skip/save live in SwipeDeck.
+ * The swipe card (v1.8): a full-bleed restaurant-identity image with a glassy
+ * right-side action rail, a bottom scrim carrying honest signals (name, cuisine,
+ * price, food hook, review-clip count, save count), and a saffron "View Profile"
+ * CTA. No faked ratings; no video chrome. Gestures live in SwipeDeck; this is the
+ * card surface it drives.
  */
 export default function RestaurantCard({
   scored,
   interactive = true,
+  onSave,
 }: RestaurantCardProps) {
   const r = scored.restaurant;
   const poster = cuisineEmoji(r.cuisineTags);
-  const trending = r.trendScore >= 75;
-  const reasons = scored.matchReasons.slice(0, 3);
+  const trending = r.trendScore >= 75; // honest: derived from the seeded trend score
+  const topChoice = r.vibeScore >= 90; // honest: derived from the seeded vibe score
+  const clipCount = r.videos.length;
+  const hook = r.dishHighlights.slice(0, 3).join(" · ");
+  const [copied, setCopied] = useState(false);
+
+  async function shareProfile() {
+    if (typeof window === "undefined") return;
+    const url = `${window.location.origin}/restaurants/${r.id}`;
+    try {
+      if (typeof navigator !== "undefined" && navigator.share) {
+        await navigator.share({ title: r.name, text: `${r.name} — ${r.neighborhood}, DC`, url });
+        return;
+      }
+    } catch {
+      return; // user dismissed the native share sheet
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard blocked — nothing else to do
+    }
+  }
 
   return (
-    <article className="flex h-full w-full flex-col overflow-hidden rounded-[28px] bg-ink-2 ring-1 ring-white/10 shadow-2xl shadow-black/60">
-      {/* --- Video (immersive, the emotional center of the card) --- */}
-      {/* Slightly shorter on small phones so the content sheet never clips. */}
-      <div className="relative basis-[50%] shrink-0 sm:basis-[56%]">
-        <VideoEmbed video={r.videos[0]} posterEmoji={poster} fill />
-        {/* freshness / trend indicator (top-right, mirrors the platform badge) */}
-        <span
-          className={`absolute right-3 top-3 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-white/15 backdrop-blur-md ${
-            trending ? "bg-coral text-ink" : "bg-black/55 text-white"
-          }`}
-        >
-          {trending ? (
-            <>🔥 Trending this week</>
-          ) : (
-            <>🎬 {r.recentVideoCount} recent videos</>
-          )}
+    <article className="relative h-full w-full overflow-hidden rounded-[28px] bg-ink-2 ring-1 ring-white/10 shadow-2xl shadow-black/60">
+      {/* Identity hero: Google Place Photo -> logo -> FoodSwipe placeholder */}
+      <HeroMedia key={r.id} restaurantId={r.id} name={r.name} posterEmoji={poster} />
+
+      {/* Top scrim so badges stay legible over bright photos */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-black/55 to-transparent" />
+
+      {/* Trending badge (top-left) */}
+      {trending && (
+        <span className="absolute left-4 top-4 z-20 inline-flex items-center gap-1 rounded-full bg-[#e31837] px-3 py-1 text-xs font-bold tracking-wide text-white shadow-lg shadow-black/30">
+          <span aria-hidden>📈</span> TRENDING IN DC
         </span>
-      </div>
+      )}
 
-      {/* --- Content sheet --- */}
-      <div className="flex min-h-0 flex-1 flex-col gap-2 p-4">
-        {/* name + meta */}
-        <div>
-          <h2 className="line-clamp-2 font-display text-2xl font-bold leading-tight text-cream">
-            {r.name}
-          </h2>
-          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-haze">
-            <span>📍 {r.neighborhood}</span>
-            <span aria-hidden>·</span>
-            <span>{r.distanceMiles.toFixed(1)} mi</span>
-            <span aria-hidden>·</span>
-            <span className="font-semibold text-mint">{priceLabel(r.priceLevel)}</span>
-          </p>
+      {/* Right action rail — interactive top card only */}
+      {interactive && (
+        <div
+          className="absolute right-3 top-1/2 z-30 flex -translate-y-1/2 flex-col items-center gap-3"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <RailButton label="Save" accent onClick={() => onSave?.()}>
+            <span aria-hidden>♥</span>
+          </RailButton>
+          <RailButton label={copied ? "Link copied" : "Share"} onClick={shareProfile}>
+            <span aria-hidden>{copied ? "✓" : "↗"}</span>
+          </RailButton>
+          <Link
+            href={`/restaurants/${r.id}`}
+            aria-label="More info"
+            className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-xl text-white ring-1 ring-white/20 backdrop-blur-md transition hover:bg-white/20 active:scale-90"
+          >
+            <span aria-hidden>ⓘ</span>
+          </Link>
         </div>
+      )}
 
-        {/* tags — kept to a few meaningful ones, not a wall of pills */}
-        <div className="flex flex-wrap gap-1.5">
-          {r.cuisineTags.slice(0, 2).map((t) => (
-            <TagPill key={t} variant="cuisine">
-              {t}
-            </TagPill>
-          ))}
-          {r.vibeTags.slice(0, 1).map((t) => (
-            <TagPill key={t} variant="vibe">
-              {t}
-            </TagPill>
-          ))}
-          {r.dietaryTags.slice(0, 1).map((t) => (
-            <TagPill key={t} variant="dietary">
-              {t}
-            </TagPill>
-          ))}
-        </div>
+      {/* Bottom scrim */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-2/3 bg-gradient-to-t from-black/92 via-black/55 to-transparent" />
 
-        {/* dish highlights */}
-        <p className="truncate text-sm text-cream/90">
-          <span className="text-haze">🍴 Try: </span>
-          {r.dishHighlights.slice(0, 3).join(" · ")}
+      {/* Bottom info */}
+      <div className="absolute inset-x-0 bottom-0 z-20 flex flex-col gap-2.5 p-5">
+        {topChoice && (
+          <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-black/40 px-2.5 py-1 text-xs font-semibold text-[#f0c84f] ring-1 ring-[#f0c84f]/30 backdrop-blur-md">
+            <span aria-hidden>★</span> Top Choice
+          </span>
+        )}
+
+        <h2 className="font-display text-3xl font-extrabold leading-tight text-white drop-shadow-lg">
+          {r.name}
+        </h2>
+
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-white/85">
+          <span>📍 {r.neighborhood}</span>
+          <span aria-hidden className="text-white/40">·</span>
+          <span className="capitalize">{r.cuisineTags[0]}</span>
+          <span aria-hidden className="text-white/40">·</span>
+          <span className="font-semibold text-[#ffb86f]">{priceLabel(r.priceLevel)}</span>
+          <span aria-hidden className="text-white/40">·</span>
+          <span>{r.distanceMiles.toFixed(1)} mi</span>
         </p>
 
-        {/* why this matches you */}
-        <div className="rounded-2xl bg-surface/70 p-3 ring-1 ring-inset ring-white/5">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-coral">
-            Why this matches you
+        {hook && (
+          <p className="truncate text-sm text-white/75">
+            <span className="text-[#ffb86f]">🍴 </span>
+            {hook}
           </p>
-          {reasons.length > 0 ? (
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {reasons.map((reason) => (
-                <span
-                  key={reason}
-                  className="rounded-full bg-white/8 px-2 py-0.5 text-xs text-cream/90"
-                >
-                  {reason}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <p className="mt-1 line-clamp-2 text-sm text-cream/85">{r.reasonText}</p>
-          )}
+        )}
+
+        {/* Honest signal chips — NO fake star rating */}
+        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+          <Chip>
+            ▶ {clipCount} review {clipCount === 1 ? "clip" : "clips"}
+          </Chip>
+          <Chip>♥ {formatCount(r.saveCount)} saved</Chip>
         </div>
 
-        {/* footer: social proof + profile link */}
-        <div className="mt-auto flex items-center justify-between pt-1">
-          <span className="text-xs text-haze">
-            ❤️ {formatCount(r.saveCount)} saves · 🎬 {formatCount(r.videoCount)} videos
-          </span>
-          {interactive && (
-            <Link
-              href={`/restaurants/${r.id}`}
-              className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold text-cream ring-1 ring-inset ring-white/15 transition hover:bg-white/20"
-            >
-              View profile →
-            </Link>
-          )}
-        </div>
+        {/* View Profile CTA */}
+        {interactive && (
+          <Link
+            href={`/restaurants/${r.id}`}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="mt-1 flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#ff9900] to-[#e31837] py-3.5 text-center text-base font-bold text-[#241200] shadow-lg shadow-[#ff9900]/25 transition active:scale-[0.98]"
+          >
+            <span aria-hidden>🍴</span> View Profile
+          </Link>
+        )}
       </div>
     </article>
+  );
+}
+
+function Chip({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-black/45 px-3 py-1 text-xs font-medium text-white/90 ring-1 ring-white/15 backdrop-blur-md">
+      {children}
+    </span>
+  );
+}
+
+function RailButton({
+  children,
+  label,
+  onClick,
+  accent = false,
+}: {
+  children: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  accent?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      className={`flex h-12 w-12 items-center justify-center rounded-full text-xl backdrop-blur-md ring-1 transition active:scale-90 ${
+        accent
+          ? "bg-[#ff9900]/20 text-[#ff9900] ring-[#ff9900]/40 hover:bg-[#ff9900]/30"
+          : "bg-white/10 text-white ring-white/20 hover:bg-white/20"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
