@@ -56,7 +56,15 @@ export type Cuisine =
   | "vegetarian"
   | "persian"
   | "kebab"
-  | "ice cream";
+  | "ice cream"
+  // v1.5.1 launch-demo seed additions
+  | "indian"
+  | "korean"
+  | "ethiopian"
+  | "laotian"
+  | "seafood"
+  | "pizza"
+  | "bagels";
 
 /** Controlled vocab for vibe / occasion tags. */
 export type Vibe =

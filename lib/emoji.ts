@@ -35,6 +35,12 @@ const CUISINE_EMOJI: Record<string, string> = {
   "bar food": "🍟",
   seafood: "🦞",
   dinner: "🍽️",
+  // v1.5.1 launch-demo seed additions (korean + seafood already mapped above)
+  indian: "🍛",
+  ethiopian: "🍲",
+  laotian: "🥘",
+  pizza: "🍕",
+  bagels: "🥯",
 };
 
 export function cuisineEmoji(tags: string[]): string {
