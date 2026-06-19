@@ -5,9 +5,12 @@ import { getPlacePhoto } from "@/lib/places";
   GET /api/restaurants/[id]/photo  (public read, v1.5)
 
   Returns a fresh Google Place Photo for a seeded restaurant that has a
-  `googlePlaceId`, or `{ photo: null }` when there's no Place ID / no API key /
-  the place or photo can't be resolved. The client hero uses this to show a real
-  identity image and falls back to the video-style placeholder on null.
+  `googlePlaceId`. The response always includes a safe diagnostic `status`
+  (e.g. "ok" / "missing-api-key" / "place-details-failed" / "no-photos"), and
+  `photo` is null on anything but "ok". The client hero reads `photo` to show a
+  real identity image and falls back to the video-style placeholder on null; the
+  `status` (+ optional numeric httpStatus / Google error enum) is for debugging
+  and contains NO secrets and NO raw Google body.
 
   Caching: NONE. Google Places policy forbids caching the photo `name` (it can
   expire), and we never persist the ephemeral `photoUri` or attribution, so the
@@ -26,11 +29,13 @@ export async function GET(
 
   // No Place ID -> no Google call at all; the hero uses its clean fallback.
   if (!restaurant.googlePlaceId) {
-    return noStoreJson({ photo: null });
+    return noStoreJson({ photo: null, status: "missing-google-place-id" });
   }
 
-  const photo = await getPlacePhoto(restaurant.googlePlaceId);
-  return noStoreJson({ photo });
+  // Result carries `photo` (null on any failure) plus a SAFE diagnostic `status`
+  // (+ optional numeric httpStatus / Google error enum) — no key, no raw body.
+  const result = await getPlacePhoto(restaurant.googlePlaceId);
+  return noStoreJson(result);
 }
 
 function noStoreJson(body: unknown): Response {
