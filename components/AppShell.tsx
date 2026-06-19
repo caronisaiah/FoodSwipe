@@ -8,7 +8,7 @@ import BottomNav from "@/components/BottomNav";
  */
 export default function AppShell({ children }: { children: ReactNode }) {
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col border-white/5 bg-ink/40 md:border-x">
+    <div className="mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden border-white/5 bg-ink/40 md:border-x">
       {/* pad for the notch / status bar (0 on devices without one) */}
       <div className="flex min-h-0 flex-1 flex-col pt-[env(safe-area-inset-top)]">
         {children}

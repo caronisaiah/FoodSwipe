@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { PlacePhoto } from "@/lib/types";
+import MaterialIcon from "@/components/MaterialIcon";
 
 /**
  * Shared restaurant hero media — the legal-safe identity ladder used by the feed
@@ -22,11 +23,12 @@ interface PhotoApiResponse {
 export default function HeroMedia({
   restaurantId,
   name,
-  posterEmoji,
+  posterIcon,
 }: {
   restaurantId: string;
   name: string;
-  posterEmoji: string;
+  /** Material Symbols icon name shown on the placeholder (see lib/emoji cuisineIcon). */
+  posterIcon: string;
 }) {
   const [photo, setPhoto] = useState<PlacePhoto | null>(null);
   const [logoSrc, setLogoSrc] = useState<string | null>(null);
@@ -115,18 +117,20 @@ export default function HeroMedia({
     );
   }
 
-  // Tier 3 — FoodSwipe placeholder (on-brand gradient + cuisine glyph). Also the
-  // loading state, so the card never flashes black.
+  // Tier 3 — FoodSwipe placeholder. Warm, food-toned, clearly NOT near-black, so a
+  // card is always content-rich even with no Google/Logo.dev keys. Also the loading
+  // state, so the card never flashes black.
   return (
     <div className="absolute inset-0">
       <div
-        className="absolute inset-0 bg-gradient-to-br from-[#2a1c10] via-[#0e0e12] to-[#1a0f14]"
+        className="absolute inset-0 bg-[radial-gradient(120%_80%_at_30%_18%,#6b431a_0%,transparent_55%),radial-gradient(110%_90%_at_82%_88%,#5a1633_0%,transparent_55%),linear-gradient(160deg,#2a2012_0%,#1a1622_55%,#0e0e12_100%)]"
         aria-hidden
       />
       <div className="absolute inset-0 flex items-center justify-center">
-        <span className="text-7xl opacity-80 drop-shadow-lg" aria-hidden>
-          {posterEmoji}
-        </span>
+        <MaterialIcon
+          name={posterIcon}
+          className="text-[128px] text-white/30 drop-shadow-[0_10px_30px_rgba(0,0,0,0.55)]"
+        />
       </div>
     </div>
   );

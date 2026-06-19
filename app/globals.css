@@ -92,6 +92,53 @@ textarea:focus-visible,
   );
 }
 
+/* Feed discovery canvas (v1.8): bottom-up scrim for text legibility over the
+   full-bleed hero, plus the subtle "tap for profile" bounce affordance. */
+.crave-gradient {
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0) 0%,
+    rgba(0, 0, 0, 0.55) 42%,
+    rgba(0, 0, 0, 0.96) 100%
+  );
+}
+
+@keyframes bounce-subtle {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+.bounce-subtle {
+  animation: bounce-subtle 2s infinite ease-in-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bounce-subtle {
+    animation: none;
+  }
+}
+
+/* Material Symbols (icon font, loaded in app/layout.tsx). Size is driven by
+   font-size; FILL is toggled per-icon via inline font-variation-settings. */
+.material-symbols-outlined {
+  font-family: "Material Symbols Outlined";
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+  -webkit-font-feature-settings: "liga";
+  -webkit-font-smoothing: antialiased;
+}
+
 /* Ambient glow used behind the phone frame on desktop */
 .ambient-glow::before {
   content: "";

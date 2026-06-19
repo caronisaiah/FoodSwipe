@@ -85,14 +85,14 @@ export default function SwipeDeck({
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="absolute inset-0 flex flex-col">
       {/* Screen-reader feedback + usage hint */}
       <p role="status" aria-live="polite" className="sr-only">
         {announcement}
       </p>
       <p id="swipe-hint" className="sr-only">
-        Swipe or drag cards left to skip, right to save. You can also use the Skip
-        and Save buttons, or the Left and Right arrow keys.
+        Swipe or drag cards left to skip, right to save. You can also use the Left
+        and Right arrow keys, the Save button on the card, or open the full profile.
       </p>
 
       {/* Deck area */}
@@ -204,14 +204,14 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
         <motion.div
           aria-hidden
           style={{ opacity: saveOpacity }}
-          className="pointer-events-none absolute right-5 top-6 z-20 rotate-12 rounded-xl border-4 border-mint px-3 py-1 font-display text-3xl font-extrabold tracking-wider text-mint"
+          className="pointer-events-none absolute right-5 top-24 z-30 rotate-12 rounded-xl border-4 border-[#ffc082] px-3 py-1 font-display text-3xl font-extrabold tracking-wider text-[#ffc082]"
         >
           SAVE
         </motion.div>
         <motion.div
           aria-hidden
           style={{ opacity: skipOpacity }}
-          className="pointer-events-none absolute left-5 top-6 z-20 -rotate-12 rounded-xl border-4 border-coral px-3 py-1 font-display text-3xl font-extrabold tracking-wider text-coral"
+          className="pointer-events-none absolute left-5 top-24 z-30 -rotate-12 rounded-xl border-4 border-[#d6042f] px-3 py-1 font-display text-3xl font-extrabold tracking-wider text-[#d6042f]"
         >
           SKIP
         </motion.div>
@@ -234,7 +234,7 @@ function EmptyState({
   total: number;
 }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-5 px-6 text-center">
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 px-6 text-center">
       <div className="text-6xl">🎉</div>
       <div>
         <h2 className="font-display text-2xl font-bold text-cream">
