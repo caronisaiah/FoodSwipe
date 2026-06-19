@@ -21,7 +21,12 @@ import { normalizeVideo } from "./video";
  */
 
 const PREFS_KEY = "foodswipe.preferences.v1";
-const SWIPES_KEY = "foodswipe.swipes.v1";
+// v2: bumped for the v1.7 launch-demo seed refresh so accumulated swipe history
+// (which referenced the pre-refresh restaurant set) starts clean and the full
+// refreshed deck reappears. NOTE: saves share this store, so this also resets
+// saved restaurants — accepted for the dataset refresh. A future version should
+// split seen/swiped from saved/favorites so a refresh needn't clear saves.
+const SWIPES_KEY = "foodswipe.swipes.v2";
 const MANUAL_VIDEOS_KEY = "foodswipe.manualVideos.v1";
 
 export const DEFAULT_PREFERENCES: UserPreferences = {
