@@ -132,13 +132,19 @@ restaurants stay in [`lib/seed/restaurants.ts`](lib/seed/restaurants.ts).
 ### Restaurant photos (Google Places)
 
 A restaurant's profile hero should be the restaurant itself — food, storefront,
-or interior — not a video thumbnail. When a seeded restaurant carries a
-`googlePlaceId` and `GOOGLE_MAPS_API_KEY` is set, the hero shows a real **Google
-Place Photo**; otherwise it falls back to the existing video-style placeholder. A
-YouTube thumbnail is never promoted to a hero.
+or interior — not a video thumbnail. The hero resolves in three honest tiers:
 
-This is a deliberately small, legal-safe proof wired on **3 restaurants** (Le
-Diplomate, Ben's Chili Bowl, Sushi Taro):
+1. a real **Google Place Photo** (when the restaurant has a `googlePlaceId` and
+   `GOOGLE_MAPS_API_KEY` is set);
+2. otherwise the restaurant's **brand logo** on a premium centered card (when it
+   has a known `websiteDomain` and `LOGODEV_TOKEN` is set);
+3. otherwise the FoodSwipe **placeholder** (cuisine emoji + on-brand gradient).
+
+A YouTube thumbnail is never promoted to a hero.
+
+The Place Photo tier is wired on the restaurants that carry a verified
+`googlePlaceId` (6 today); the others rely on the logo/placeholder tiers. Either
+way the rules are the same:
 
 - **Store only the Place ID.** `googlePlaceId` is the *only* Google datum kept
   long-term, in [`lib/seed/restaurants.ts`](lib/seed/restaurants.ts) — Google's
@@ -157,14 +163,23 @@ Diplomate, Ben's Chili Bowl, Sushi Taro):
   here because it would proxy the image through `/_next/image`.
 - **Always attribute.** Any `authorAttributions` Google returns are displayed on
   the photo, as the policy requires.
+- **Logo fallback (no rehosting either).** When there's no Place Photo but the
+  restaurant has an official `websiteDomain`, the hero shows its brand logo via
+  [Logo.dev](https://logo.dev) on a clean centered card (`object-contain`, never
+  stretched or cropped full-bleed). The logo URL is built server-side in
+  [`lib/logos.ts`](lib/logos.ts) and the browser loads it directly from Logo.dev's
+  CDN — never downloaded, stored, or rehosted. The publishable token lives in
+  `LOGODEV_TOKEN` (not `NEXT_PUBLIC_`). If the logo fails to load, the hero falls
+  through to the placeholder.
 - **Caching decision: `no-store`.** Google forbids caching the photo `name` (it
   can expire), and we never persist `photoUri` or attribution, so the route sends
   `Cache-Control: no-store` and every request resolves fresh. This is the
   conservative, policy-correct choice; a future version could add a short,
   policy-compliant edge cache if call volume warrants it.
 - **Degrades cleanly.** Missing key, missing/stale Place ID, place not found, no
-  photos, or any quota/network error all resolve to the placeholder hero — the
-  profile never breaks. Place IDs were verified from public map URLs and should
+  photos, or any quota/network error all resolve to the logo tier (if a domain is
+  set) or the placeholder hero — the profile never breaks. Place IDs were verified
+  from public map URLs and should
   be re-confirmed with Google's Place ID Finder; Google also recommends
   refreshing Place IDs older than 12 months.
 
@@ -224,6 +239,7 @@ DATABASE_URL="postgresql://USER:PASSWORD@HOST/DB?sslmode=require"   # Neon conne
 FOODSWIPE_ADMIN_SECRET="a-long-random-string"                       # gate for admin writes
 YOUTUBE_API_KEY="..."                                              # optional — YouTube metadata enrichment
 GOOGLE_MAPS_API_KEY="..."                                          # optional — Google Place Photos on profiles
+LOGODEV_TOKEN="pk_..."                                             # optional — brand-logo hero fallback (publishable token)
 ```
 
 `DATABASE_URL` and `FOODSWIPE_ADMIN_SECRET` enable shared persistence (the app
@@ -235,12 +251,21 @@ key. The key is read server-side only and never logged.
 
 `GOOGLE_MAPS_API_KEY` is optional too: with it, restaurants that carry a
 `googlePlaceId` show a real Google Place Photo as their profile hero; without it
-(or on any failure) the hero falls back to the existing placeholder. Get a key
+(or on any failure) the hero falls back to the logo/placeholder tiers. Get a key
 from the Google Cloud console — enable the **Places API (New)** and create an API
 key. Like the others it is **server-only**: it is read only in `lib/places.ts`,
 sent to Google via the `X-Goog-Api-Key` header, never prefixed with
 `NEXT_PUBLIC_`, never exposed to the client, and never logged. See
 [Restaurant photos](#restaurant-photos-google-places) for the legal-safe flow.
+
+`LOGODEV_TOKEN` is optional: with it, a restaurant that has an official
+`websiteDomain` but no Google Place Photo shows its **brand logo** on a premium
+centered card instead of the generic placeholder. It is a [Logo.dev](https://logo.dev)
+**publishable** image token (`pk_...`) — designed to appear in image URLs — but we
+keep it in a non-`NEXT_PUBLIC_` env var so it is not inlined into the client JS
+bundle: the logo URL is built server-side in `lib/logos.ts` and the browser loads
+the image directly from Logo.dev's CDN. No token (or a failed logo load) falls
+through to the placeholder. We never download, store, crop, or rehost the logo.
 
 Create the table once. The simplest path:
 

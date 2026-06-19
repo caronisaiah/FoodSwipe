@@ -168,6 +168,14 @@ export interface Restaurant {
    * back to the existing video-style placeholder. See `lib/places.ts`.
    */
   googlePlaceId?: string;
+  /**
+   * Optional official website domain (bare host, e.g. "rosesluxury.com"). When
+   * set and no Google Place Photo is available, the profile hero shows the
+   * restaurant's brand logo (via Logo.dev) instead of the generic placeholder —
+   * loaded directly from the provider's CDN, never downloaded/stored/rehosted.
+   * See `lib/logos.ts`.
+   */
+  websiteDomain?: string;
   /** Placeholder coordinates — not used for real distance yet. */
   lat: number;
   lng: number;

@@ -3,6 +3,7 @@ import type { Restaurant } from "@/lib/types";
 import { cuisineEmoji } from "@/lib/emoji";
 import TagPill from "@/components/TagPill";
 import RestaurantHero from "@/components/RestaurantHero";
+import { logoUrl } from "@/lib/logos";
 import RestaurantVideos from "@/components/RestaurantVideos";
 import GoThere from "@/components/GoThere";
 import MetricBadge, { formatCount } from "@/components/MetricBadge";
@@ -40,6 +41,8 @@ export default function RestaurantProfile({ restaurant: r }: { restaurant: Resta
           "videos[0] shown as both hero and first review clip" duplication. */}
       <RestaurantHero
         restaurantId={r.id}
+        hasGooglePlaceId={Boolean(r.googlePlaceId)}
+        logoSrc={logoUrl(r.websiteDomain)}
         fallbackVideo={r.videos[0]}
         posterEmoji={poster}
         name={r.name}
