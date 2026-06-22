@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { motion } from "framer-motion";
 import type { ScoredRestaurant } from "@/lib/types";
 import { priceLabel } from "@/lib/options";
 import { cuisineIcon } from "@/lib/emoji";
@@ -15,6 +16,8 @@ interface RestaurantCardProps {
   interactive?: boolean;
   /** Save (right-swipe) trigger, wired by the deck on the top card only. */
   onSave?: () => void;
+  /** Open the in-feed profile sheet for this restaurant. */
+  onOpenProfile?: (restaurantId: string) => void;
 }
 
 /**
@@ -29,6 +32,7 @@ export default function RestaurantCard({
   scored,
   interactive = true,
   onSave,
+  onOpenProfile,
 }: RestaurantCardProps) {
   const r = scored.restaurant;
   const poster = cuisineIcon(r.cuisineTags);
@@ -90,7 +94,7 @@ export default function RestaurantCard({
             label={copied ? "Copied" : "Share"}
             onClick={shareProfile}
           />
-          <RailItem icon="info" label="Info" href={`/restaurants/${r.id}`} />
+          <RailItem icon="info" label="Info" onClick={() => onOpenProfile?.(r.id)} />
         </div>
       )}
 
@@ -133,21 +137,31 @@ export default function RestaurantCard({
         </div>
       </div>
 
-      {/* Tap-for-profile affordance (styled like the Stitch swipe-up hint) */}
+      {/* Swipe-up / tap affordance — opens the in-feed profile sheet. A dedicated
+          vertical-drag zone (narrow, centered) so it never competes with the card's
+          horizontal save/skip swipe; stopPropagation keeps the card drag from firing. */}
       {interactive && (
-        <Link
-          href={`/restaurants/${r.id}`}
+        <motion.button
+          type="button"
+          aria-label={`Swipe up for ${r.name} profile`}
+          onClick={() => onOpenProfile?.(r.id)}
           onPointerDown={(e) => e.stopPropagation()}
-          aria-label={`View ${r.name} profile`}
-          className="absolute inset-x-0 bottom-5 z-20 flex flex-col items-center"
+          drag="y"
+          dragConstraints={{ top: 0, bottom: 0 }}
+          dragElastic={{ top: 0.6, bottom: 0 }}
+          dragSnapToOrigin
+          onDragEnd={(_, info) => {
+            if (info.offset.y < -40 || info.velocity.y < -350) onOpenProfile?.(r.id);
+          }}
+          className="absolute bottom-5 left-1/2 z-20 flex -translate-x-1/2 touch-none flex-col items-center"
         >
           <span className="bounce-subtle flex flex-col items-center gap-2 opacity-70">
             <span aria-hidden className="h-1 w-12 rounded-full bg-white/40" />
             <span className="text-[11px] font-bold uppercase tracking-[0.25em] text-white/85">
-              Tap for profile
+              Swipe up for profile
             </span>
           </span>
-        </Link>
+        </motion.button>
       )}
     </article>
   );

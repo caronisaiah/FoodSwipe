@@ -4,25 +4,30 @@ import { useEffect, useState } from "react";
 import type { PlacePhoto, PriceLevel, Video } from "@/lib/types";
 import { priceLabel } from "@/lib/options";
 import VideoEmbed from "@/components/VideoEmbed";
+import MaterialIcon from "@/components/MaterialIcon";
 
 /**
  * Profile hero — three honest fallback tiers:
  *   1. Google Place Photo — when the restaurant has a `googlePlaceId` and the
- *      photo fetch succeeds. Loaded directly from Google, never rehosted;
- *      required attribution shown on top.
- *   2. Brand logo card — when there's no usable photo but a known `websiteDomain`
- *      (so `logoSrc` is set). A premium centered logo on a clean dark card,
- *      loaded directly from Logo.dev's CDN (object-contain, never stretched or
- *      cropped full-bleed). `logoSrc` is built server-side (see lib/logos.ts).
- *   3. FoodSwipe placeholder — the existing video-style poster, used as the final
- *      fallback and also if the logo image fails to load.
+ *      photo fetch succeeds. Loaded directly from Google, never rehosted.
+ *   2. Brand logo card — when there's no usable photo but a known `websiteDomain`.
+ *      Loaded directly from Logo.dev's CDN (object-contain, never stretched).
+ *   3. FoodSwipe placeholder — the video-style poster, also used if the logo errors.
  *
- * A YouTube thumbnail is NEVER used as a restaurant hero.
+ * Self-contained: both the photo URL and the logo URL come from a single
+ * `/api/restaurants/[id]/photo` fetch (the route builds `logoUrl` server-side, so
+ * the token never reaches the client). This makes the hero — and the profile body
+ * that contains it — fully client-renderable, so it works inside the in-feed
+ * ProfileSheet as well as the standalone /restaurants/[id] page. A YouTube
+ * thumbnail is NEVER used as a restaurant hero.
  */
+interface PhotoApiResponse {
+  photo?: PlacePhoto | null;
+  logoUrl?: string | null;
+}
+
 export default function RestaurantHero({
   restaurantId,
-  hasGooglePlaceId,
-  logoSrc,
   fallbackVideo,
   posterEmoji,
   name,
@@ -31,8 +36,6 @@ export default function RestaurantHero({
   priceLevel,
 }: {
   restaurantId: string;
-  hasGooglePlaceId: boolean;
-  logoSrc: string | null;
   fallbackVideo: Video;
   posterEmoji: string;
   name: string;
@@ -41,45 +44,49 @@ export default function RestaurantHero({
   priceLevel: PriceLevel;
 }) {
   const [photo, setPhoto] = useState<PlacePhoto | null>(null);
-  // With no place id we never fetch, so treat the photo step as resolved right
-  // away and let the logo / placeholder tiers take over (no loading flash).
-  const [photoResolved, setPhotoResolved] = useState(!hasGooglePlaceId);
+  const [logoSrc, setLogoSrc] = useState<string | null>(null);
+  const [resolved, setResolved] = useState(false);
   const [logoFailed, setLogoFailed] = useState(false);
 
   useEffect(() => {
-    if (!hasGooglePlaceId) return; // no place id -> no Google call at all
     let cancelled = false;
     void (async () => {
       try {
         const res = await fetch(`/api/restaurants/${restaurantId}/photo`);
-        const data = (await res.json()) as { photo?: PlacePhoto | null };
+        const data = (await res.json()) as PhotoApiResponse;
         const p = data.photo;
-        const next: PlacePhoto | null =
+        const nextPhoto: PlacePhoto | null =
           p && typeof p.photoUri === "string" && p.photoUri.length > 0
             ? {
                 photoUri: p.photoUri,
                 attributions: Array.isArray(p.attributions) ? p.attributions : [],
               }
             : null;
+        const nextLogo =
+          typeof data.logoUrl === "string" && data.logoUrl.length > 0
+            ? data.logoUrl
+            : null;
         if (!cancelled) {
-          setPhoto(next);
-          setPhotoResolved(true);
+          setPhoto(nextPhoto);
+          setLogoSrc(nextLogo);
+          setResolved(true);
         }
       } catch {
         if (!cancelled) {
           setPhoto(null);
-          setPhotoResolved(true);
+          setLogoSrc(null);
+          setResolved(true);
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [restaurantId, hasGooglePlaceId]);
+  }, [restaurantId]);
 
-  // Logo tier: only once the photo step has resolved with no photo, a logo URL
-  // exists, and the logo image hasn't errored out.
-  const showLogo = !photo && photoResolved && Boolean(logoSrc) && !logoFailed;
+  // Logo tier: only once the fetch resolved with no photo, a logo URL exists, and
+  // the logo image hasn't errored out.
+  const showLogo = !photo && resolved && Boolean(logoSrc) && !logoFailed;
 
   return (
     <div className="relative mx-4 mt-1 aspect-[4/5] overflow-hidden rounded-[28px] ring-1 ring-white/10">
@@ -110,7 +117,9 @@ export default function RestaurantHero({
           {name}
         </h1>
         <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-white/85">
-          <span>📍 {neighborhood}</span>
+          <span className="inline-flex items-center gap-1">
+            <MaterialIcon name="location_on" className="text-[15px]" /> {neighborhood}
+          </span>
           <span aria-hidden>·</span>
           <span>{distanceMiles.toFixed(1)} mi away</span>
           <span aria-hidden>·</span>
@@ -164,9 +173,8 @@ function LogoCard({
 }
 
 /**
- * Required Google Place Photo attribution. Google's policy: if a photo has
- * author attributions, they must be shown wherever the image appears. Placed
- * top-left so the name gradient at the bottom never hides it.
+ * Required Google Place Photo attribution. Google's policy: if a photo has author
+ * attributions, they must be shown wherever the image appears.
  */
 function PhotoAttribution({
   attributions,
@@ -176,7 +184,7 @@ function PhotoAttribution({
   const items = attributions.filter((a) => a.displayName.trim().length > 0);
   return (
     <span className="absolute left-3 top-3 z-10 inline-flex max-w-[80%] items-center gap-1 rounded-full bg-black/55 px-2.5 py-1 text-[11px] font-medium text-white/90 backdrop-blur-md ring-1 ring-white/15">
-      <span aria-hidden>📷</span>
+      <MaterialIcon name="photo_camera" className="text-[13px]" />
       <span className="truncate">
         {items.length > 0 ? (
           <>

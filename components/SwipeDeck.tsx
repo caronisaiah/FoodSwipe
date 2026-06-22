@@ -25,6 +25,10 @@ interface SwipeDeckProps {
   /** Ids already swiped — filtered out of the live queue. */
   swipedIds: string[];
   onSwipe: (restaurantId: string, direction: SwipeDirection) => void;
+  /** Open the in-feed profile sheet for a restaurant. */
+  onOpenProfile: (restaurantId: string) => void;
+  /** When the profile sheet is open, ignore deck keyboard shortcuts. */
+  paused?: boolean;
   /** Live count of saved restaurants, shown on the empty state. */
   savedCount: number;
   /** Clear swipes + start the deck over. */
@@ -35,6 +39,8 @@ export default function SwipeDeck({
   deck,
   swipedIds,
   onSwipe,
+  onOpenProfile,
+  paused = false,
   savedCount,
   onReset,
 }: SwipeDeckProps) {
@@ -67,16 +73,18 @@ export default function SwipeDeck({
     [onSwipe, top, next],
   );
 
-  // Desktop affordance: arrow keys swipe.
+  // Desktop affordance: arrow keys swipe (left/right) or open the profile (up).
+  // Paused while the profile sheet is open so keys don't swipe the card behind it.
   useEffect(() => {
-    if (!top) return;
+    if (!top || paused) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "ArrowLeft") cardRef.current?.swipe("left");
       else if (e.key === "ArrowRight") cardRef.current?.swipe("right");
+      else if (e.key === "ArrowUp") onOpenProfile(top.restaurant.id);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [top]);
+  }, [top, paused, onOpenProfile]);
 
   if (!top) {
     return (
@@ -118,6 +126,7 @@ export default function SwipeDeck({
           key={top.restaurant.id}
           scored={top}
           onDecide={handleDecide}
+          onOpenProfile={onOpenProfile}
         />
       </div>
     </div>
@@ -133,10 +142,11 @@ interface SwipeCardHandle {
 interface SwipeCardProps {
   scored: ScoredRestaurant;
   onDecide: (direction: SwipeDirection) => void;
+  onOpenProfile: (restaurantId: string) => void;
 }
 
 const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
-  function SwipeCard({ scored, onDecide }, ref) {
+  function SwipeCard({ scored, onDecide, onOpenProfile }, ref) {
     const x = useMotionValue(0);
     const controls = useAnimationControls();
     const decided = useRef(false);
@@ -216,7 +226,11 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
           SKIP
         </motion.div>
 
-        <RestaurantCard scored={scored} onSave={() => leave("right")} />
+        <RestaurantCard
+          scored={scored}
+          onSave={() => leave("right")}
+          onOpenProfile={onOpenProfile}
+        />
       </motion.div>
     );
   },
