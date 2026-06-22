@@ -19,7 +19,7 @@ import MaterialIcon from "@/components/MaterialIcon";
  * `/api/restaurants/[id]/photo` fetch (the route builds `logoUrl` server-side, so
  * the token never reaches the client). This makes the hero — and the profile body
  * that contains it — fully client-renderable, so it works inside the in-feed
- * ProfileSheet as well as the standalone /restaurants/[id] page. A YouTube
+ * scrollable card as well as the standalone /restaurants/[id] page. A YouTube
  * thumbnail is NEVER used as a restaurant hero.
  */
 interface PhotoApiResponse {
@@ -36,6 +36,7 @@ export default function RestaurantHero({
   distanceMiles,
   priceLevel,
   heroStyle,
+  variant = "page",
 }: {
   restaurantId: string;
   fallbackVideo: Video;
@@ -44,9 +45,12 @@ export default function RestaurantHero({
   neighborhood: string;
   distanceMiles: number;
   priceLevel: PriceLevel;
-  /** Optional motion style (opacity/scale) for the scroll-linked fade in the
-   *  in-feed ProfileSheet. Omitted on the standalone route -> hero is static. */
+  /** Optional motion style (opacity/scale) for the scroll-linked fade. Omitted on
+   *  the standalone route -> hero is static. */
   heroStyle?: MotionStyle;
+  /** "page" = inset rounded hero (standalone route); "feed" = full-bleed hero that
+   *  fills the top of the scrollable feed card (the card frame supplies rounding). */
+  variant?: "page" | "feed";
 }) {
   const [photo, setPhoto] = useState<PlacePhoto | null>(null);
   const [logoSrc, setLogoSrc] = useState<string | null>(null);
@@ -96,7 +100,11 @@ export default function RestaurantHero({
   return (
     <motion.div
       style={heroStyle}
-      className="relative mx-4 mt-1 aspect-[4/5] overflow-hidden rounded-[28px] ring-1 ring-white/10"
+      className={
+        variant === "feed"
+          ? "relative aspect-[4/5] w-full overflow-hidden"
+          : "relative mx-4 mt-1 aspect-[4/5] overflow-hidden rounded-[28px] ring-1 ring-white/10"
+      }
     >
       {photo ? (
         <>

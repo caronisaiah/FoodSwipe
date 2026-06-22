@@ -14,16 +14,20 @@ import MaterialIcon from "@/components/MaterialIcon";
  * Reusable restaurant-profile body (hero + tags + hype + dishes + best-for +
  * review videos + go-there). Fully client-renderable from a `Restaurant`, so it
  * is shared by BOTH the standalone `/restaurants/[id]` page (via
- * `RestaurantProfile`) and the in-feed `ProfileSheet`. Each caller supplies its
- * own chrome (page top bar vs sheet handle/close); this is just the content.
+ * `RestaurantProfile`) and the in-feed scrollable feed card (`SwipeDeck`). Each
+ * caller supplies its own chrome (page top bar vs feed-card actions); this is just
+ * the content. Pass `variant="feed"` for the full-bleed hero on the feed card.
  */
 export default function RestaurantProfileView({
   restaurant: r,
   heroStyle,
+  variant = "page",
 }: {
   restaurant: Restaurant;
-  /** Scroll-linked motion style for the hero (in-feed sheet only). */
+  /** Scroll-linked motion style for the hero (in-feed card only). */
   heroStyle?: MotionStyle;
+  /** "page" = standalone route; "feed" = full-bleed hero for the scrollable feed card. */
+  variant?: "page" | "feed";
 }) {
   const poster = cuisineEmoji(r.cuisineTags);
   // Distinct emojis from the cuisine tags so carousel clips don't all look alike.
@@ -44,6 +48,7 @@ export default function RestaurantProfileView({
         distanceMiles={r.distanceMiles}
         priceLevel={r.priceLevel}
         heroStyle={heroStyle}
+        variant={variant}
       />
 
       <div className="space-y-7 px-4 pt-6">

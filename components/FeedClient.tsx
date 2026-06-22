@@ -1,13 +1,11 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
-import { AnimatePresence } from "framer-motion";
+import { useMemo } from "react";
 import Link from "next/link";
-import { RESTAURANTS, getRestaurantById } from "@/lib/seed/restaurants";
+import { RESTAURANTS } from "@/lib/seed/restaurants";
 import { rankRestaurants } from "@/lib/recommendations";
 import { usePreferences, useSwipes, useHydrated } from "@/lib/storage";
 import SwipeDeck from "@/components/SwipeDeck";
-import ProfileSheet from "@/components/ProfileSheet";
 import MaterialIcon from "@/components/MaterialIcon";
 
 /**
@@ -22,14 +20,6 @@ export default function FeedClient() {
   const { preferences } = usePreferences();
   const { recordSwipe, resetSwipes, savedIds, swipedIds } = useSwipes();
 
-  // In-feed profile overlay: which restaurant's profile sheet is open (if any).
-  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
-  const openProfile = useCallback((id: string) => setActiveProfileId(id), []);
-  const closeProfile = useCallback(() => setActiveProfileId(null), []);
-  const activeRestaurant = activeProfileId
-    ? (getRestaurantById(activeProfileId) ?? null)
-    : null;
-
   const deck = useMemo(
     () => rankRestaurants(RESTAURANTS, preferences),
     [preferences],
@@ -37,14 +27,12 @@ export default function FeedClient() {
 
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden bg-ink">
-      {/* Full-bleed discovery canvas */}
+      {/* Full-bleed discovery canvas — each card IS the scrollable profile */}
       {hydrated ? (
         <SwipeDeck
           deck={deck}
           swipedIds={swipedIds}
           onSwipe={recordSwipe}
-          onOpenProfile={openProfile}
-          paused={activeRestaurant !== null}
           savedCount={savedIds.length}
           onReset={resetSwipes}
         />
@@ -69,13 +57,6 @@ export default function FeedClient() {
           <MaterialIcon name="notifications" className="text-[26px]" />
         </span>
       </div>
-
-      {/* In-feed profile overlay (feed stays mounted behind it) */}
-      <AnimatePresence>
-        {activeRestaurant && (
-          <ProfileSheet restaurant={activeRestaurant} onClose={closeProfile} />
-        )}
-      </AnimatePresence>
     </div>
   );
 }

@@ -6,18 +6,21 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useMemo,
   useRef,
   useState,
+  useMemo,
 } from "react";
 import {
   motion,
   useAnimationControls,
   useMotionValue,
+  useScroll,
   useTransform,
 } from "framer-motion";
 import type { ScoredRestaurant, SwipeDirection } from "@/lib/types";
 import RestaurantCard from "@/components/RestaurantCard";
+import RestaurantProfileView from "@/components/RestaurantProfileView";
+import MaterialIcon from "@/components/MaterialIcon";
 
 interface SwipeDeckProps {
   /** Full ranked list. */
@@ -25,10 +28,6 @@ interface SwipeDeckProps {
   /** Ids already swiped — filtered out of the live queue. */
   swipedIds: string[];
   onSwipe: (restaurantId: string, direction: SwipeDirection) => void;
-  /** Open the in-feed profile sheet for a restaurant. */
-  onOpenProfile: (restaurantId: string) => void;
-  /** When the profile sheet is open, ignore deck keyboard shortcuts. */
-  paused?: boolean;
   /** Live count of saved restaurants, shown on the empty state. */
   savedCount: number;
   /** Clear swipes + start the deck over. */
@@ -39,16 +38,13 @@ export default function SwipeDeck({
   deck,
   swipedIds,
   onSwipe,
-  onOpenProfile,
-  paused = false,
   savedCount,
   onReset,
 }: SwipeDeckProps) {
   const cardRef = useRef<SwipeCardHandle>(null);
 
-  // The live queue is just the deck minus anything already swiped. Recording a
-  // swipe drops the top card, so queue[0] is always the current card — no index
-  // bookkeeping, no risk of the deck reshuffling under the user.
+  // The live queue is the deck minus anything already swiped. Recording a swipe
+  // drops the top card, so queue[0] is always the current card — no index drift.
   const swipedSet = useMemo(() => new Set(swipedIds), [swipedIds]);
   const queue = useMemo(
     () => deck.filter((s) => !swipedSet.has(s.restaurant.id)),
@@ -57,7 +53,6 @@ export default function SwipeDeck({
   const top = queue[0];
   const next = queue[1];
 
-  // Announced to screen readers after each decision (no visual change).
   const [announcement, setAnnouncement] = useState("");
 
   const handleDecide = useCallback(
@@ -73,18 +68,16 @@ export default function SwipeDeck({
     [onSwipe, top, next],
   );
 
-  // Desktop affordance: arrow keys swipe (left/right) or open the profile (up).
-  // Paused while the profile sheet is open so keys don't swipe the card behind it.
+  // Desktop affordance: arrow keys save/skip the current card.
   useEffect(() => {
-    if (!top || paused) return;
+    if (!top) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "ArrowLeft") cardRef.current?.swipe("left");
       else if (e.key === "ArrowRight") cardRef.current?.swipe("right");
-      else if (e.key === "ArrowUp") onOpenProfile(top.restaurant.id);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [top, paused, onOpenProfile]);
+  }, [top]);
 
   if (!top) {
     return (
@@ -99,8 +92,8 @@ export default function SwipeDeck({
         {announcement}
       </p>
       <p id="swipe-hint" className="sr-only">
-        Swipe or drag cards left to skip, right to save. You can also use the Left
-        and Right arrow keys, the Save button on the card, or open the full profile.
+        Scroll down through each restaurant&apos;s profile. Swipe or drag left to
+        skip, right to save. You can also use the Left and Right arrow keys.
       </p>
 
       {/* Deck area */}
@@ -111,14 +104,14 @@ export default function SwipeDeck({
         className="relative min-h-0 flex-1"
       >
         {next && (
-          // Rendered before the top card so it paints underneath (no z-index needed).
-          // inert + aria-hidden keep its links out of the tab order / a11y tree.
+          // Lightweight peek behind the top card (no profile body / no video fetch).
+          // Rendered before the top card so it paints underneath.
           <div
             aria-hidden
             inert
             className="pointer-events-none absolute inset-0 scale-[0.94] translate-y-3 opacity-50"
           >
-            <RestaurantCard scored={next} interactive={false} />
+            <RestaurantCard scored={next} />
           </div>
         )}
         <SwipeCard
@@ -126,7 +119,6 @@ export default function SwipeDeck({
           key={top.restaurant.id}
           scored={top}
           onDecide={handleDecide}
-          onOpenProfile={onOpenProfile}
         />
       </div>
     </div>
@@ -142,27 +134,38 @@ interface SwipeCardHandle {
 interface SwipeCardProps {
   scored: ScoredRestaurant;
   onDecide: (direction: SwipeDirection) => void;
-  onOpenProfile: (restaurantId: string) => void;
 }
 
+/**
+ * The active feed card — a Hinge-style scrollable restaurant profile. The
+ * `motion.div` owns HORIZONTAL drag (save/skip); a native scroll container inside
+ * owns VERTICAL scroll (the profile body). `touch-action: pan-y` on both lets the
+ * browser route vertical pans to native scroll and horizontal pans to framer, so
+ * they coexist without fighting. The hero fades on scroll via `useScroll` on the
+ * card's own scroll container. No "open" step — the card IS the profile.
+ */
 const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
-  function SwipeCard({ scored, onDecide, onOpenProfile }, ref) {
+  function SwipeCard({ scored, onDecide }, ref) {
+    const r = scored.restaurant;
+    const trending = r.trendScore >= 75;
+    const topChoice = r.vibeScore >= 90;
+
     const x = useMotionValue(0);
     const controls = useAnimationControls();
     const decided = useRef(false);
+    const scrollRef = useRef<HTMLDivElement>(null);
+    const [copied, setCopied] = useState(false);
 
-    // Rotate is derived from x (single source of truth). The range extends to
-    // ±720 so the fling-off in leave() actually reaches its full tilt rather
-    // than being clamped — no separate `rotate` keyframe needed on the controls.
-    const rotate = useTransform(
-      x,
-      [-720, -300, 0, 300, 720],
-      [-22, -14, 0, 14, 22],
-    );
+    const rotate = useTransform(x, [-720, -300, 0, 300, 720], [-22, -14, 0, 14, 22]);
     const saveOpacity = useTransform(x, [40, 140], [0, 1]);
     const skipOpacity = useTransform(x, [-140, -40], [1, 0]);
 
-    // Entrance: rise + scale into place (from the `initial` state on the div).
+    // Scroll-linked hero fade — tracks this card's own scroll container.
+    const { scrollY } = useScroll({ container: scrollRef });
+    const heroOpacity = useTransform(scrollY, [0, 320], [1, 0]);
+    const heroScale = useTransform(scrollY, [0, 320], [1, 1.04]);
+
+    // Entrance: rise + scale into place.
     useEffect(() => {
       controls.start({
         scale: 1,
@@ -188,21 +191,42 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
 
     useImperativeHandle(ref, () => ({ swipe: leave }), [leave]);
 
+    async function shareProfile() {
+      if (typeof window === "undefined") return;
+      const url = `${window.location.origin}/restaurants/${r.id}`;
+      try {
+        if (typeof navigator !== "undefined" && navigator.share) {
+          await navigator.share({ title: r.name, text: `${r.name} — ${r.neighborhood}, DC`, url });
+          return;
+        }
+      } catch {
+        return; // user dismissed the native share sheet
+      }
+      try {
+        await navigator.clipboard.writeText(url);
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      } catch {
+        // clipboard blocked — nothing else to do
+      }
+    }
+
     return (
       <motion.div
-        className="absolute inset-0 cursor-grab touch-pan-y will-change-transform active:cursor-grabbing"
+        className="absolute inset-0 cursor-grab touch-pan-y overflow-hidden rounded-[28px] bg-ink-2 ring-1 ring-white/10 shadow-2xl shadow-black/60 will-change-transform active:cursor-grabbing"
         style={{ x, rotate }}
         initial={{ scale: 0.96, y: 14, opacity: 0 }}
         animate={controls}
         drag="x"
         dragElastic={0.55}
         dragSnapToOrigin={false}
-        whileTap={{ scale: 0.99 }}
+        whileTap={{ scale: 0.995 }}
         onDragEnd={(_, info) => {
-          const T = 110;
+          // Slightly higher than the old threshold so a diagonal scroll-flick
+          // doesn't accidentally save/skip while reading the profile.
+          const T = 130;
           if (info.offset.x > T || info.velocity.x > 650) leave("right");
           else if (info.offset.x < -T || info.velocity.x < -650) leave("left");
-          // Not past threshold: spring back to center (rotate follows x).
           else
             controls.start({
               x: 0,
@@ -210,7 +234,53 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
             });
         }}
       >
-        {/* Decision stamps — each sits on the side the card flies toward. */}
+        {/* Vertical scroll container — the profile body + the scroll source.
+            touch-action: pan-y keeps horizontal pans free for the card drag. */}
+        <div
+          ref={scrollRef}
+          className="no-scrollbar h-full overflow-y-auto overscroll-contain pb-12 [touch-action:pan-y]"
+        >
+          <RestaurantProfileView
+            restaurant={r}
+            variant="feed"
+            heroStyle={{ opacity: heroOpacity, scale: heroScale }}
+          />
+        </div>
+
+        {/* Top scrim for control legibility over the hero */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-black/45 to-transparent" />
+
+        {/* Identity badges — fade out with the hero as you scroll */}
+        <motion.div
+          style={{ opacity: heroOpacity }}
+          className="pointer-events-none absolute left-4 top-4 z-20 flex flex-col items-start gap-2"
+        >
+          {trending && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-chili/90 px-3 py-1.5 text-[11px] font-bold uppercase tracking-widest text-cream shadow-lg backdrop-blur-md">
+              <MaterialIcon name="trending_up" className="text-[16px]" /> Trending in DC
+            </span>
+          )}
+          {topChoice && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-black/40 px-2.5 py-1 text-xs font-semibold text-saffron ring-1 ring-saffron/30 backdrop-blur-md">
+              <MaterialIcon name="stars" filled className="text-[16px]" /> Top Choice
+            </span>
+          )}
+        </motion.div>
+
+        {/* Persistent actions — stay visible while scrolling (save mirrors swipe-right) */}
+        <div
+          className="absolute right-3 top-4 z-20 flex flex-col items-center gap-3"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <ActionButton label="Save" accent onClick={() => leave("right")}>
+            <MaterialIcon name="favorite" className="text-2xl" />
+          </ActionButton>
+          <ActionButton label={copied ? "Copied" : "Share"} onClick={shareProfile}>
+            <MaterialIcon name={copied ? "check" : "share"} className="text-2xl" />
+          </ActionButton>
+        </div>
+
+        {/* Decision stamps */}
         <motion.div
           aria-hidden
           style={{ opacity: saveOpacity }}
@@ -225,18 +295,39 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
         >
           SKIP
         </motion.div>
-
-        <RestaurantCard
-          scored={scored}
-          onSave={() => leave("right")}
-          onOpenProfile={onOpenProfile}
-        />
       </motion.div>
     );
   },
 );
 
 /* -------------------------------------------------------------------------- */
+
+function ActionButton({
+  children,
+  label,
+  onClick,
+  accent = false,
+}: {
+  children: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  accent?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      className={`flex h-12 w-12 items-center justify-center rounded-full backdrop-blur-md ring-1 transition active:scale-90 ${
+        accent
+          ? "bg-saffron/20 text-saffron ring-saffron/40 hover:bg-saffron/30"
+          : "bg-black/40 text-cream ring-white/20 hover:bg-black/60"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
 
 function EmptyState({
   savedCount,

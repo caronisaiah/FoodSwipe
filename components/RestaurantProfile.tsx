@@ -8,8 +8,8 @@ import MaterialIcon from "@/components/MaterialIcon";
  * Full-page restaurant profile for the standalone `/restaurants/[id]` route
  * (direct links / SEO). The actual content lives in the shared
  * `RestaurantProfileView`; this wrapper only adds the page chrome (scroll
- * container + sticky back-to-feed bar + save). The in-feed `ProfileSheet` renders
- * the same `RestaurantProfileView` with its own sheet chrome.
+ * container + sticky back-to-feed bar + save). The /feed deck renders the same
+ * `RestaurantProfileView` (feed variant) directly as the scrollable card body.
  */
 export default function RestaurantProfile({
   restaurant: r,
