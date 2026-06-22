@@ -218,6 +218,53 @@ nothing here touches `/feed`, `/saved`, `/restaurants/[id]`, or the existing
   `db:push`, or apply the SQL in the Neon editor — see the TLS note above). The
   app builds and runs without them; candidate endpoints just return `503`.
 
+**Phase 2 — Google Places candidate import.**
+[`POST /api/admin/restaurants/candidates/import/google`](app/api/admin/restaurants/candidates/import/google/route.ts)
+runs an official **Places API (New) Text Search** and turns results into review
+candidates. It never publishes to `/feed`. Same guards as the other admin routes,
+plus a **503** if `GOOGLE_MAPS_API_KEY` is unset and **400** on a blank `query`.
+
+- **Body:** `{ query, maxResults? (1–20, default 10), dryRun? }`. `dryRun`
+  **defaults to `true`** — you must send `"dryRun": false` to write. A dry run
+  calls Google and returns normalized previews but **writes nothing** (not even an
+  ingestion job). A real run inserts candidates (`status: "needs_review"`,
+  `source: "google_places"`) + a `restaurant_sources` provenance row each, and
+  returns `{ imported, skippedDuplicates, candidates }`.
+- **Exact Google fields requested** (minimal `X-Goog-FieldMask`, key via
+  `X-Goog-Api-Key` header in `lib/places.ts` `searchPlacesText`): `places.id`,
+  `places.displayName`, `places.formattedAddress`, `places.location`,
+  `places.priceLevel`, `places.websiteUri`, `places.types`, `places.primaryType`.
+  **Not requested:** photos, reviews, ratings, `userRatingCount`, editorial or
+  generative summaries.
+- **Stored:** `googlePlaceId` (long-term-cacheable per Google policy), plus
+  Google-derived **review candidate** values — name, address, lat/lng, website
+  host, a cleanly-mapped price level (Google enum → 1–4, else null), and `types`/
+  `primaryType` recorded as a review note. Curated FoodSwipe fields
+  (cuisine/vibe/dietary tags, dishes, copy) are **left empty** — never inferred
+  from Google. Provenance is recorded in `restaurant_sources`.
+- **Not stored:** Google photo URLs/bytes, reviews, ratings, or popularity. Google
+  ranking is never treated as FoodSwipe popularity. The imported text is
+  review-stage input for a human to curate, not a published Google mirror.
+- **Freshness policy.** Google permits caching Place IDs indefinitely, but other
+  Place content should be refreshed. Each Google-imported candidate records
+  `source_fetched_at` (import time) and `source_expires_at` (**+30 days**) on
+  `candidate_restaurants`, and a review note tells the reviewer to
+  review/refresh the metadata before that date. These are review-stage markers
+  only — never displayed publicly, never read by `/feed`. **Manual** candidates
+  leave both null (the marker never blocks them). Nothing auto-expires yet;
+  acting on the window is a deliberate human/curation step. Migration
+  `0003_green_tattoo.sql` adds the two nullable columns (additive, no default).
+- **Duplicates:** results are skipped when their `googlePlaceId` already exists as
+  a candidate (this also catches repeats within one import). Results whose
+  Place ID or name matches a **live seeded** restaurant are still imported but
+  flagged with a `seedMatchWarning` (in the preview) and a note (on the row) —
+  never a hard block.
+- **`ingestion_jobs`** records each **real** import run (`source: google_places`,
+  `query`, `dryRun: false`, `status: success|failed`, `candidatesCreated`,
+  `skippedDuplicates`, `error`) for audit. Dry runs are intentionally not
+  recorded. Migration `0002_kind_ultron.sql` adds `dry_run`, `skipped_duplicates`,
+  and `error` to the table (additive, with defaults).
+
 ### Ranking
 
 [`lib/recommendations.ts`](lib/recommendations.ts) is a pure, readable weighted
@@ -369,6 +416,7 @@ app/
   api/admin/videos/[id]/route.ts        DELETE soft-delete (admin secret)
   api/admin/restaurants/candidates/route.ts      GET/POST candidate restaurants (admin secret)
   api/admin/restaurants/candidates/[id]/route.ts PATCH a candidate (admin secret)
+  api/admin/restaurants/candidates/import/google/route.ts  POST Google Places Text Search import (admin secret)
 
 components/
   PreferenceOnboarding.tsx   Landing and preference picker

@@ -2,6 +2,7 @@ import { desc, eq } from "drizzle-orm";
 import { getDb, isDbConfigured } from "./index";
 import {
   candidateRestaurants,
+  ingestionJobs,
   restaurantSources,
   type CandidateRestaurantRow,
   type NewCandidateRestaurantRow,
@@ -48,6 +49,9 @@ export interface CandidateRestaurant {
   bestFor: string[];
   reasonText: string | null;
   reviewNotes: string | null;
+  // ISO timestamps for source-derived metadata freshness; null for manual rows.
+  sourceFetchedAt: string | null;
+  sourceExpiresAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -70,7 +74,16 @@ function optPrice(v: unknown): number | null {
 function optCoord(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
-function slugify(s: string): string {
+/** Coerce a Date or ISO string to a Date; null for anything unusable. */
+function optDate(v: unknown): Date | null {
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
+  if (typeof v === "string" && v.trim().length > 0) {
+    const d = new Date(v.trim());
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+export function slugify(s: string): string {
   return s
     .toLowerCase()
     .normalize("NFKD")
@@ -101,6 +114,8 @@ function rowToCandidate(row: CandidateRestaurantRow): CandidateRestaurant {
     bestFor: row.bestFor ?? [],
     reasonText: row.reasonText ?? null,
     reviewNotes: row.reviewNotes ?? null,
+    sourceFetchedAt: row.sourceFetchedAt ? row.sourceFetchedAt.toISOString() : null,
+    sourceExpiresAt: row.sourceExpiresAt ? row.sourceExpiresAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -137,6 +152,34 @@ export async function getCandidateRestaurant(
     .where(eq(candidateRestaurants.id, id))
     .limit(1);
   return rows[0] ? rowToCandidate(rows[0]) : null;
+}
+
+/** Existing candidate with this Google Place ID, or null (for import dedupe). */
+export async function getCandidateByGooglePlaceId(
+  googlePlaceId: string,
+): Promise<CandidateRestaurant | null> {
+  const db = getDb();
+  if (!db) return null;
+  const id = optStr(googlePlaceId);
+  if (!id) return null;
+  const rows = await db
+    .select()
+    .from(candidateRestaurants)
+    .where(eq(candidateRestaurants.googlePlaceId, id))
+    .limit(1);
+  return rows[0] ? rowToCandidate(rows[0]) : null;
+}
+
+/** All non-empty candidate slugs, as a set (for slug-collision protection). */
+export async function getExistingCandidateSlugs(): Promise<Set<string>> {
+  const db = getDb();
+  if (!db) return new Set();
+  const rows = await db
+    .select({ slug: candidateRestaurants.slug })
+    .from(candidateRestaurants);
+  const set = new Set<string>();
+  for (const r of rows) if (r.slug) set.add(r.slug);
+  return set;
 }
 
 /**
@@ -176,6 +219,9 @@ export async function insertCandidateRestaurant(
       bestFor: strArray(b.bestFor),
       reasonText: optStr(b.reasonText),
       reviewNotes: optStr(b.reviewNotes) ?? optStr(b.notes),
+      // Set by importers (e.g. Google Places); manual creates leave these null.
+      sourceFetchedAt: optDate(b.sourceFetchedAt),
+      sourceExpiresAt: optDate(b.sourceExpiresAt),
     })
     .returning();
   return rowToCandidate(row);
@@ -277,5 +323,44 @@ export async function addRestaurantSource(
     });
   } catch {
     // Provenance is best-effort — never block the candidate write on it.
+  }
+}
+
+/**
+ * Record an ingestion run for audit (e.g. a Google Places import). Best-effort:
+ * a bookkeeping failure never fails an import that already created candidates.
+ * Dry runs are intentionally NOT recorded here (the import route writes nothing
+ * on a dry run); `dryRun` defaults false and exists to support future logging.
+ */
+export async function createIngestionJob(input: {
+  source?: string;
+  query?: string | null;
+  status?: string;
+  dryRun?: boolean;
+  candidatesCreated?: number;
+  skippedDuplicates?: number;
+  error?: string | null;
+  notes?: string | null;
+}): Promise<void> {
+  const db = getDb();
+  if (!db) return;
+  try {
+    await db.insert(ingestionJobs).values({
+      id: crypto.randomUUID(),
+      source: optStr(input.source) ?? "manual",
+      status: optStr(input.status) ?? "success",
+      query: optStr(input.query),
+      dryRun: input.dryRun === true,
+      candidatesCreated: Number.isFinite(input.candidatesCreated)
+        ? Math.max(0, Math.trunc(input.candidatesCreated as number))
+        : 0,
+      skippedDuplicates: Number.isFinite(input.skippedDuplicates)
+        ? Math.max(0, Math.trunc(input.skippedDuplicates as number))
+        : 0,
+      error: optStr(input.error),
+      notes: optStr(input.notes),
+    });
+  } catch {
+    // Audit row is best-effort — never block on it.
   }
 }

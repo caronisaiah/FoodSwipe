@@ -1,0 +1,2 @@
+ALTER TABLE "candidate_restaurants" ADD COLUMN "source_fetched_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "candidate_restaurants" ADD COLUMN "source_expires_at" timestamp with time zone;

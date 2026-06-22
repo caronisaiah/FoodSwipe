@@ -4,9 +4,11 @@ import type { PlacePhoto } from "@/lib/types";
  * Server-only Google Places (New) helper for restaurant identity photos.
  *
  * IMPORTANT: this module is server-only. It reads `GOOGLE_MAPS_API_KEY` and must
- * never be imported into a Client Component — only the photo route handler
- * (`app/api/restaurants/[id]/photo/route.ts`) imports it. (`server-only` isn't a
- * dependency of this project, so the boundary is kept by convention + review.)
+ * never be imported into a Client Component — only server route handlers import
+ * it (`app/api/restaurants/[id]/photo/route.ts` for photos and
+ * `app/api/admin/restaurants/candidates/import/google/route.ts` for the admin
+ * Text Search import). (`server-only` isn't a dependency of this project, so the
+ * boundary is kept by convention + review.)
  *
  * Legal-safe contract (Google Places policies — see README):
  *  - We store ONLY `googlePlaceId` long-term (in the seed). Place IDs are the one
@@ -197,5 +199,125 @@ export async function getPlacePhoto(placeId: string): Promise<PlacePhotoResult> 
   } catch {
     // Network / quota / parse failure — degrade to the placeholder hero.
     return { photo: null, status: "error" };
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Text Search (New) — admin candidate import (Phase 2)                       */
+/* -------------------------------------------------------------------------- */
+
+export type PlacesSearchStatus =
+  | "ok"
+  | "missing-api-key"
+  | "search-failed"
+  | "error";
+
+/** A single Text Search result, mapped to only the fields we requested. */
+export interface PlaceTextResult {
+  placeId: string;
+  displayName: string | null;
+  formattedAddress: string | null;
+  lat: number | null;
+  lng: number | null;
+  websiteUri: string | null;
+  /** Raw Google enum, e.g. "PRICE_LEVEL_MODERATE" — mapped by the caller. */
+  googlePriceLevel: string | null;
+  primaryType: string | null;
+  types: string[];
+}
+
+export interface PlacesSearchResult {
+  status: PlacesSearchStatus;
+  results: PlaceTextResult[];
+  httpStatus?: number;
+  googleStatus?: string;
+}
+
+interface RawTextPlace {
+  id?: string;
+  displayName?: { text?: string };
+  formattedAddress?: string;
+  location?: { latitude?: number; longitude?: number };
+  priceLevel?: string;
+  websiteUri?: string;
+  types?: string[];
+  primaryType?: string;
+}
+
+function toTextResult(p: RawTextPlace): PlaceTextResult | null {
+  const placeId = typeof p.id === "string" && p.id.trim().length > 0 ? p.id.trim() : null;
+  if (!placeId) return null; // a result with no Place ID is useless for review
+  const num = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+  const str = (v: unknown): string | null =>
+    typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
+  return {
+    placeId,
+    displayName: str(p.displayName?.text),
+    formattedAddress: str(p.formattedAddress),
+    lat: num(p.location?.latitude),
+    lng: num(p.location?.longitude),
+    websiteUri: str(p.websiteUri),
+    googlePriceLevel: str(p.priceLevel),
+    primaryType: str(p.primaryType),
+    types: Array.isArray(p.types)
+      ? p.types.filter((t): t is string => typeof t === "string")
+      : [],
+  };
+}
+
+/**
+ * Google Places API (New) Text Search, server-side, for the admin candidate
+ * import. Minimal field mask — NO photos, reviews, ratings, userRatingCount, or
+ * editorial/generative summaries are requested. NEVER throws; returns a safe
+ * diagnostic (status + numeric httpStatus + Google error enum) on failure.
+ */
+export async function searchPlacesText(
+  query: string,
+  maxResults: number,
+): Promise<PlacesSearchResult> {
+  const key = apiKey();
+  if (!key) return { status: "missing-api-key", results: [] };
+  const q = typeof query === "string" ? query.trim() : "";
+  if (q.length === 0) return { status: "search-failed", results: [] };
+  const max = Math.min(Math.max(Math.trunc(maxResults) || 0, 1), 20);
+
+  try {
+    const res = await fetch(`${PLACES_BASE}/places:searchText`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": key,
+        "X-Goog-FieldMask": [
+          "places.id",
+          "places.displayName",
+          "places.formattedAddress",
+          "places.location",
+          "places.priceLevel",
+          "places.websiteUri",
+          "places.types",
+          "places.primaryType",
+        ].join(","),
+      },
+      body: JSON.stringify({ textQuery: q, maxResultCount: max }),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      return {
+        status: "search-failed",
+        results: [],
+        httpStatus: res.status,
+        googleStatus: await safeGoogleError(res),
+      };
+    }
+    const data = (await res.json()) as { places?: RawTextPlace[] };
+    const results = Array.isArray(data.places)
+      ? data.places
+          .map(toTextResult)
+          .filter((r): r is PlaceTextResult => r !== null)
+      : [];
+    return { status: "ok", results };
+  } catch {
+    return { status: "error", results: [] };
   }
 }

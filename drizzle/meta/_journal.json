@@ -15,6 +15,20 @@
       "when": 1782138260778,
       "tag": "0001_mysterious_swordsman",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782150451649,
+      "tag": "0002_kind_ultron",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1782151347030,
+      "tag": "0003_green_tattoo",
+      "breakpoints": true
     }
   ]
 }

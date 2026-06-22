@@ -81,6 +81,14 @@ export const candidateRestaurants = pgTable("candidate_restaurants", {
   reasonText: text("reason_text"),
   // Human match / review notes.
   reviewNotes: text("review_notes"),
+  // Freshness markers for SOURCE-DERIVED metadata (set ONLY for imported
+  // candidates, e.g. source="google_places"; null for manual entries). Google
+  // permits caching Place IDs indefinitely, but other Place content should be
+  // reviewed/refreshed before it goes stale — `sourceExpiresAt` defaults to
+  // `sourceFetchedAt` + 30 days at import. Review-stage only; never shown
+  // publicly and never used by `/feed`. See the freshness policy in the README.
+  sourceFetchedAt: timestamp("source_fetched_at", { withTimezone: true }),
+  sourceExpiresAt: timestamp("source_expires_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -116,10 +124,15 @@ export type NewRestaurantSourceRow = typeof restaurantSources.$inferInsert;
 export const ingestionJobs = pgTable("ingestion_jobs", {
   id: text("id").primaryKey(),
   source: text("source").notNull().default("manual"),
-  // "pending" | "running" | "completed" | "failed"
+  // "pending" | "running" | "completed" | "failed" | "success"
   status: text("status").notNull().default("pending"),
   query: text("query"),
+  // Whether the run was a preview (true) vs an actual import. Real imports are
+  // recorded; dry runs intentionally write nothing (see the import route).
+  dryRun: boolean("dry_run").notNull().default(false),
   candidatesCreated: integer("candidates_created").notNull().default(0),
+  skippedDuplicates: integer("skipped_duplicates").notNull().default(0),
+  error: text("error"),
   notes: text("notes"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
