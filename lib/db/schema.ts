@@ -89,6 +89,13 @@ export const candidateRestaurants = pgTable("candidate_restaurants", {
   // publicly and never used by `/feed`. See the freshness policy in the README.
   sourceFetchedAt: timestamp("source_fetched_at", { withTimezone: true }),
   sourceExpiresAt: timestamp("source_expires_at", { withTimezone: true }),
+  // INTERNAL admin-triage only — an estimate of how likely this candidate
+  // already has useful short-form social review content worth curating. NOT a
+  // quality/popularity/rating/trending/social-proof signal; never displayed to
+  // users, never used by `/feed`. Derived from expiring Google signals (governed
+  // by sourceExpiresAt above). Null for manually-entered candidates.
+  reviewLikelihoodScore: integer("review_likelihood_score"),
+  reviewLikelihoodReasons: text("review_likelihood_reasons").array(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

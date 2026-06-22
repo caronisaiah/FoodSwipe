@@ -229,22 +229,42 @@ plus a **503** if `GOOGLE_MAPS_API_KEY` is unset and **400** on a blank `query`.
   calls Google and returns normalized previews but **writes nothing** (not even an
   ingestion job). A real run inserts candidates (`status: "needs_review"`,
   `source: "google_places"`) + a `restaurant_sources` provenance row each, and
-  returns `{ imported, skippedDuplicates, candidates }`.
+  returns `{ imported, skippedDuplicates, candidates }`. Both dry-run and real
+  results are sorted by **review-likelihood** (below), highest first.
 - **Exact Google fields requested** (minimal `X-Goog-FieldMask`, key via
   `X-Goog-Api-Key` header in `lib/places.ts` `searchPlacesText`): `places.id`,
   `places.displayName`, `places.formattedAddress`, `places.location`,
-  `places.priceLevel`, `places.websiteUri`, `places.types`, `places.primaryType`.
-  **Not requested:** photos, reviews, ratings, `userRatingCount`, editorial or
-  generative summaries.
+  `places.priceLevel`, `places.websiteUri`, `places.types`, `places.primaryType`,
+  `places.rating`, `places.userRatingCount`. **Not requested:** photos, review
+  text, editorial or generative summaries.
 - **Stored:** `googlePlaceId` (long-term-cacheable per Google policy), plus
   Google-derived **review candidate** values — name, address, lat/lng, website
   host, a cleanly-mapped price level (Google enum → 1–4, else null), and `types`/
-  `primaryType` recorded as a review note. Curated FoodSwipe fields
+  `primaryType` recorded as a review note. The internal review-likelihood
+  `score` + `reasons` are stored on `candidate_restaurants`; the raw
+  `rating`/`userRatingCount` they derive from are recorded only in the
+  `restaurant_sources` provenance note (admin metadata). Curated FoodSwipe fields
   (cuisine/vibe/dietary tags, dishes, copy) are **left empty** — never inferred
-  from Google. Provenance is recorded in `restaurant_sources`.
-- **Not stored:** Google photo URLs/bytes, reviews, ratings, or popularity. Google
-  ranking is never treated as FoodSwipe popularity. The imported text is
-  review-stage input for a human to curate, not a published Google mirror.
+  from Google.
+- **Not stored:** Google photo URLs/bytes or review text. Rating/review counts
+  are **never displayed to users**, never shown in `/feed`, and never treated as
+  FoodSwipe popularity — they exist only as expiring inputs to the internal
+  triage score. The imported text is review-stage input for a human to curate,
+  not a published Google mirror.
+- **Review-likelihood (internal triage only).**
+  [`lib/reviewLikelihood.ts`](lib/reviewLikelihood.ts) computes a 0–100 estimate
+  of how likely a candidate **already has useful short-form social review
+  content** worth curating — so a reviewer works the queue highest-first. It is
+  **not** a rating, popularity, ranking, trending, or social-proof signal, is
+  never shown to users, and never reaches `/feed`. Formula: review **volume**
+  (`userRatingCount`, log-scaled, weight 80) dominates; `rating` is only a
+  confidence **modifier** on that volume (×0.85–1.0, never standalone quality); a
+  slight bonus for higher Google result position (≤10) and for having a website
+  (8); a penalty for matching the seed feed (−25) or an existing candidate (−15).
+  Score + human-readable `reviewLikelihoodReasons` persist on
+  `candidate_restaurants`; both inputs are expiring Google metadata governed by
+  the same `source_expires_at` window (re-import to recompute). Migration
+  `0004_wide_dorian_gray.sql` adds the two nullable columns (additive, no default).
 - **Freshness policy.** Google permits caching Place IDs indefinitely, but other
   Place content should be refreshed. Each Google-imported candidate records
   `source_fetched_at` (import time) and `source_expires_at` (**+30 days**) on

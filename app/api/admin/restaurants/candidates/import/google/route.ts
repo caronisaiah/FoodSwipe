@@ -4,12 +4,14 @@ import {
   addRestaurantSource,
   createIngestionJob,
   getCandidateByGooglePlaceId,
+  getExistingCandidateGooglePlaceIds,
   getExistingCandidateSlugs,
   insertCandidateRestaurant,
   isDbConfigured,
   slugify,
   type CandidateRestaurant,
 } from "@/lib/db/candidates";
+import { scoreReviewLikelihood, type ReviewLikelihood } from "@/lib/reviewLikelihood";
 import { RESTAURANTS } from "@/lib/seed/restaurants";
 
 /*
@@ -92,6 +94,7 @@ function toCandidateInput(
   slug: string,
   fetchedAt: Date,
   expiresAt: Date,
+  likelihood: ReviewLikelihood,
 ) {
   const warning = seedWarning(r);
   const reviewNotes =
@@ -124,8 +127,37 @@ function toCandidateInput(
     // Freshness window for the Google-derived metadata (refresh before expiry).
     sourceFetchedAt: fetchedAt,
     sourceExpiresAt: expiresAt,
+    // INTERNAL admin-triage score — never public, never in /feed.
+    reviewLikelihoodScore: likelihood.score,
+    reviewLikelihoodReasons: likelihood.reasons,
     seedMatchWarning: warning,
   };
+}
+
+/**
+ * Score every usable result for INTERNAL review-likelihood and return them
+ * sorted highest-first. Position bonus uses the original Google order (index);
+ * `seedMatch`/`existingCandidate` drive the duplicate penalty.
+ */
+function scoreAndRank(
+  usable: PlaceTextResult[],
+  existingPlaceIds: Set<string>,
+): { r: PlaceTextResult; likelihood: ReviewLikelihood }[] {
+  const total = usable.length;
+  return usable
+    .map((r, index) => ({
+      r,
+      likelihood: scoreReviewLikelihood({
+        userRatingCount: r.userRatingCount,
+        rating: r.rating,
+        index,
+        total,
+        hasWebsite: hostFrom(r.websiteUri) !== null,
+        seedMatch: seedWarning(r) !== null,
+        existingCandidate: r.placeId ? existingPlaceIds.has(r.placeId) : false,
+      }),
+    }))
+    .sort((a, b) => b.likelihood.score - a.likelihood.score);
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -201,20 +233,25 @@ export async function POST(req: Request): Promise<Response> {
   const fetchedAt = new Date();
   const expiresAt = new Date(fetchedAt.getTime() + FRESHNESS_WINDOW_MS);
 
+  // Snapshot of existing candidate Place IDs for the duplicate penalty (a DB
+  // READ only — dry runs still write nothing). Score + rank highest-first.
+  const existingPlaceIds = await getExistingCandidateGooglePlaceIds();
+  const ranked = scoreAndRank(usable, existingPlaceIds);
+
   if (dryRun) {
-    const candidates = usable.map((r) =>
-      toCandidateInput(r, query, slugify(r.displayName ?? ""), fetchedAt, expiresAt),
+    const candidates = ranked.map(({ r, likelihood }) =>
+      toCandidateInput(r, query, slugify(r.displayName ?? ""), fetchedAt, expiresAt, likelihood),
     );
     return Response.json({ dryRun: true, query, found: candidates.length, candidates });
   }
 
-  // Real import.
+  // Real import — iterate in ranked order so `created` comes back sorted.
   const usedSlugs = await getExistingCandidateSlugs();
   let imported = 0;
   let skippedDuplicates = 0;
   const created: CandidateRestaurant[] = [];
   try {
-    for (const r of usable) {
+    for (const { r, likelihood } of ranked) {
       // Dedupe by Google Place ID (also catches within-batch repeats, since the
       // prior insert is already persisted before the next lookup).
       if (await getCandidateByGooglePlaceId(r.placeId)) {
@@ -223,13 +260,14 @@ export async function POST(req: Request): Promise<Response> {
       }
       const slug = uniqueSlug(slugify(r.displayName ?? ""), usedSlugs);
       usedSlugs.add(slug);
-      const input = toCandidateInput(r, query, slug, fetchedAt, expiresAt);
+      const input = toCandidateInput(r, query, slug, fetchedAt, expiresAt, likelihood);
       const candidate = await insertCandidateRestaurant(input);
       if (!candidate) {
         skippedDuplicates++;
         continue;
       }
       // Provenance, kept separate from curated candidate fields (best-effort).
+      // Raw expiring Google rating/count live here (admin metadata) — NOT public.
       await addRestaurantSource(candidate.id, {
         sourceType: "google_places",
         externalId: r.placeId,
@@ -238,6 +276,10 @@ export async function POST(req: Request): Promise<Response> {
         url: r.websiteUri,
         notes:
           `Imported via Google Places Text Search: "${query}"` +
+          ` | review-likelihood ${likelihood.score}` +
+          (r.userRatingCount !== null
+            ? ` | Google ${r.userRatingCount} ratings${r.rating !== null ? ` @ ${r.rating}` : ""}`
+            : "") +
           (input.seedMatchWarning ? ` | ${input.seedMatchWarning}` : ""),
       });
       created.push(candidate);

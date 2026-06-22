@@ -224,6 +224,11 @@ export interface PlaceTextResult {
   googlePriceLevel: string | null;
   primaryType: string | null;
   types: string[];
+  // Expiring Google-derived signals used ONLY for the internal review-likelihood
+  // score (admin triage). Never displayed to users, never shown in /feed, never
+  // treated as FoodSwipe popularity.
+  rating: number | null;
+  userRatingCount: number | null;
 }
 
 export interface PlacesSearchResult {
@@ -242,6 +247,8 @@ interface RawTextPlace {
   websiteUri?: string;
   types?: string[];
   primaryType?: string;
+  rating?: number;
+  userRatingCount?: number;
 }
 
 function toTextResult(p: RawTextPlace): PlaceTextResult | null {
@@ -263,14 +270,22 @@ function toTextResult(p: RawTextPlace): PlaceTextResult | null {
     types: Array.isArray(p.types)
       ? p.types.filter((t): t is string => typeof t === "string")
       : [],
+    rating: num(p.rating),
+    userRatingCount:
+      typeof p.userRatingCount === "number" && Number.isFinite(p.userRatingCount)
+        ? Math.max(0, Math.trunc(p.userRatingCount))
+        : null,
   };
 }
 
 /**
  * Google Places API (New) Text Search, server-side, for the admin candidate
- * import. Minimal field mask — NO photos, reviews, ratings, userRatingCount, or
- * editorial/generative summaries are requested. NEVER throws; returns a safe
- * diagnostic (status + numeric httpStatus + Google error enum) on failure.
+ * import. Minimal field mask — NO photos, review TEXT, or editorial/generative
+ * summaries are requested. `rating` + `userRatingCount` ARE requested, but only
+ * to compute the INTERNAL admin-only review-likelihood score (never displayed to
+ * users, never used in /feed, never treated as FoodSwipe popularity); they are
+ * expiring Google-derived metadata. NEVER throws; returns a safe diagnostic
+ * (status + numeric httpStatus + Google error enum) on failure.
  */
 export async function searchPlacesText(
   query: string,
@@ -297,6 +312,9 @@ export async function searchPlacesText(
           "places.websiteUri",
           "places.types",
           "places.primaryType",
+          // Expiring signals for the INTERNAL review-likelihood score only.
+          "places.rating",
+          "places.userRatingCount",
         ].join(","),
       },
       body: JSON.stringify({ textQuery: q, maxResultCount: max }),

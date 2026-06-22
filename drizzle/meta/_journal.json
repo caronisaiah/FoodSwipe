@@ -29,6 +29,13 @@
       "when": 1782151347030,
       "tag": "0003_green_tattoo",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1782156779849,
+      "tag": "0004_wide_dorian_gray",
+      "breakpoints": true
     }
   ]
 }

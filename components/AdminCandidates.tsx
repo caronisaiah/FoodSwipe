@@ -62,6 +62,8 @@ interface Candidate {
   reviewNotes: string | null;
   sourceFetchedAt: string | null;
   sourceExpiresAt: string | null;
+  reviewLikelihoodScore: number | null;
+  reviewLikelihoodReasons: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -75,6 +77,8 @@ interface PreviewRow {
   priceLevel: number | null;
   reviewNotes: string | null;
   sourceExpiresAt: string | null;
+  reviewLikelihoodScore: number | null;
+  reviewLikelihoodReasons: string[];
   seedMatchWarning: string | null;
 }
 
@@ -118,6 +122,53 @@ function warningFrom(c: {
   if (c.seedMatchWarning && c.seedMatchWarning.trim()) return c.seedMatchWarning.trim();
   const m = c.reviewNotes?.match(/WARNING:\s*(.+)$/);
   return m ? m[1].trim() : null;
+}
+
+/**
+ * INTERNAL "Review likelihood" — an admin-only triage estimate of how likely a
+ * candidate already has useful social review content. Deliberately NOT labeled
+ * rating / popularity / ranking / trending / social proof.
+ */
+function ReviewLikelihood({
+  score,
+  reasons,
+}: {
+  score: number | null;
+  reasons: string[];
+}) {
+  if (score === null) return null;
+  const tone = score >= 60 ? "text-mint" : score >= 30 ? "text-saffron" : "text-haze";
+  return (
+    <div className="mt-2 rounded-xl bg-ink-2 p-2 ring-1 ring-inset ring-white/5">
+      <p className="flex items-center gap-1.5 text-[11px] font-semibold text-cream">
+        <MaterialIcon name="manage_search" className="text-sm" />
+        Review likelihood
+        <span className={`ml-auto font-display text-sm ${tone}`}>{score}/100</span>
+      </p>
+      <p className="text-[9px] uppercase tracking-wide text-haze">
+        Internal triage only — not a rating, popularity, or ranking
+      </p>
+      {reasons.length > 0 && (
+        <ul className="mt-1 space-y-0.5">
+          {reasons.map((r, i) => (
+            <li key={i} className="text-[11px] text-tan">
+              · {r}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** Sort highest review-likelihood first; null scores (e.g. manual) last. */
+function byLikelihood(a: Candidate, b: Candidate): number {
+  const sa = a.reviewLikelihoodScore;
+  const sb = b.reviewLikelihoodScore;
+  if (sa === null && sb === null) return 0;
+  if (sa === null) return 1;
+  if (sb === null) return -1;
+  return sb - sa;
 }
 
 export default function AdminCandidates() {
@@ -377,6 +428,10 @@ export default function AdminCandidates() {
                           {warn}
                         </p>
                       )}
+                      <ReviewLikelihood
+                        score={p.reviewLikelihoodScore}
+                        reasons={p.reviewLikelihoodReasons}
+                      />
                     </li>
                   );
                 })}
@@ -393,9 +448,10 @@ export default function AdminCandidates() {
               </button>
             )}
             <p className="mt-2 text-[10px] leading-relaxed text-haze">
-              Imports store only the Google Place ID plus review metadata (name,
-              address, lat/lng, website host, price). No photos, reviews, or ratings
-              are stored, and nothing is published to the feed.
+              Imports store the Google Place ID plus review metadata (name, address,
+              lat/lng, website host, price). No photos or review text are stored.
+              Google rating/review counts feed only the internal review-likelihood
+              score and live in admin provenance — never shown publicly or in the feed.
             </p>
           </div>
         )}
@@ -441,7 +497,7 @@ export default function AdminCandidates() {
         </p>
       ) : (
         <ul className="space-y-3">
-          {candidates.map((c) => (
+          {[...candidates].sort(byLikelihood).map((c) => (
             // Key on updatedAt so a row whose server data changed (e.g. after a
             // Refresh) remounts and re-seeds its editable defaults, rather than
             // showing a stale draft over fresh summary data.
@@ -566,6 +622,12 @@ function CandidateRow({
         <Meta label="Price" value={priceLabel(candidate.priceLevel)} />
         <Meta label="Source expires" value={shortDate(candidate.sourceExpiresAt)} />
       </dl>
+
+      {/* Internal review-likelihood (admin triage only) */}
+      <ReviewLikelihood
+        score={candidate.reviewLikelihoodScore}
+        reasons={candidate.reviewLikelihoodReasons}
+      />
 
       {/* Editable review fields */}
       <div className="mt-3 space-y-2.5 border-t border-line pt-3">

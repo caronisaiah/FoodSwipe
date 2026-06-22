@@ -52,6 +52,9 @@ export interface CandidateRestaurant {
   // ISO timestamps for source-derived metadata freshness; null for manual rows.
   sourceFetchedAt: string | null;
   sourceExpiresAt: string | null;
+  // INTERNAL admin-triage only (never public, never in /feed); null for manual rows.
+  reviewLikelihoodScore: number | null;
+  reviewLikelihoodReasons: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -82,6 +85,12 @@ function optDate(v: unknown): Date | null {
     return Number.isNaN(d.getTime()) ? null : d;
   }
   return null;
+}
+/** Internal review-likelihood score: integer clamped 0–100, or null. */
+function optScore(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v)
+    ? Math.min(Math.max(Math.round(v), 0), 100)
+    : null;
 }
 export function slugify(s: string): string {
   return s
@@ -116,6 +125,8 @@ function rowToCandidate(row: CandidateRestaurantRow): CandidateRestaurant {
     reviewNotes: row.reviewNotes ?? null,
     sourceFetchedAt: row.sourceFetchedAt ? row.sourceFetchedAt.toISOString() : null,
     sourceExpiresAt: row.sourceExpiresAt ? row.sourceExpiresAt.toISOString() : null,
+    reviewLikelihoodScore: optScore(row.reviewLikelihoodScore),
+    reviewLikelihoodReasons: row.reviewLikelihoodReasons ?? [],
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -182,6 +193,18 @@ export async function getExistingCandidateSlugs(): Promise<Set<string>> {
   return set;
 }
 
+/** All non-empty candidate Google Place IDs, as a set (for the import penalty). */
+export async function getExistingCandidateGooglePlaceIds(): Promise<Set<string>> {
+  const db = getDb();
+  if (!db) return new Set();
+  const rows = await db
+    .select({ googlePlaceId: candidateRestaurants.googlePlaceId })
+    .from(candidateRestaurants);
+  const set = new Set<string>();
+  for (const r of rows) if (r.googlePlaceId) set.add(r.googlePlaceId);
+  return set;
+}
+
 /**
  * Create a candidate from an untrusted body. Returns null if there's no usable
  * `name`. A fresh uuid + proposed slug are generated; status defaults to
@@ -222,6 +245,9 @@ export async function insertCandidateRestaurant(
       // Set by importers (e.g. Google Places); manual creates leave these null.
       sourceFetchedAt: optDate(b.sourceFetchedAt),
       sourceExpiresAt: optDate(b.sourceExpiresAt),
+      // INTERNAL triage; set by importers only. Manual creates leave null/[].
+      reviewLikelihoodScore: optScore(b.reviewLikelihoodScore),
+      reviewLikelihoodReasons: strArray(b.reviewLikelihoodReasons),
     })
     .returning();
   return rowToCandidate(row);
