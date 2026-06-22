@@ -267,14 +267,12 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
           )}
         </motion.div>
 
-        {/* Persistent actions — stay visible while scrolling (save mirrors swipe-right) */}
+        {/* Persistent action — Share. (Save is the right-swipe; no redundant heart.)
+            Sits below the feed top app bar so it never overlaps the notifications icon. */}
         <div
-          className="absolute right-3 top-4 z-20 flex flex-col items-center gap-3"
+          className="absolute right-3 top-20 z-20"
           onPointerDown={(e) => e.stopPropagation()}
         >
-          <ActionButton label="Save" accent onClick={() => leave("right")}>
-            <MaterialIcon name="favorite" className="text-2xl" />
-          </ActionButton>
           <ActionButton label={copied ? "Copied" : "Share"} onClick={shareProfile}>
             <MaterialIcon name={copied ? "check" : "share"} className="text-2xl" />
           </ActionButton>
@@ -306,23 +304,17 @@ function ActionButton({
   children,
   label,
   onClick,
-  accent = false,
 }: {
   children: React.ReactNode;
   label: string;
   onClick: () => void;
-  accent?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-label={label}
-      className={`flex h-12 w-12 items-center justify-center rounded-full backdrop-blur-md ring-1 transition active:scale-90 ${
-        accent
-          ? "bg-saffron/20 text-saffron ring-saffron/40 hover:bg-saffron/30"
-          : "bg-black/40 text-cream ring-white/20 hover:bg-black/60"
-      }`}
+      className="flex h-12 w-12 items-center justify-center rounded-full bg-black/40 text-cream ring-1 ring-white/20 backdrop-blur-md transition hover:bg-black/60 active:scale-90"
     >
       {children}
     </button>
