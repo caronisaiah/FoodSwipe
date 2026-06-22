@@ -204,14 +204,14 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
         <motion.div
           aria-hidden
           style={{ opacity: saveOpacity }}
-          className="pointer-events-none absolute right-5 top-24 z-30 rotate-12 rounded-xl border-4 border-[#ffc082] px-3 py-1 font-display text-3xl font-extrabold tracking-wider text-[#ffc082]"
+          className="pointer-events-none absolute right-5 top-24 z-30 rotate-12 rounded-xl border-4 border-saffron px-3 py-1 font-display text-3xl font-extrabold tracking-wider text-saffron"
         >
           SAVE
         </motion.div>
         <motion.div
           aria-hidden
           style={{ opacity: skipOpacity }}
-          className="pointer-events-none absolute left-5 top-24 z-30 -rotate-12 rounded-xl border-4 border-[#d6042f] px-3 py-1 font-display text-3xl font-extrabold tracking-wider text-[#d6042f]"
+          className="pointer-events-none absolute left-5 top-24 z-30 -rotate-12 rounded-xl border-4 border-chili px-3 py-1 font-display text-3xl font-extrabold tracking-wider text-chili"
         >
           SKIP
         </motion.div>
@@ -249,7 +249,7 @@ function EmptyState({
         {savedCount > 0 && (
           <Link
             href="/saved"
-            className="rounded-full bg-brand-gradient px-6 py-3 text-center font-semibold text-ink shadow-lg shadow-coral/20"
+            className="rounded-full bg-brand-gradient px-6 py-3 text-center font-semibold text-saffron-ink shadow-lg shadow-saffron/20"
           >
             View {savedCount} saved {savedCount === 1 ? "spot" : "spots"}{" "}
             <span aria-hidden>→</span>

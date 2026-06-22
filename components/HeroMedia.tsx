@@ -24,11 +24,14 @@ export default function HeroMedia({
   restaurantId,
   name,
   posterIcon,
+  compact = false,
 }: {
   restaurantId: string;
   name: string;
   /** Material Symbols icon name shown on the placeholder (see lib/emoji cuisineIcon). */
   posterIcon: string;
+  /** Smaller logo tile + placeholder glyph, for thumbnail-sized uses (e.g. Saved). */
+  compact?: boolean;
 }) {
   const [photo, setPhoto] = useState<PlacePhoto | null>(null);
   const [logoSrc, setLogoSrc] = useState<string | null>(null);
@@ -98,8 +101,12 @@ export default function HeroMedia({
           className="absolute inset-0 bg-gradient-to-b from-[#1a160f] to-[#0b0b0d]"
           aria-hidden
         />
-        <div className="absolute inset-0 flex items-center justify-center p-10">
-          <div className="flex aspect-square w-1/2 max-w-[180px] items-center justify-center rounded-3xl bg-white p-6 shadow-2xl shadow-black/40 ring-1 ring-white/10">
+        <div className={`absolute inset-0 flex items-center justify-center ${compact ? "p-2.5" : "p-10"}`}>
+          <div
+            className={`flex aspect-square items-center justify-center bg-white shadow-2xl shadow-black/40 ring-1 ring-white/10 ${
+              compact ? "w-4/5 rounded-xl p-2" : "w-1/2 max-w-[180px] rounded-3xl p-6"
+            }`}
+          >
             {/* eslint-disable-next-line @next/next/no-img-element -- the logo loads
                 directly from Logo.dev's CDN; never downloaded/cropped/rehosted, so a
                 plain object-contain <img> is the correct, policy-safe choice here. */}
@@ -129,7 +136,9 @@ export default function HeroMedia({
       <div className="absolute inset-0 flex items-center justify-center">
         <MaterialIcon
           name={posterIcon}
-          className="text-[128px] text-white/30 drop-shadow-[0_10px_30px_rgba(0,0,0,0.55)]"
+          className={`text-white/30 drop-shadow-[0_10px_30px_rgba(0,0,0,0.55)] ${
+            compact ? "text-[40px]" : "text-[128px]"
+          }`}
         />
       </div>
     </div>
@@ -148,7 +157,7 @@ function PhotoAttribution({
   const items = attributions.filter((a) => a.displayName.trim().length > 0);
   return (
     <span className="absolute right-3 top-3 z-20 inline-flex max-w-[60%] items-center gap-1 rounded-full bg-black/55 px-2.5 py-1 text-[11px] font-medium text-white/90 backdrop-blur-md ring-1 ring-white/15">
-      <span aria-hidden>📷</span>
+      <MaterialIcon name="photo_camera" className="text-[13px]" />
       <span className="truncate">
         {items.length > 0 ? (
           <>

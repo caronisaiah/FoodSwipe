@@ -51,7 +51,7 @@ export default function PreferenceOnboarding() {
           <input
             value={draft.location}
             onChange={(e) => setDraft({ ...draft, location: e.target.value })}
-            className="w-full rounded-2xl bg-surface px-4 py-3 text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze focus:ring-coral/60"
+            className="w-full rounded-2xl bg-surface px-4 py-3 text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze focus:ring-saffron/60"
             placeholder="Washington, DC"
             aria-label="Location"
           />
@@ -133,7 +133,7 @@ export default function PreferenceOnboarding() {
         <button
           type="button"
           onClick={start}
-          className="w-full rounded-full bg-brand-gradient py-4 text-center text-lg font-bold text-ink shadow-lg shadow-coral/25 transition active:scale-[0.98]"
+          className="w-full rounded-full bg-brand-gradient py-4 text-center text-lg font-bold text-saffron-ink shadow-lg shadow-saffron/25 transition active:scale-[0.98]"
         >
           Start swiping →
         </button>

@@ -167,7 +167,7 @@ function OriginBadge({ origin }: { origin: Exclude<Origin, "seed"> }) {
       aria-label={
         isLocal ? "Local-only demo clip" : "Demo clip, shared via the admin tool"
       }
-      className="absolute right-2 top-2 z-10 rounded-full bg-pink/90 px-2 py-0.5 text-[10px] font-bold text-ink"
+      className="absolute right-2 top-2 z-10 rounded-full bg-chili/90 px-2 py-0.5 text-[10px] font-bold text-cream"
     >
       {isLocal ? "Local" : "Demo"}
     </span>

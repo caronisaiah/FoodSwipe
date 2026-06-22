@@ -7,6 +7,7 @@ import { logoUrl } from "@/lib/logos";
 import RestaurantVideos from "@/components/RestaurantVideos";
 import GoThere from "@/components/GoThere";
 import MetricBadge, { formatCount } from "@/components/MetricBadge";
+import MaterialIcon from "@/components/MaterialIcon";
 import SaveButton from "@/components/SaveButton";
 
 /**
@@ -80,19 +81,19 @@ export default function RestaurantProfile({ restaurant: r }: { restaurant: Resta
               icon="🔥"
               value={r.trendScore}
               label="trend"
-              accentClassName="text-coral"
+              accentClassName="text-saffron"
             />
             <MetricBadge
               icon="✨"
               value={r.vibeScore}
               label="vibe"
-              accentClassName="text-pink"
+              accentClassName="text-saffron-soft"
             />
             <MetricBadge
               icon="❤️"
               value={formatCount(r.saveCount)}
               label="saves"
-              accentClassName="text-mint"
+              accentClassName="text-chili-soft"
             />
           </div>
           <p className="mt-3 text-sm leading-relaxed text-haze">{r.reasonText}</p>
@@ -106,7 +107,7 @@ export default function RestaurantProfile({ restaurant: r }: { restaurant: Resta
                 key={dish}
                 className="flex items-center gap-2 rounded-2xl bg-surface px-3.5 py-2.5 text-sm text-cream ring-1 ring-inset ring-white/5"
               >
-                <span aria-hidden>🍴</span>
+                <MaterialIcon name="restaurant_menu" className="text-[18px] text-saffron" />
                 {dish}
               </li>
             ))}

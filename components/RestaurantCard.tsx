@@ -71,7 +71,7 @@ export default function RestaurantCard({
       {/* Trending badge — below the floating top app bar */}
       {trending && (
         <div className="absolute left-4 top-20 z-20">
-          <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-[#d6042f]/90 px-3 py-1.5 text-[11px] font-bold uppercase tracking-widest text-[#ffe7e5] shadow-lg backdrop-blur-md">
+          <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-chili/90 px-3 py-1.5 text-[11px] font-bold uppercase tracking-widest text-cream shadow-lg backdrop-blur-md">
             <MaterialIcon name="trending_up" className="text-[16px]" /> Trending in DC
           </span>
         </div>
@@ -98,23 +98,23 @@ export default function RestaurantCard({
       <div className="absolute inset-x-0 bottom-24 z-20 px-4">
         <div className="flex max-w-[76%] flex-col">
           {topChoice && (
-            <div className="mb-1 flex items-center gap-1.5 text-[#f0c84f]">
+            <div className="mb-1 flex items-center gap-1.5 text-saffron">
               <MaterialIcon name="stars" filled className="text-[20px]" />
               <span className="text-sm font-bold">Top Choice</span>
             </div>
           )}
 
-          <h2 className="font-display text-[44px] font-black leading-none text-white drop-shadow-lg">
+          <h2 className="font-display text-[44px] font-black leading-none tracking-tight text-white drop-shadow-lg">
             {r.name}
           </h2>
 
-          <p className="mt-1.5 text-lg text-[#dbc2ad]">
+          <p className="mt-1.5 text-lg text-tan">
             {r.neighborhood} • <span className="capitalize">{r.cuisineTags[0]}</span> •{" "}
-            <span className="font-semibold text-[#ffc082]">{priceLabel(r.priceLevel)}</span>
+            <span className="font-semibold text-saffron">{priceLabel(r.priceLevel)}</span>
           </p>
 
           {famousFor && (
-            <p className="mt-1 text-sm italic text-[#dbc2ad]/80">
+            <p className="mt-1 text-sm italic text-tan/80">
               Famous for {famousFor.toLowerCase()}
             </p>
           )}
@@ -122,11 +122,11 @@ export default function RestaurantCard({
           {/* Honest signal chips — NO fake star rating */}
           <div className="mt-3 flex flex-wrap gap-2">
             <Chip>
-              <MaterialIcon name="play_circle" className="text-[18px] text-[#ffc082]" />{" "}
+              <MaterialIcon name="play_circle" className="text-[18px] text-saffron" />{" "}
               {clipCount} review {clipCount === 1 ? "clip" : "clips"}
             </Chip>
             <Chip>
-              <MaterialIcon name="favorite" filled className="text-[16px] text-[#ffc082]" />{" "}
+              <MaterialIcon name="favorite" filled className="text-[16px] text-saffron" />{" "}
               {formatCount(r.saveCount)} saved
             </Chip>
           </div>

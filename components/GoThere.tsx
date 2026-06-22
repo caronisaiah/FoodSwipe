@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { Video } from "@/lib/types";
 import { useManualVideos } from "@/lib/storage";
 import { videoSourceHref } from "@/lib/video";
+import MaterialIcon from "@/components/MaterialIcon";
 
 /**
  * The profile's "Go there" actions. Client-side so the "Reviews" link reflects
@@ -49,12 +50,12 @@ export default function GoThere({
         <h2 className="font-display text-lg font-semibold text-cream">Go there</h2>
       </div>
       <div className="grid grid-cols-3 gap-2">
-        <ExternalLink href={directionsUrl} icon="🧭" label="Directions" />
-        <ExternalLink href="#" icon="🌐" label="Website" disabled />
+        <ExternalLink href={directionsUrl} icon="near_me" label="Directions" primary />
+        <ExternalLink href="#" icon="language" label="Website" disabled />
         {reviewsHref ? (
-          <ExternalLink href={reviewsHref} icon="▶" label="Reviews" />
+          <ExternalLink href={reviewsHref} icon="play_circle" label="Reviews" />
         ) : (
-          <ExternalLink href="#" icon="▶" label="Reviews" disabled />
+          <ExternalLink href="#" icon="play_circle" label="Reviews" disabled />
         )}
       </div>
     </section>
@@ -66,14 +67,17 @@ function ExternalLink({
   icon,
   label,
   disabled = false,
+  primary = false,
 }: {
   href: string;
   icon: string;
   label: string;
   disabled?: boolean;
+  /** Saffron-filled "go there" CTA (Directions). */
+  primary?: boolean;
 }) {
   const base =
-    "flex flex-col items-center gap-1 rounded-2xl bg-surface py-3.5 text-xs font-semibold ring-1 ring-inset ring-white/10 transition";
+    "flex flex-col items-center gap-1 rounded-2xl py-3.5 text-xs font-semibold ring-1 ring-inset transition";
   if (disabled) {
     return (
       <button
@@ -81,11 +85,9 @@ function ExternalLink({
         disabled
         aria-label={`${label} — coming soon`}
         title="Coming soon"
-        className={`${base} cursor-not-allowed text-haze/60`}
+        className={`${base} cursor-not-allowed bg-surface text-haze/60 ring-white/10`}
       >
-        <span className="text-xl" aria-hidden>
-          {icon}
-        </span>
+        <MaterialIcon name={icon} className="text-[22px]" />
         {label}
       </button>
     );
@@ -95,11 +97,13 @@ function ExternalLink({
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className={`${base} text-cream hover:bg-surface-2`}
+      className={
+        primary
+          ? `${base} bg-brand-gradient text-saffron-ink ring-transparent shadow-lg shadow-saffron/20 active:scale-[0.98]`
+          : `${base} bg-surface text-cream ring-white/10 hover:bg-surface-2`
+      }
     >
-      <span className="text-xl" aria-hidden>
-        {icon}
-      </span>
+      <MaterialIcon name={icon} className="text-[22px]" />
       {label}
     </a>
   );

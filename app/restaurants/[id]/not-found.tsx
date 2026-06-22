@@ -12,7 +12,7 @@ export default function RestaurantNotFound() {
         <p className="text-sm text-haze">It may have left the deck.</p>
         <Link
           href="/feed"
-          className="rounded-full bg-brand-gradient px-6 py-3 font-semibold text-ink shadow-lg shadow-coral/20"
+          className="rounded-full bg-brand-gradient px-6 py-3 font-semibold text-saffron-ink shadow-lg shadow-saffron/20"
         >
           Back to swiping →
         </Link>

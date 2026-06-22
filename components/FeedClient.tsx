@@ -45,15 +45,15 @@ export default function FeedClient() {
         <Link
           href="/"
           aria-label="Tune your preferences"
-          className="pointer-events-auto flex h-10 w-10 items-center justify-center text-[#ffc082]/90 transition active:scale-90"
+          className="pointer-events-auto flex h-10 w-10 items-center justify-center text-saffron/90 transition active:scale-90"
         >
           <MaterialIcon name="tune" className="text-[26px]" />
         </Link>
-        <h1 className="font-display text-3xl font-black italic tracking-tighter text-[#ffc082] drop-shadow-[0_0_12px_rgba(255,192,130,0.35)]">
+        <h1 className="font-display text-3xl font-black italic tracking-tighter text-saffron drop-shadow-[0_0_12px_rgba(255,192,130,0.35)]">
           FoodSwipe
         </h1>
         {/* Decorative only — no notifications feature yet, so it is not a button. */}
-        <span className="flex h-10 w-10 items-center justify-center text-[#ffc082]/90">
+        <span className="flex h-10 w-10 items-center justify-center text-saffron/90">
           <MaterialIcon name="notifications" className="text-[26px]" />
         </span>
       </div>

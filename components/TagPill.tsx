@@ -3,9 +3,9 @@ import type { ReactNode } from "react";
 type TagVariant = "cuisine" | "vibe" | "dietary" | "neutral";
 
 const VARIANT_STYLES: Record<TagVariant, string> = {
-  cuisine: "bg-coral/15 text-coral ring-coral/25",
-  vibe: "bg-pink/15 text-pink ring-pink/25",
-  dietary: "bg-mint/15 text-mint ring-mint/25",
+  cuisine: "bg-saffron/14 text-saffron ring-saffron/28",
+  vibe: "bg-tan/12 text-tan ring-tan/22",
+  dietary: "bg-mint/12 text-[#7fe3b0] ring-mint/22",
   neutral: "bg-white/8 text-haze ring-white/10",
 };
 

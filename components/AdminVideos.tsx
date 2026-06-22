@@ -298,8 +298,8 @@ export default function AdminVideos() {
   return (
     <div className="mx-auto min-h-dvh w-full max-w-md px-4 pb-16 pt-[max(env(safe-area-inset-top),1rem)]">
       {/* Internal banner */}
-      <div className="mb-5 rounded-2xl border border-pink/40 bg-pink/10 p-3 text-sm text-cream">
-        <p className="font-display font-bold text-pink">⚠️ Internal demo tool</p>
+      <div className="mb-5 rounded-2xl border border-chili/40 bg-chili/10 p-3 text-sm text-cream">
+        <p className="font-display font-bold text-chili-soft">⚠️ Internal demo tool</p>
         <p className="mt-1 text-xs text-cream/80">
           Not a public feature. Attached videos save to a shared backend (requires
           the admin secret) so all testers see them. Don&apos;t paste anything you
@@ -340,7 +340,7 @@ export default function AdminVideos() {
             }}
             placeholder="https://www.youtube.com/watch?v=…"
             aria-label="YouTube URL"
-            className="min-w-0 flex-1 rounded-xl bg-ink-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze/60 focus:ring-coral/60"
+            className="min-w-0 flex-1 rounded-xl bg-ink-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze/60 focus:ring-saffron/60"
           />
           <button
             type="button"
@@ -352,7 +352,7 @@ export default function AdminVideos() {
           </button>
         </div>
         {resolveError && (
-          <p role="alert" className="mt-2 text-xs text-coral">
+          <p role="alert" className="mt-2 text-xs text-chili-soft">
             {resolveError}
           </p>
         )}
@@ -480,7 +480,7 @@ export default function AdminVideos() {
           onClick={attach}
           aria-disabled={!canAttach || attaching}
           aria-describedby="attach-help"
-          className={`w-full rounded-full bg-brand-gradient py-3 font-bold text-ink shadow-lg shadow-coral/20 transition active:scale-[0.98] ${
+          className={`w-full rounded-full bg-brand-gradient py-3 font-bold text-ink shadow-lg shadow-saffron/20 transition active:scale-[0.98] ${
             canAttach && !attaching ? "" : "opacity-40"
           }`}
         >
@@ -494,7 +494,7 @@ export default function AdminVideos() {
         {attachMsg && (
           <p
             role="status"
-            className={`text-center text-xs ${attachMsg.type === "ok" ? "text-mint" : "text-coral"}`}
+            className={`text-center text-xs ${attachMsg.type === "ok" ? "text-mint" : "text-chili-soft"}`}
           >
             {attachMsg.text}
           </p>
@@ -507,7 +507,7 @@ export default function AdminVideos() {
           Saved for {restaurantName} ({persisted.length})
         </h2>
         {persistError && (
-          <p className="mb-2 text-xs text-coral">{persistError}</p>
+          <p className="mb-2 text-xs text-chili-soft">{persistError}</p>
         )}
         {persisted.length === 0 ? (
           <p className="text-sm text-haze">
@@ -540,7 +540,7 @@ export default function AdminVideos() {
                   type="button"
                   onClick={() => removePersisted(v.id)}
                   aria-label={`Hide ${v.caption}`}
-                  className="shrink-0 rounded-full p-1.5 text-haze hover:bg-white/10 hover:text-coral"
+                  className="shrink-0 rounded-full p-1.5 text-haze hover:bg-white/10 hover:text-chili-soft"
                 >
                   ✕
                 </button>
@@ -592,7 +592,7 @@ function Input({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className="w-full rounded-xl bg-surface px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze/60 focus:ring-coral/60"
+      className="w-full rounded-xl bg-surface px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze/60 focus:ring-saffron/60"
     />
   );
 }
@@ -610,7 +610,7 @@ function Select({
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full rounded-xl bg-surface px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 focus:ring-coral/60"
+      className="w-full rounded-xl bg-surface px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 focus:ring-saffron/60"
     >
       {options.map((o) => (
         <option key={o.value} value={o.value} className="bg-surface">

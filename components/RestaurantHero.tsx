@@ -114,7 +114,7 @@ export default function RestaurantHero({
           <span aria-hidden>·</span>
           <span>{distanceMiles.toFixed(1)} mi away</span>
           <span aria-hidden>·</span>
-          <span className="font-semibold text-mint">{priceLabel(priceLevel)}</span>
+          <span className="font-semibold text-saffron">{priceLabel(priceLevel)}</span>
         </p>
       </div>
     </div>

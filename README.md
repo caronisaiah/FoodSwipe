@@ -201,9 +201,10 @@ video-coverage factor. It is easy to reason about and produces the honest
 - Neon Postgres and Drizzle ORM for shared video persistence
 - `localStorage` for client preferences and saved restaurants
 
-Design direction is dark and video-forward — deep charcoal surfaces, warm
-coral-to-pink accents, and a display typeface — intended to feel like short-form
-video rather than a reviews site or a dashboard.
+Design direction is "Midnight Luxe" — a near-black charcoal stack with a single
+warm saffron accent (chili red reserved for status), Montserrat display + Inter
+body — intended to feel like short-form video rather than a reviews site or a
+dashboard.
 
 ---
 
