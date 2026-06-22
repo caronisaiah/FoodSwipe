@@ -183,6 +183,41 @@ way the rules are the same:
   be re-confirmed with Google's Place ID Finder; Google also recommends
   refreshing Place IDs older than 12 months.
 
+### Restaurant candidate ingestion (Phase 1)
+
+A backend **review staging area** for discovering restaurants before they could
+ever enter the feed. The product rule is explicit: **automation creates
+candidates for human review, it never publishes to the feed.** The live app still
+serves restaurants from [`lib/seed/restaurants.ts`](lib/seed/restaurants.ts) —
+nothing here touches `/feed`, `/saved`, `/restaurants/[id]`, or the existing
+`restaurant_videos` behavior.
+
+- **Tables** ([`lib/db/schema.ts`](lib/db/schema.ts)): `candidate_restaurants`
+  (curated, editable FoodSwipe fields + `status` candidate/approved/rejected/
+  needs_review + `source` manual/google_places), `restaurant_sources`
+  (provenance, kept separate from the curated fields — text metadata + reference
+  URLs only, **never** photo bytes/URLs or downloaded media), and
+  `ingestion_jobs` (optional batch-import bookkeeping, not yet wired).
+- **Helpers** ([`lib/db/candidates.ts`](lib/db/candidates.ts)):
+  `listCandidateRestaurants`, `getCandidateRestaurant`,
+  `insertCandidateRestaurant`, `updateCandidateRestaurant`,
+  `markCandidateRestaurantStatus`, `addRestaurantSource`. Status/source are
+  re-validated on read and write — raw DB/body values are never trusted.
+- **Admin API** (internal, `FOODSWIPE_ADMIN_SECRET`-gated like the video admin;
+  503 without the secret or `DATABASE_URL`): `GET`/`POST`
+  [`/api/admin/restaurants/candidates`](app/api/admin/restaurants/candidates/route.ts)
+  and `PATCH`
+  [`/api/admin/restaurants/candidates/[id]`](app/api/admin/restaurants/candidates/[id]/route.ts).
+  Manual candidate creation only in this pass (no TikTok/Instagram/Google
+  scraping, no Places Text Search yet).
+- **Candidate vs live restaurant:** a candidate is mutable review data with a
+  status and provenance and is **not** in the feed; a live restaurant is curated
+  seed data served to users. Approval will later be a deliberate, curated
+  promotion step — never an automatic publish.
+- The new tables need a one-time migration to materialize (`npm run db:generate`/
+  `db:push`, or apply the SQL in the Neon editor — see the TLS note above). The
+  app builds and runs without them; candidate endpoints just return `503`.
+
 ### Ranking
 
 [`lib/recommendations.ts`](lib/recommendations.ts) is a pure, readable weighted
@@ -332,6 +367,8 @@ app/
   api/restaurants/[id]/photo/route.ts   GET   fresh Google Place Photo (or null)
   api/admin/videos/route.ts             POST  attach a video (admin secret)
   api/admin/videos/[id]/route.ts        DELETE soft-delete (admin secret)
+  api/admin/restaurants/candidates/route.ts      GET/POST candidate restaurants (admin secret)
+  api/admin/restaurants/candidates/[id]/route.ts PATCH a candidate (admin secret)
 
 components/
   PreferenceOnboarding.tsx   Landing and preference picker
@@ -359,9 +396,10 @@ lib/
   recommendations.ts         Ranking
   storage.ts                 localStorage hooks (prefs, saves, legacy clips)
   emoji.ts                   Cuisine to placeholder glyph
-  db/schema.ts               Drizzle table: restaurant_videos
+  db/schema.ts               Drizzle tables: restaurant_videos, candidate_restaurants, restaurant_sources, ingestion_jobs
   db/index.ts                Lazy Neon/Drizzle client
   db/videos.ts               Persisted video data access
+  db/candidates.ts           Candidate-restaurant review data access (Phase 1 ingestion)
   seed/restaurants.ts        18 seeded Washington, DC restaurants
 
 drizzle.config.ts            drizzle-kit configuration

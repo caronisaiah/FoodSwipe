@@ -8,6 +8,13 @@
       "when": 1781788311385,
       "tag": "0000_cloudy_gargoyle",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782138260778,
+      "tag": "0001_mysterious_swordsman",
+      "breakpoints": true
     }
   ]
 }
