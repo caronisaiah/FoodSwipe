@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { motion, type MotionStyle } from "framer-motion";
 import type { PlacePhoto, PriceLevel, Video } from "@/lib/types";
 import { priceLabel } from "@/lib/options";
 import VideoEmbed from "@/components/VideoEmbed";
@@ -34,6 +35,7 @@ export default function RestaurantHero({
   neighborhood,
   distanceMiles,
   priceLevel,
+  heroStyle,
 }: {
   restaurantId: string;
   fallbackVideo: Video;
@@ -42,6 +44,9 @@ export default function RestaurantHero({
   neighborhood: string;
   distanceMiles: number;
   priceLevel: PriceLevel;
+  /** Optional motion style (opacity/scale) for the scroll-linked fade in the
+   *  in-feed ProfileSheet. Omitted on the standalone route -> hero is static. */
+  heroStyle?: MotionStyle;
 }) {
   const [photo, setPhoto] = useState<PlacePhoto | null>(null);
   const [logoSrc, setLogoSrc] = useState<string | null>(null);
@@ -89,7 +94,10 @@ export default function RestaurantHero({
   const showLogo = !photo && resolved && Boolean(logoSrc) && !logoFailed;
 
   return (
-    <div className="relative mx-4 mt-1 aspect-[4/5] overflow-hidden rounded-[28px] ring-1 ring-white/10">
+    <motion.div
+      style={heroStyle}
+      className="relative mx-4 mt-1 aspect-[4/5] overflow-hidden rounded-[28px] ring-1 ring-white/10"
+    >
       {photo ? (
         <>
           {/* eslint-disable-next-line @next/next/no-img-element -- Google's Place
@@ -126,7 +134,7 @@ export default function RestaurantHero({
           <span className="font-semibold text-saffron">{priceLabel(priceLevel)}</span>
         </p>
       </div>
-    </div>
+    </motion.div>
   );
 }
 

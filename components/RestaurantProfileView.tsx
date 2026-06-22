@@ -1,5 +1,6 @@
 "use client";
 
+import type { MotionStyle } from "framer-motion";
 import type { Restaurant } from "@/lib/types";
 import { cuisineEmoji } from "@/lib/emoji";
 import TagPill from "@/components/TagPill";
@@ -18,8 +19,11 @@ import MaterialIcon from "@/components/MaterialIcon";
  */
 export default function RestaurantProfileView({
   restaurant: r,
+  heroStyle,
 }: {
   restaurant: Restaurant;
+  /** Scroll-linked motion style for the hero (in-feed sheet only). */
+  heroStyle?: MotionStyle;
 }) {
   const poster = cuisineEmoji(r.cuisineTags);
   // Distinct emojis from the cuisine tags so carousel clips don't all look alike.
@@ -39,6 +43,7 @@ export default function RestaurantProfileView({
         neighborhood={r.neighborhood}
         distanceMiles={r.distanceMiles}
         priceLevel={r.priceLevel}
+        heroStyle={heroStyle}
       />
 
       <div className="space-y-7 px-4 pt-6">
