@@ -240,3 +240,66 @@ export const restaurants = pgTable("restaurants", {
 
 export type RestaurantRow = typeof restaurants.$inferSelect;
 export type NewRestaurantRow = typeof restaurants.$inferInsert;
+
+/**
+ * Social video intake (Phase 1) — a REVIEW STAGING queue for TikTok/Instagram/
+ * YouTube URLs, completely separate from `restaurant_videos`. NOTHING here is
+ * shown on a profile; a video only reaches `restaurant_videos` after an explicit
+ * admin "attach" of an APPROVED candidate (see lib/db/videoCandidates.ts).
+ *
+ * Enum-ish fields (status/platform/legalDisplayStatus) are stored as text and
+ * re-validated on read (never trust raw DB values). We store only review
+ * metadata + reference URLs (thumbnail by reference, like restaurant_videos) —
+ * never downloaded/rehosted media bytes.
+ */
+export const videoCandidates = pgTable("video_candidates", {
+  id: text("id").primaryKey(),
+  // "needs_review" | "approved" | "rejected" | "attached"
+  status: text("status").notNull().default("needs_review"),
+  // "tiktok" | "instagram" | "youtube"
+  platform: text("platform").notNull(),
+  sourceUrl: text("source_url").notNull(),
+  // Canonical, query-stripped URL — the dedupe key (unique index below).
+  normalizedSourceUrl: text("normalized_source_url").notNull(),
+  platformVideoId: text("platform_video_id"),
+  restaurantSlug: text("restaurant_slug"),
+  candidateRestaurantId: text("candidate_restaurant_id"),
+  proposedRestaurantName: text("proposed_restaurant_name"),
+  creatorHandle: text("creator_handle"),
+  creatorName: text("creator_name"),
+  caption: text("caption"),
+  // Thumbnail stored BY REFERENCE only (validated https URL) — never rehosted.
+  thumbnailUrl: text("thumbnail_url"),
+  embedUrl: text("embed_url"),
+  attributionText: text("attribution_text"),
+  publishedAt: timestamp("published_at", { withTimezone: true }),
+  discoveredAt: timestamp("discovered_at", { withTimezone: true }).notNull().defaultNow(),
+  // Freshness of resolver-fetched metadata (expiring third-party data).
+  sourceFetchedAt: timestamp("source_fetched_at", { withTimezone: true }),
+  sourceExpiresAt: timestamp("source_expires_at", { withTimezone: true }),
+  // Internal 0–100 confidence that this video matches the restaurant (admin/later
+  // search). NOT public, NOT engagement/social proof. Null = unscored.
+  matchConfidence: integer("match_confidence"),
+  matchReasons: text("match_reasons").array(),
+  // Same legal-safe vocab as Video: embeddable | source-link-only | placeholder-only | unavailable.
+  legalDisplayStatus: text("legal_display_status").notNull().default("source-link-only"),
+  // How the URL resolver fared (e.g. "resolved" | "source-link-only" | "missing-credentials" | "error").
+  resolverStatus: text("resolver_status").notNull(),
+  resolverError: text("resolver_error"),
+  reviewNotes: text("review_notes"),
+  // Set when the candidate is attached — the restaurant_videos row it created
+  // (makes attach idempotent + records provenance).
+  attachedVideoId: text("attached_video_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  // One candidate per canonical source URL (exact-duplicate protection).
+  uniqueIndex("video_candidates_normalized_source_url_key").on(t.normalizedSourceUrl),
+  // And one per (platform, platformVideoId) when an id was extractable.
+  uniqueIndex("video_candidates_platform_video_id_key")
+    .on(t.platform, t.platformVideoId)
+    .where(sql`${t.platformVideoId} is not null`),
+]);
+
+export type VideoCandidateRow = typeof videoCandidates.$inferSelect;
+export type NewVideoCandidateRow = typeof videoCandidates.$inferInsert;

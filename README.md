@@ -381,6 +381,51 @@ seed **plus** DB-published restaurants.
   a **Promote to feed** action on approved candidates (showing `missingFields` on
   failure and the resulting `/restaurants/[slug]` link on success).
 
+### Social video intake (Phase 1)
+
+A **review-first** queue for TikTok / Instagram / YouTube URLs. Nothing is attached
+to a profile automatically — a video only reaches `restaurant_videos` after an
+admin **approves** a candidate and explicitly **attaches** it.
+
+- **Schema.** A new `video_candidates` table (migration `0008_simple_rage.sql`)
+  separate from `restaurant_videos`, with `status`
+  (`needs_review`/`approved`/`rejected`/`attached`), resolver metadata, and unique
+  indexes on `normalized_source_url` and partial `(platform, platform_video_id)`
+  so the same URL can't queue twice. `restaurant_videos` is unchanged.
+- **Resolver** ([`lib/socialVideo.ts`](lib/socialVideo.ts), server-only): detects
+  platform, normalizes the URL (the dedupe key), extracts a platform video id, and
+  fetches **official, public** metadata only.
+  - **TikTok** — public **oEmbed** (no key): creator/caption/thumbnail. Stored
+    `source-link-only` (not in our embed allowlist → links out, never iframed).
+  - **YouTube** — reuses [`lib/youtube.ts`](lib/youtube.ts): canonical + nocookie
+    embed (`embeddable`), optional Data-API metadata.
+  - **Instagram** — official oEmbed **only if `INSTAGRAM_OEMBED_TOKEN` is set**;
+    otherwise it does **not** fail — it creates a `source-link-only` candidate with
+    `resolverStatus: "missing-credentials"`. Linked out, never iframed.
+  - Unknown/unsupported URL → a clean **422** validation error.
+  - No scraping, no unofficial downloaders, **no media bytes stored**; thumbnails
+    are kept **by reference** (validated https) like the existing video model.
+- **Admin APIs** (all admin-secret gated · 503/401/503):
+  - `POST /api/admin/videos/candidates` — `{ sourceUrl, restaurantSlug?,
+    candidateRestaurantId?, proposedRestaurantName?, reviewNotes? }` → resolves +
+    inserts `needs_review`. **422** unsupported URL; **409 (with existing)** on dup.
+  - `GET /api/admin/videos/candidates?status=&platform=&restaurantSlug=`.
+  - `PATCH /api/admin/videos/candidates/[id]` — edits review fields only
+    (status `needs_review`/`approved`/`rejected`, restaurantSlug, proposed name,
+    creatorHandle, caption, attributionText, matchConfidence, matchReasons,
+    reviewNotes). Source identity + `attached` are not editable here.
+  - `POST /api/admin/videos/candidates/[id]/attach` — requires `approved` (else
+    **400**) + a `restaurantSlug` resolving to a seed/published restaurant (else
+    **422**); inserts via the existing legal-safe `normalizeVideo` + `insertVideo`,
+    marks the candidate `attached`. **Idempotent**; **never** attaches a
+    rejected/needs_review candidate; never auto-runs.
+- **Console.** [`/admin/videos/candidates`](app/admin/videos/candidates/page.tsx):
+  URL intake, status/platform filters, a compact queue, expandable detail with a
+  YouTube nocookie embed (or thumbnail + source link for TikTok/IG), resolver
+  diagnostics, match confidence/reasons, editable review notes, and
+  Save/Approve/Reject/Attach (Attach disabled unless approved + slug). The existing
+  [`/admin/videos`](app/admin/videos/page.tsx) intake tool is unchanged.
+
 ### Ranking
 
 [`lib/recommendations.ts`](lib/recommendations.ts) is a pure, readable weighted
