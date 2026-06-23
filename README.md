@@ -279,24 +279,57 @@ plus a **503** if `GOOGLE_MAPS_API_KEY` is unset and **400** on a blank `query`.
   leave both null (the marker never blocks them). Nothing auto-expires yet;
   acting on the window is a deliberate human/curation step. Migration
   `0003_green_tattoo.sql` adds the two nullable columns (additive, no default).
-- **Exact duplicates (by `googlePlaceId` only).** A real import skips any result
-  whose `googlePlaceId` already exists as a candidate — regardless of its status
-  (`candidate`/`needs_review`/`approved`/`rejected`), and it **never revives a
-  rejected row**. Skips are counted in `skippedDuplicates` and itemized in a
-  `duplicates[]` array (`{ googlePlaceId, name, existingId, existingStatus }`). A
-  dry run marks each duplicate explicitly (`isDuplicate` + `duplicateOfStatus` on
-  the preview row). Dedupe is **never by name** — chains have many locations, so
-  same-name/different-Place-ID results are imported as distinct candidates. (This
-  also catches repeats within one import.) Separately, results whose Place ID or
-  name matches a **live seeded** restaurant are still imported but flagged with a
-  `seedMatchWarning` — never a hard block.
-- **Admin photo preview.** [`GET /api/admin/restaurants/candidates/[id]/photo`](app/api/admin/restaurants/candidates/[id]/photo/route.ts)
+- **Exact duplicates (by `googlePlaceId` only), race-hardened.** A real import
+  skips any result whose `googlePlaceId` already exists as a candidate —
+  regardless of its status (`candidate`/`needs_review`/`approved`/`rejected`), and
+  it **never revives a rejected row**. Dedupe is **never by name** (chains have
+  many locations, so same-name/different-Place-ID results import as distinct
+  candidates). Three layers guard against duplicates: a within-run `Set` (same
+  Place ID twice in one Google response), the status-independent
+  `getCandidateByGooglePlaceId` pre-check, and **insert-failure recovery** — if an
+  insert throws because a concurrent import inserted the same Place ID between the
+  check and the insert (a TOCTOU race, the root cause of the earlier
+  duplicate-on-retry bug), the loop re-checks and counts it as a skipped duplicate
+  instead of creating a second row. Skips are counted in `skippedDuplicates` and
+  itemized in `duplicates[]` (`{ googlePlaceId, name, existingId, existingStatus,
+  reason: "existing-candidate" | "within-batch" | "race" }`); a dry run marks each
+  with `isDuplicate` + `duplicateOfStatus`. Safe server logs (Place IDs + reason,
+  no secrets) record what was skipped. The race is closed at the database level by
+  a **partial `UNIQUE` index** on `google_place_id` (migration
+  `0006_serious_stellaris.sql`, `WHERE google_place_id IS NOT NULL` so manual rows
+  may stay null): a concurrent duplicate insert now throws, and the route's
+  insert-conflict recovery records it as a skipped duplicate instead of creating a
+  second row. That migration first **de-dupes** any pre-existing duplicates,
+  keeping the most-recently-updated candidate per Place ID and deleting the
+  redundant copies (the console flags such rows with a "dup ID" badge). Separately,
+  results matching a **live seeded** restaurant by Place ID or name are imported
+  but flagged with a `seedMatchWarning` — never a hard block.
+- **Conservative auto tag suggestions.** [`lib/candidateTagger.ts`](lib/candidateTagger.ts)
+  (pure, deterministic) maps Google `primaryType`/`types`/name/`query`/price to
+  **controlled-vocab** review tags (`lib/types.ts`): cuisine + an implied dish
+  only when the type/name clearly says so (taqueria→Tacos, ramen→Ramen,
+  pizza→Pizza, bakery→Pastries, ice-cream→Ice cream); dietary tags **only when
+  explicit** (never assumed); vibe/`bestFor` from price + an obvious service style;
+  a neutral `reasonText` template (not marketing). Every suggestion is explained in
+  `suggestionReasons`. Import applies suggestions to NEW candidates only (existing
+  ones are skipped, never overwritten); the dry run shows them in the preview. The
+  suggestion snapshot (`suggested_tags` jsonb) + `suggestion_confidence` +
+  `suggestion_reasons` persist on `candidate_restaurants` so the console can show
+  auto-vs-human-edited and offer "reset to suggestions". Migration
+  `0005_lame_colleen_wing.sql` adds the three nullable columns (additive).
+- **Admin photo preview (lazy).** [`GET /api/admin/restaurants/candidates/[id]/photo`](app/api/admin/restaurants/candidates/[id]/photo/route.ts)
   (admin-secret, `no-store`, read-only — no DB writes) resolves the candidate's
   hero media via the shared `resolveHeroMedia` and returns the same
-  `{ photo, status, logoUrl }` shape as the public route, so the admin candidates
-  page shows each saved candidate's Google photo (with attribution) → logo →
-  placeholder. Photo previews load for **saved** candidates only (dry-run preview
-  rows are pure Google data and trigger no photo fetch).
+  `{ photo, status, logoUrl }` shape as the public route. To bound Google cost the
+  console fetches a candidate's photo only when its row is **expanded** (not for
+  every queue row, and never for dry-run preview rows).
+- **Review console.** [`/admin/restaurants/candidates`](app/admin/restaurants/candidates/page.tsx)
+  is a dense internal queue: rows ranked by review-likelihood (null/manual last),
+  with status + source filters, name/address/Place-ID search, and per-row flags
+  (duplicate Place ID, seed overlap, expiry). Expand a row to review/edit
+  controlled-vocab tags (with auto-vs-edited markers), `reasonText`, and notes, and
+  to Save / Mark needs-review / Approve / Reject / Reset-to-suggestions. **Approve
+  marks a candidate reviewed only — it never publishes to `/feed`.**
 - **`ingestion_jobs`** records each **real** import run (`source: google_places`,
   `query`, `dryRun: false`, `status: success|failed`, `candidatesCreated`,
   `skippedDuplicates`, `error`) for audit. Dry runs are intentionally not

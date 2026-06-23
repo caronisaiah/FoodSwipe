@@ -36,6 +36,20 @@
       "when": 1782156779849,
       "tag": "0004_wide_dorian_gray",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1782180775727,
+      "tag": "0005_lame_colleen_wing",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1782183533712,
+      "tag": "0006_serious_stellaris",
+      "breakpoints": true
     }
   ]
 }

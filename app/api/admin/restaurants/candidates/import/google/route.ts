@@ -12,6 +12,7 @@ import {
   type CandidateRestaurant,
 } from "@/lib/db/candidates";
 import { scoreReviewLikelihood, type ReviewLikelihood } from "@/lib/reviewLikelihood";
+import { suggestCandidateTags } from "@/lib/candidateTagger";
 import { RESTAURANTS } from "@/lib/seed/restaurants";
 
 /*
@@ -87,7 +88,8 @@ function seedWarning(r: PlaceTextResult): string | null {
   return null;
 }
 
-/** Build the candidate body for a Google result (curated tag fields left empty). */
+/** Build the candidate body for a Google result, with conservative auto-suggested
+ *  tags as a STARTING POINT for human review (never published). */
 function toCandidateInput(
   r: PlaceTextResult,
   query: string,
@@ -97,13 +99,38 @@ function toCandidateInput(
   likelihood: ReviewLikelihood,
 ) {
   const warning = seedWarning(r);
+  const priceLevel = mapPrice(r.googlePriceLevel);
+
+  // Deterministic, conservative tag suggestions (controlled vocab only).
+  const suggestion = suggestCandidateTags({
+    name: r.displayName,
+    primaryType: r.primaryType,
+    types: r.types,
+    priceLevel,
+    query,
+    websiteDomain: hostFrom(r.websiteUri),
+    reviewLikelihoodScore: likelihood.score,
+  });
+
   const reviewNotes =
     `Imported via Google Places Text Search query: "${query}". ` +
-    `Needs human curation (cuisine/vibe/dietary tags, dishes, copy). ` +
+    `Suggested tags need human review (confidence: ${suggestion.suggestionConfidence}). ` +
     `Google primaryType: ${r.primaryType ?? "n/a"}. ` +
     `Google-derived candidate metadata should be reviewed/refreshed before ` +
     `expiry (${expiresAt.toISOString().slice(0, 10)}).` +
     (warning ? ` WARNING: ${warning}` : "");
+
+  // Snapshot of the suggestion, so the review console can diff human edits and
+  // offer "reset to suggestions".
+  const suggestedTags = {
+    cuisineTags: suggestion.cuisineTags,
+    dietaryTags: suggestion.dietaryTags,
+    vibeTags: suggestion.vibeTags,
+    bestFor: suggestion.bestFor,
+    dishHighlights: suggestion.dishHighlights,
+    reasonText: suggestion.reasonText,
+  };
+
   return {
     name: r.displayName,
     slug,
@@ -115,14 +142,14 @@ function toCandidateInput(
     neighborhood: null,
     lat: r.lat,
     lng: r.lng,
-    priceLevel: mapPrice(r.googlePriceLevel),
-    // Curated FoodSwipe fields are NOT inferred from Google — left for review.
-    cuisineTags: [],
-    dietaryTags: [],
-    vibeTags: [],
-    dishHighlights: [],
-    bestFor: [],
-    reasonText: "Imported from Google Places candidate search; needs human review.",
+    priceLevel,
+    // Suggested tags (controlled vocab) — a starting point for review, not truth.
+    cuisineTags: suggestion.cuisineTags,
+    dietaryTags: suggestion.dietaryTags,
+    vibeTags: suggestion.vibeTags,
+    dishHighlights: suggestion.dishHighlights,
+    bestFor: suggestion.bestFor,
+    reasonText: suggestion.reasonText,
     reviewNotes,
     // Freshness window for the Google-derived metadata (refresh before expiry).
     sourceFetchedAt: fetchedAt,
@@ -130,6 +157,10 @@ function toCandidateInput(
     // INTERNAL admin-triage score — never public, never in /feed.
     reviewLikelihoodScore: likelihood.score,
     reviewLikelihoodReasons: likelihood.reasons,
+    // Auto-suggestion provenance for the review console.
+    suggestionConfidence: suggestion.suggestionConfidence,
+    suggestionReasons: suggestion.suggestionReasons,
+    suggestedTags,
     seedMatchWarning: warning,
   };
 }
@@ -263,34 +294,84 @@ export async function POST(req: Request): Promise<Response> {
   const duplicates: {
     googlePlaceId: string;
     name: string | null;
-    existingId: string;
-    existingStatus: string;
+    existingId: string | null;
+    existingStatus: string | null;
+    reason: "existing-candidate" | "within-batch" | "race";
   }[] = [];
+  // Belt-and-suspenders dedupe: guard against the SAME Place ID appearing twice
+  // in one Google response (the per-row DB check below also catches this once a
+  // prior row is persisted, but this avoids the second DB round-trip).
+  const seenThisRun = new Set<string>();
   try {
     for (const { r, likelihood } of ranked) {
-      // Exact-duplicate dedupe by Google Place ID — NEVER by name (chains have
-      // many locations). Skips regardless of the existing status and never
-      // revives a rejected row. Also catches within-batch repeats (the prior
-      // insert is persisted before the next lookup).
-      const existing = await getCandidateByGooglePlaceId(r.placeId);
-      if (existing) {
+      const placeId = r.placeId;
+
+      // (a) Same Place ID already handled in THIS run.
+      if (seenThisRun.has(placeId)) {
         skippedDuplicates++;
         duplicates.push({
-          googlePlaceId: r.placeId,
+          googlePlaceId: placeId,
           name: r.displayName,
-          existingId: existing.id,
-          existingStatus: existing.status,
+          existingId: null,
+          existingStatus: null,
+          reason: "within-batch",
         });
         continue;
       }
+
+      // (b) Exact-duplicate by Google Place ID — NEVER by name (chains have many
+      // locations). Status-INDEPENDENT: skips regardless of candidate/needs_review/
+      // approved/rejected, and never revives a rejected row.
+      const existing = await getCandidateByGooglePlaceId(placeId);
+      if (existing) {
+        skippedDuplicates++;
+        seenThisRun.add(placeId);
+        duplicates.push({
+          googlePlaceId: placeId,
+          name: r.displayName,
+          existingId: existing.id,
+          existingStatus: existing.status,
+          reason: "existing-candidate",
+        });
+        continue;
+      }
+
       const slug = uniqueSlug(slugify(r.displayName ?? ""), usedSlugs);
       usedSlugs.add(slug);
       const input = toCandidateInput(r, query, slug, fetchedAt, expiresAt, likelihood);
-      const candidate = await insertCandidateRestaurant(input);
+
+      // (c) Insert. The partial unique index on google_place_id (migration 0006)
+      // makes a concurrent duplicate insert THROW, closing the TOCTOU window
+      // between the pre-check and this insert: on throw we re-check and, if the
+      // row now exists, count it as a skipped duplicate (a concurrent import won
+      // the race) rather than failing the whole batch. A throw with no row is a
+      // genuine error and is rethrown to the outer handler.
+      let candidate: CandidateRestaurant | null = null;
+      try {
+        candidate = await insertCandidateRestaurant(input);
+      } catch (err) {
+        const now = await getCandidateByGooglePlaceId(placeId);
+        if (now) {
+          skippedDuplicates++;
+          seenThisRun.add(placeId);
+          duplicates.push({
+            googlePlaceId: placeId,
+            name: r.displayName,
+            existingId: now.id,
+            existingStatus: now.status,
+            reason: "race",
+          });
+          continue;
+        }
+        throw err; // genuine failure → outer handler records + 500s
+      }
+
       if (!candidate) {
-        skippedDuplicates++;
+        // No usable name (defensive) — not a duplicate, just skip silently.
         continue;
       }
+      seenThisRun.add(placeId);
+
       // Provenance, kept separate from curated candidate fields (best-effort).
       // Raw expiring Google rating/count live here (admin metadata) — NOT public.
       await addRestaurantSource(candidate.id, {
@@ -311,6 +392,8 @@ export async function POST(req: Request): Promise<Response> {
       imported++;
     }
   } catch {
+    // Safe, non-secret diagnostics (Place IDs are public; no key/body logged).
+    console.error("[candidate-import] failed partway", { imported, skippedDuplicates });
     await createIngestionJob({
       source: "google_places",
       query,
@@ -322,6 +405,13 @@ export async function POST(req: Request): Promise<Response> {
     });
     return Response.json({ error: "Failed to import candidates." }, { status: 500 });
   }
+
+  // Safe summary (no secrets) — useful for diagnosing duplicate-skip behavior.
+  console.info("[candidate-import] complete", {
+    imported,
+    skippedDuplicates,
+    skippedPlaceIds: duplicates.map((d) => `${d.googlePlaceId}:${d.reason}`),
+  });
 
   await createIngestionJob({
     source: "google_places",

@@ -6,6 +6,7 @@ import {
   restaurantSources,
   type CandidateRestaurantRow,
   type NewCandidateRestaurantRow,
+  type SuggestedTagSnapshot,
 } from "./schema";
 
 export { isDbConfigured };
@@ -27,6 +28,9 @@ export type CandidateStatus = (typeof CANDIDATE_STATUSES)[number];
 
 export const CANDIDATE_SOURCES = ["manual", "google_places"] as const;
 export type CandidateSource = (typeof CANDIDATE_SOURCES)[number];
+
+export const SUGGESTION_CONFIDENCES = ["low", "medium", "high"] as const;
+export type SuggestionConfidence = (typeof SUGGESTION_CONFIDENCES)[number];
 
 /** Normalized candidate as returned to the admin API (never raw row values). */
 export interface CandidateRestaurant {
@@ -55,6 +59,10 @@ export interface CandidateRestaurant {
   // INTERNAL admin-triage only (never public, never in /feed); null for manual rows.
   reviewLikelihoodScore: number | null;
   reviewLikelihoodReasons: string[];
+  // Conservative auto tag suggestions from import; null/[] for manual rows.
+  suggestionConfidence: SuggestionConfidence | null;
+  suggestionReasons: string[];
+  suggestedTags: SuggestedTagSnapshot | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -92,6 +100,23 @@ function optScore(v: unknown): number | null {
     ? Math.min(Math.max(Math.round(v), 0), 100)
     : null;
 }
+/** Suggestion confidence: one of the controlled values, or null. */
+function optConfidence(v: unknown): SuggestionConfidence | null {
+  return inSet(SUGGESTION_CONFIDENCES, v) ? v : null;
+}
+/** Re-validate an auto-suggestion snapshot (untrusted DB/body), or null. */
+function optSnapshot(v: unknown): SuggestedTagSnapshot | null {
+  if (!v || typeof v !== "object") return null;
+  const s = v as Record<string, unknown>;
+  return {
+    cuisineTags: strArray(s.cuisineTags),
+    dietaryTags: strArray(s.dietaryTags),
+    vibeTags: strArray(s.vibeTags),
+    bestFor: strArray(s.bestFor),
+    dishHighlights: strArray(s.dishHighlights),
+    reasonText: optStr(s.reasonText) ?? "",
+  };
+}
 export function slugify(s: string): string {
   return s
     .toLowerCase()
@@ -127,6 +152,9 @@ function rowToCandidate(row: CandidateRestaurantRow): CandidateRestaurant {
     sourceExpiresAt: row.sourceExpiresAt ? row.sourceExpiresAt.toISOString() : null,
     reviewLikelihoodScore: optScore(row.reviewLikelihoodScore),
     reviewLikelihoodReasons: row.reviewLikelihoodReasons ?? [],
+    suggestionConfidence: optConfidence(row.suggestionConfidence),
+    suggestionReasons: row.suggestionReasons ?? [],
+    suggestedTags: optSnapshot(row.suggestedTags),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -252,6 +280,10 @@ export async function insertCandidateRestaurant(
       // INTERNAL triage; set by importers only. Manual creates leave null/[].
       reviewLikelihoodScore: optScore(b.reviewLikelihoodScore),
       reviewLikelihoodReasons: strArray(b.reviewLikelihoodReasons),
+      // Auto-suggestion provenance; set by importers only.
+      suggestionConfidence: optConfidence(b.suggestionConfidence),
+      suggestionReasons: strArray(b.suggestionReasons),
+      suggestedTags: optSnapshot(b.suggestedTags),
     })
     .returning();
   return rowToCandidate(row);

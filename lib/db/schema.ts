@@ -1,11 +1,28 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   doublePrecision,
   integer,
+  jsonb,
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
+
+/**
+ * Snapshot of the conservative auto-suggestion applied at import time. Stored so
+ * the review console can (a) show what was auto-suggested vs human-edited and
+ * (b) offer "reset to suggestions". Values are controlled-vocab strings.
+ */
+export interface SuggestedTagSnapshot {
+  cuisineTags: string[];
+  dietaryTags: string[];
+  vibeTags: string[];
+  bestFor: string[];
+  dishHighlights: string[];
+  reasonText: string;
+}
 
 /**
  * v1.2 shared persistence — ONLY video attachments live in Postgres.
@@ -96,9 +113,24 @@ export const candidateRestaurants = pgTable("candidate_restaurants", {
   // by sourceExpiresAt above). Null for manually-entered candidates.
   reviewLikelihoodScore: integer("review_likelihood_score"),
   reviewLikelihoodReasons: text("review_likelihood_reasons").array(),
+  // Conservative auto tag suggestions (Google import only) — a STARTING POINT for
+  // human review, never published to `/feed`. `suggestedTags` is the original
+  // suggestion snapshot, kept so the console can diff human edits and offer
+  // "reset to suggestions". Null for manually-entered candidates.
+  suggestionConfidence: text("suggestion_confidence"),
+  suggestionReasons: text("suggestion_reasons").array(),
+  suggestedTags: jsonb("suggested_tags").$type<SuggestedTagSnapshot>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [
+  // Exact-duplicate guard: at most one candidate per Google Place ID. PARTIAL
+  // (WHERE google_place_id IS NOT NULL) so manually-entered candidates with no
+  // Place ID are unaffected and many can coexist. This is what makes the import
+  // route's insert-conflict recovery a real race guarantee (not just app-level).
+  uniqueIndex("candidate_restaurants_google_place_id_key")
+    .on(t.googlePlaceId)
+    .where(sql`${t.googlePlaceId} is not null`),
+]);
 
 export type CandidateRestaurantRow = typeof candidateRestaurants.$inferSelect;
 export type NewCandidateRestaurantRow = typeof candidateRestaurants.$inferInsert;
