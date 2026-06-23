@@ -193,16 +193,20 @@ export async function getExistingCandidateSlugs(): Promise<Set<string>> {
   return set;
 }
 
-/** All non-empty candidate Google Place IDs, as a set (for the import penalty). */
-export async function getExistingCandidateGooglePlaceIds(): Promise<Set<string>> {
+/**
+ * Map of existing candidate Google Place ID → its status (for the import
+ * exact-duplicate check + score penalty). An exact duplicate is the SAME
+ * googlePlaceId — never name (chains have many locations). Empty without a DB.
+ */
+export async function getExistingCandidatePlaceStatuses(): Promise<Map<string, string>> {
   const db = getDb();
-  if (!db) return new Set();
+  if (!db) return new Map();
   const rows = await db
-    .select({ googlePlaceId: candidateRestaurants.googlePlaceId })
+    .select({ googlePlaceId: candidateRestaurants.googlePlaceId, status: candidateRestaurants.status })
     .from(candidateRestaurants);
-  const set = new Set<string>();
-  for (const r of rows) if (r.googlePlaceId) set.add(r.googlePlaceId);
-  return set;
+  const map = new Map<string, string>();
+  for (const r of rows) if (r.googlePlaceId) map.set(r.googlePlaceId, r.status);
+  return map;
 }
 
 /**

@@ -4,7 +4,7 @@ import {
   addRestaurantSource,
   createIngestionJob,
   getCandidateByGooglePlaceId,
-  getExistingCandidateGooglePlaceIds,
+  getExistingCandidatePlaceStatuses,
   getExistingCandidateSlugs,
   insertCandidateRestaurant,
   isDbConfigured,
@@ -233,15 +233,24 @@ export async function POST(req: Request): Promise<Response> {
   const fetchedAt = new Date();
   const expiresAt = new Date(fetchedAt.getTime() + FRESHNESS_WINDOW_MS);
 
-  // Snapshot of existing candidate Place IDs for the duplicate penalty (a DB
-  // READ only — dry runs still write nothing). Score + rank highest-first.
-  const existingPlaceIds = await getExistingCandidateGooglePlaceIds();
+  // Snapshot of existing candidate Place IDs → status, for the exact-duplicate
+  // check + score penalty (a DB READ only — dry runs still write nothing).
+  // Score + rank highest-first.
+  const existingByPlaceId = await getExistingCandidatePlaceStatuses();
+  const existingPlaceIds = new Set(existingByPlaceId.keys());
   const ranked = scoreAndRank(usable, existingPlaceIds);
 
   if (dryRun) {
-    const candidates = ranked.map(({ r, likelihood }) =>
-      toCandidateInput(r, query, slugify(r.displayName ?? ""), fetchedAt, expiresAt, likelihood),
-    );
+    // Mark exact duplicates by googlePlaceId so the preview is explicit about
+    // what a real run would skip (and the status it would skip — e.g. rejected).
+    const candidates = ranked.map(({ r, likelihood }) => {
+      const dupStatus = r.placeId ? (existingByPlaceId.get(r.placeId) ?? null) : null;
+      return {
+        ...toCandidateInput(r, query, slugify(r.displayName ?? ""), fetchedAt, expiresAt, likelihood),
+        isDuplicate: dupStatus !== null,
+        duplicateOfStatus: dupStatus,
+      };
+    });
     return Response.json({ dryRun: true, query, found: candidates.length, candidates });
   }
 
@@ -250,12 +259,28 @@ export async function POST(req: Request): Promise<Response> {
   let imported = 0;
   let skippedDuplicates = 0;
   const created: CandidateRestaurant[] = [];
+  // Exact googlePlaceId duplicates we skipped, with the reason/existing status.
+  const duplicates: {
+    googlePlaceId: string;
+    name: string | null;
+    existingId: string;
+    existingStatus: string;
+  }[] = [];
   try {
     for (const { r, likelihood } of ranked) {
-      // Dedupe by Google Place ID (also catches within-batch repeats, since the
-      // prior insert is already persisted before the next lookup).
-      if (await getCandidateByGooglePlaceId(r.placeId)) {
+      // Exact-duplicate dedupe by Google Place ID — NEVER by name (chains have
+      // many locations). Skips regardless of the existing status and never
+      // revives a rejected row. Also catches within-batch repeats (the prior
+      // insert is persisted before the next lookup).
+      const existing = await getCandidateByGooglePlaceId(r.placeId);
+      if (existing) {
         skippedDuplicates++;
+        duplicates.push({
+          googlePlaceId: r.placeId,
+          name: r.displayName,
+          existingId: existing.id,
+          existingStatus: existing.status,
+        });
         continue;
       }
       const slug = uniqueSlug(slugify(r.displayName ?? ""), usedSlugs);
@@ -308,5 +333,8 @@ export async function POST(req: Request): Promise<Response> {
     notes: `Text Search import for "${query}" (max ${maxResults}); ${usable.length} usable results.`,
   });
 
-  return Response.json({ imported, skippedDuplicates, candidates: created }, { status: 201 });
+  return Response.json(
+    { imported, skippedDuplicates, duplicates, candidates: created },
+    { status: 201 },
+  );
 }

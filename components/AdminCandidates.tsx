@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import type { PlacePhoto } from "@/lib/types";
 import MaterialIcon from "@/components/MaterialIcon";
 
 /*
@@ -80,6 +81,9 @@ interface PreviewRow {
   reviewLikelihoodScore: number | null;
   reviewLikelihoodReasons: string[];
   seedMatchWarning: string | null;
+  // Set by the import route for dry-run preview rows: exact googlePlaceId match.
+  isDuplicate?: boolean;
+  duplicateOfStatus?: string | null;
 }
 
 type Msg = { type: "ok" | "err"; text: string } | null;
@@ -169,6 +173,117 @@ function byLikelihood(a: Candidate, b: Candidate): number {
   if (sa === null) return 1;
   if (sb === null) return -1;
   return sb - sa;
+}
+
+/**
+ * Compact, admin-only hero preview for a SAVED candidate — the same honest ladder
+ * live restaurants use (Google Place Photo → Logo.dev logo → placeholder),
+ * fetched from the admin candidate photo endpoint with the session secret. The
+ * ephemeral Google photo loads directly from Google (never rehosted) with its
+ * required attribution shown; the logo loads directly from Logo.dev. Functional,
+ * not a redesign.
+ */
+function CandidatePhoto({
+  candidateId,
+  secret,
+  name,
+}: {
+  candidateId: string;
+  secret: string;
+  name: string;
+}) {
+  const [photo, setPhoto] = useState<PlacePhoto | null>(null);
+  const [logo, setLogo] = useState<string | null>(null);
+  const [resolved, setResolved] = useState(false);
+  const [logoFailed, setLogoFailed] = useState(false);
+
+  useEffect(() => {
+    // Rows only render after a successful Load (secret present); the fetch sends
+    // the session secret as a header. setState happens only in the async
+    // continuation (never synchronously in the effect body).
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/admin/restaurants/candidates/${candidateId}/photo`, {
+          headers: { "x-foodswipe-admin-secret": secret },
+        });
+        const data = (await res.json()) as { photo?: PlacePhoto | null; logoUrl?: string | null };
+        if (cancelled) return;
+        const p = data.photo;
+        setPhoto(
+          p && typeof p.photoUri === "string" && p.photoUri.length > 0
+            ? {
+                photoUri: p.photoUri,
+                attributions: Array.isArray(p.attributions) ? p.attributions : [],
+              }
+            : null,
+        );
+        setLogo(typeof data.logoUrl === "string" && data.logoUrl.length > 0 ? data.logoUrl : null);
+        setResolved(true);
+      } catch {
+        if (!cancelled) setResolved(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [candidateId, secret]);
+
+  const showLogo = !photo && resolved && Boolean(logo) && !logoFailed;
+
+  return (
+    <div className="relative mb-2 aspect-[16/9] w-full overflow-hidden rounded-xl bg-ink-2 ring-1 ring-inset ring-white/5">
+      {photo ? (
+        <>
+          {/* eslint-disable-next-line @next/next/no-img-element -- ephemeral Google
+              Place Photo loaded directly from Google; never downloaded/rehosted. */}
+          <img
+            src={photo.photoUri}
+            alt={`${name} — photo via Google`}
+            className="absolute inset-0 h-full w-full object-cover"
+            loading="lazy"
+            referrerPolicy="no-referrer"
+          />
+          <PreviewAttribution attributions={photo.attributions} />
+        </>
+      ) : showLogo && logo ? (
+        <div className="absolute inset-0 flex items-center justify-center p-3">
+          <div className="flex h-full max-h-16 items-center justify-center rounded-lg bg-white p-2">
+            {/* eslint-disable-next-line @next/next/no-img-element -- Logo.dev CDN
+                image loaded directly; never downloaded/rehosted. */}
+            <img
+              src={logo}
+              alt={`${name} logo`}
+              className="h-full w-full object-contain"
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              onError={() => setLogoFailed(true)}
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center gap-1.5 text-haze">
+          <MaterialIcon name="storefront" className="text-2xl" />
+          <span className="text-[11px]">{resolved ? "No photo" : "Loading…"}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Compact Google attribution overlay (required wherever the photo is shown). */
+function PreviewAttribution({ attributions }: { attributions: PlacePhoto["attributions"] }) {
+  const items = attributions.filter((a) => a.displayName.trim().length > 0);
+  return (
+    <span className="absolute left-1.5 top-1.5 inline-flex max-w-[90%] items-center gap-1 rounded-full bg-black/55 px-2 py-0.5 text-[10px] text-white/90 ring-1 ring-inset ring-white/15 backdrop-blur-md">
+      <MaterialIcon name="photo_camera" className="text-[11px]" />
+      <span className="truncate">
+        {items.length > 0
+          ? `Photo: ${items.map((a) => a.displayName).join(", ")} via Google`
+          : "Photo via Google"}
+      </span>
+    </span>
+  );
 }
 
 export default function AdminCandidates() {
@@ -267,6 +382,7 @@ export default function AdminCandidates() {
         candidates?: PreviewRow[];
         imported?: number;
         skippedDuplicates?: number;
+        duplicates?: { name: string | null; existingStatus: string }[];
         error?: string;
       };
       if (!res.ok) {
@@ -428,6 +544,14 @@ export default function AdminCandidates() {
                           {warn}
                         </p>
                       )}
+                      {p.isDuplicate && (
+                        <p className="mt-1 flex items-center gap-1 text-[11px] text-chili-soft">
+                          <MaterialIcon name="content_copy" className="text-xs" />
+                          Exact duplicate (same Google Place ID) — already a candidate
+                          {p.duplicateOfStatus ? ` (${p.duplicateOfStatus})` : ""}; a real
+                          import will skip it.
+                        </p>
+                      )}
                       <ReviewLikelihood
                         score={p.reviewLikelihoodScore}
                         reasons={p.reviewLikelihoodReasons}
@@ -580,6 +704,9 @@ function CandidateRow({
 
   return (
     <li className="rounded-2xl bg-surface p-3 ring-1 ring-inset ring-white/5">
+      {/* Hero preview (admin only): Google photo → logo → placeholder */}
+      <CandidatePhoto candidateId={candidate.id} secret={secret} name={candidate.name} />
+
       {/* Summary */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">

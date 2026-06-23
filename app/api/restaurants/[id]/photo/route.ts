@@ -1,6 +1,5 @@
 import { getRestaurantById } from "@/lib/seed/restaurants";
-import { getPlacePhoto } from "@/lib/places";
-import { logoUrl } from "@/lib/logos";
+import { resolveHeroMedia } from "@/lib/heroMedia";
 
 /*
   GET /api/restaurants/[id]/photo  (public read, v1.5)
@@ -9,9 +8,13 @@ import { logoUrl } from "@/lib/logos";
   `googlePlaceId`. The response always includes a safe diagnostic `status`
   (e.g. "ok" / "missing-api-key" / "place-details-failed" / "no-photos"), and
   `photo` is null on anything but "ok". The client hero reads `photo` to show a
-  real identity image and falls back to the video-style placeholder on null; the
+  real identity image and falls back to the logo/placeholder on null; the
   `status` (+ optional numeric httpStatus / Google error enum) is for debugging
   and contains NO secrets and NO raw Google body.
+
+  The photo + logo come from the shared `resolveHeroMedia` helper (also used by
+  the admin candidate photo route). Response shape is unchanged:
+  `{ photo, status, logoUrl, httpStatus?, googleStatus? }`.
 
   Caching: NONE. Google Places policy forbids caching the photo `name` (it can
   expire), and we never persist the ephemeral `photoUri` or attribution, so the
@@ -28,21 +31,21 @@ export async function GET(
     return Response.json({ error: "Unknown restaurant." }, { status: 404 });
   }
 
-  // The brand-logo fallback URL is built server-side (token never reaches the
-  // client) and returned alongside the photo, so a single fetch powers the whole
-  // hero ladder: Place Photo -> logo -> placeholder. (The profile hero ignores
-  // this field; it builds its own logo URL server-side.)
-  const logo = logoUrl(restaurant.websiteDomain);
+  // Shared resolver: Place Photo -> Logo.dev logo -> placeholder. With no Place
+  // ID it short-circuits to status "missing-google-place-id" (no Google call),
+  // exactly as before; the hero then uses its logo/placeholder fallback.
+  const media = await resolveHeroMedia({
+    googlePlaceId: restaurant.googlePlaceId,
+    websiteDomain: restaurant.websiteDomain,
+  });
 
-  // No Place ID -> no Google call at all; the hero uses its logo/placeholder fallback.
-  if (!restaurant.googlePlaceId) {
-    return noStoreJson({ photo: null, status: "missing-google-place-id", logoUrl: logo });
-  }
-
-  // Result carries `photo` (null on any failure) plus a SAFE diagnostic `status`
-  // (+ optional numeric httpStatus / Google error enum) — no key, no raw body.
-  const result = await getPlacePhoto(restaurant.googlePlaceId);
-  return noStoreJson({ ...result, logoUrl: logo });
+  return noStoreJson({
+    photo: media.photo,
+    status: media.photoStatus,
+    logoUrl: media.logoUrl,
+    httpStatus: media.httpStatus,
+    googleStatus: media.googleStatus,
+  });
 }
 
 function noStoreJson(body: unknown): Response {

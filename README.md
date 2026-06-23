@@ -157,6 +157,11 @@ way the rules are the same:
   `skipHttpRedirect=true` for an ephemeral `photoUri`. The read route is
   [`/api/restaurants/[id]/photo`](app/api/restaurants/[id]/photo/route.ts);
   [`RestaurantHero`](components/RestaurantHero.tsx) consumes it client-side.
+- **Shared resolver.** The photo→logo→placeholder ladder lives once in
+  [`lib/heroMedia.ts`](lib/heroMedia.ts) (`resolveHeroMedia({ googlePlaceId,
+  websiteDomain })`, server-only). Both the public photo route and the admin
+  candidate photo route call it, so seed restaurants and review candidates get
+  the identical honest tiers and the same `{ photo, status, logoUrl }` shape.
 - **Never rehost.** The browser loads Google's ephemeral `photoUri` (a
   googleusercontent URL with no API key) **directly**. We never download, store,
   crop, proxy, or rehost the bytes — `next/image` is intentionally *not* used
@@ -274,11 +279,24 @@ plus a **503** if `GOOGLE_MAPS_API_KEY` is unset and **400** on a blank `query`.
   leave both null (the marker never blocks them). Nothing auto-expires yet;
   acting on the window is a deliberate human/curation step. Migration
   `0003_green_tattoo.sql` adds the two nullable columns (additive, no default).
-- **Duplicates:** results are skipped when their `googlePlaceId` already exists as
-  a candidate (this also catches repeats within one import). Results whose
-  Place ID or name matches a **live seeded** restaurant are still imported but
-  flagged with a `seedMatchWarning` (in the preview) and a note (on the row) —
-  never a hard block.
+- **Exact duplicates (by `googlePlaceId` only).** A real import skips any result
+  whose `googlePlaceId` already exists as a candidate — regardless of its status
+  (`candidate`/`needs_review`/`approved`/`rejected`), and it **never revives a
+  rejected row**. Skips are counted in `skippedDuplicates` and itemized in a
+  `duplicates[]` array (`{ googlePlaceId, name, existingId, existingStatus }`). A
+  dry run marks each duplicate explicitly (`isDuplicate` + `duplicateOfStatus` on
+  the preview row). Dedupe is **never by name** — chains have many locations, so
+  same-name/different-Place-ID results are imported as distinct candidates. (This
+  also catches repeats within one import.) Separately, results whose Place ID or
+  name matches a **live seeded** restaurant are still imported but flagged with a
+  `seedMatchWarning` — never a hard block.
+- **Admin photo preview.** [`GET /api/admin/restaurants/candidates/[id]/photo`](app/api/admin/restaurants/candidates/[id]/photo/route.ts)
+  (admin-secret, `no-store`, read-only — no DB writes) resolves the candidate's
+  hero media via the shared `resolveHeroMedia` and returns the same
+  `{ photo, status, logoUrl }` shape as the public route, so the admin candidates
+  page shows each saved candidate's Google photo (with attribution) → logo →
+  placeholder. Photo previews load for **saved** candidates only (dry-run preview
+  rows are pure Google data and trigger no photo fetch).
 - **`ingestion_jobs`** records each **real** import run (`source: google_places`,
   `query`, `dryRun: false`, `status: success|failed`, `candidatesCreated`,
   `skippedDuplicates`, `error`) for audit. Dry runs are intentionally not
@@ -436,6 +454,7 @@ app/
   api/admin/videos/[id]/route.ts        DELETE soft-delete (admin secret)
   api/admin/restaurants/candidates/route.ts      GET/POST candidate restaurants (admin secret)
   api/admin/restaurants/candidates/[id]/route.ts PATCH a candidate (admin secret)
+  api/admin/restaurants/candidates/[id]/photo/route.ts  GET candidate hero preview (admin secret, no-store)
   api/admin/restaurants/candidates/import/google/route.ts  POST Google Places Text Search import (admin secret)
 
 components/
