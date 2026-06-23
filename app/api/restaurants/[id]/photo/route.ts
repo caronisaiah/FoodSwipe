@@ -1,4 +1,4 @@
-import { getRestaurantById } from "@/lib/seed/restaurants";
+import { getAppRestaurantById } from "@/lib/db/restaurants";
 import { resolveHeroMedia } from "@/lib/heroMedia";
 
 /*
@@ -26,7 +26,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const { id } = await params;
-  const restaurant = getRestaurantById(id);
+  // Resolve seed first, then published DB restaurants (same shape either way).
+  const restaurant = await getAppRestaurantById(id);
   if (!restaurant) {
     return Response.json({ error: "Unknown restaurant." }, { status: 404 });
   }

@@ -336,6 +336,51 @@ plus a **503** if `GOOGLE_MAPS_API_KEY` is unset and **400** on a blank `query`.
   recorded. Migration `0002_kind_ultron.sql` adds `dry_run`, `skipped_duplicates`,
   and `error` to the table (additive, with defaults).
 
+### Promotion to the live feed (DB-published restaurants)
+
+Reviewed candidates can become **live feed restaurants** through a deliberate,
+admin-only promotion — never automatically. `/feed` now serves the code-managed
+seed **plus** DB-published restaurants.
+
+- **Schema.** A new `restaurants` table (migration `0007_outstanding_gauntlet.sql`)
+  holds published restaurants with everything the `Restaurant` type needs, a
+  `status` (`published`/`hidden`), `sourceCandidateId`, and unique indexes on
+  `slug`, `sourceCandidateId`, and `googlePlaceId` (so a candidate / Place ID can
+  only be promoted once). Seed restaurants are untouched and stay in code.
+- **Promotion.** [`POST /api/admin/restaurants/candidates/[id]/promote`](app/api/admin/restaurants/candidates/[id]/promote/route.ts)
+  (admin-secret) requires the candidate to be **`approved`** (else `400`) and to
+  have the required feed fields — `name`, `address`, `priceLevel`, `lat`/`lng`,
+  non-empty in-vocab `cuisineTags`, a `vibeTags`-or-`bestFor`, and `reasonText`
+  (else `422` with `missingFields`). It copies only reviewed/curated fields
+  (re-validated against the controlled vocab), computes a real `distanceMiles`
+  from a DC origin, and is idempotent — a second promote returns the existing
+  restaurant (`409`), never a duplicate. It never publishes videos or touches
+  Google photo data.
+- **No fabricated social proof.** Published restaurants get **neutral-zero**
+  `trendScore`/`vibeScore`/`videoCount`/`recentVideoCount`/`saveCount` —
+  documented internal placeholders, not real metrics. So they never earn a
+  "Trending"/"Top Choice" badge (thresholds 75/90), and the profile hides the
+  "hype" metric strip when it's all zero (showing just the reason). Each gets one
+  clearly-labelled placeholder video so the non-empty `videos` tuple holds without
+  inventing content.
+- **Feed merge.** [`lib/db/restaurants.ts`](lib/db/restaurants.ts) exposes
+  `getAllRestaurants()` (seed + published) behind the public
+  [`GET /api/restaurants`](app/api/restaurants/route.ts) (`no-store`). The feed
+  and saved screens start from seed (instant + offline-safe) and merge in the DB
+  list once fetched; a DB outage degrades to seed-only and never empties the feed.
+  `/restaurants/[id]` keeps seed pages static (via `generateStaticParams`) and
+  renders published pages on demand; the photo + videos routes resolve seed **or**
+  published ids. Tags are re-validated on read — DB arrays are never trusted blindly.
+- **Editing after promotion.** [`GET /api/admin/restaurants/published`](app/api/admin/restaurants/published/route.ts),
+  [`PATCH /api/admin/restaurants/published/[id]`](app/api/admin/restaurants/published/[id]/route.ts),
+  and [`POST …/[id]/hide`](app/api/admin/restaurants/published/[id]/hide/route.ts)
+  back the [published editor](app/admin/restaurants/published/page.tsx). PATCH is
+  additive and **drops out-of-vocab tags**; it can edit name/neighborhood/address/
+  domain/Place-ID/lat-lng/price/tags/dishes/reason and `status`, but never
+  `sourceCandidateId`, `slug`, or the metric fields. The candidates console gains
+  a **Promote to feed** action on approved candidates (showing `missingFields` on
+  failure and the resulting `/restaurants/[slug]` link on success).
+
 ### Ranking
 
 [`lib/recommendations.ts`](lib/recommendations.ts) is a pure, readable weighted

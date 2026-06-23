@@ -50,6 +50,13 @@
       "when": 1782183533712,
       "tag": "0006_serious_stellaris",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1782222122014,
+      "tag": "0007_outstanding_gauntlet",
+      "breakpoints": true
     }
   ]
 }

@@ -32,6 +32,10 @@ export default function RestaurantProfileView({
   const poster = cuisineEmoji(r.cuisineTags);
   // Distinct emojis from the cuisine tags so carousel clips don't all look alike.
   const clipPosters = [...new Set(r.cuisineTags.map((t) => cuisineEmoji([t])))];
+  // DB-published restaurants carry neutral-zero metrics (no fabricated social
+  // proof) — only show the "hype" numbers when there's real data behind them.
+  const hasHype =
+    r.videoCount > 0 || r.saveCount > 0 || r.trendScore > 0 || r.vibeScore > 0;
   const directionsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
     `${r.name} ${r.address}`,
   )}`;
@@ -71,31 +75,36 @@ export default function RestaurantProfileView({
           ))}
         </div>
 
-        {/* The hype (social proof) */}
-        <Section title="The hype">
-          <div className="grid grid-cols-3 gap-2">
-            <MetricBadge icon="🎬" value={formatCount(r.videoCount)} label="videos" />
-            <MetricBadge icon="🆕" value={r.recentVideoCount} label="recent" />
-            <MetricBadge
-              icon="🔥"
-              value={r.trendScore}
-              label="trend"
-              accentClassName="text-saffron"
-            />
-            <MetricBadge
-              icon="✨"
-              value={r.vibeScore}
-              label="vibe"
-              accentClassName="text-saffron-soft"
-            />
-            <MetricBadge
-              icon="❤️"
-              value={formatCount(r.saveCount)}
-              label="saves"
-              accentClassName="text-chili-soft"
-            />
-          </div>
-          <p className="mt-3 text-sm leading-relaxed text-haze">{r.reasonText}</p>
+        {/* The hype (social proof) — only when there's real data; DB-published
+            restaurants have neutral-zero metrics and show just the reason. */}
+        <Section title={hasHype ? "The hype" : "Why you'll like it"}>
+          {hasHype && (
+            <div className="grid grid-cols-3 gap-2">
+              <MetricBadge icon="🎬" value={formatCount(r.videoCount)} label="videos" />
+              <MetricBadge icon="🆕" value={r.recentVideoCount} label="recent" />
+              <MetricBadge
+                icon="🔥"
+                value={r.trendScore}
+                label="trend"
+                accentClassName="text-saffron"
+              />
+              <MetricBadge
+                icon="✨"
+                value={r.vibeScore}
+                label="vibe"
+                accentClassName="text-saffron-soft"
+              />
+              <MetricBadge
+                icon="❤️"
+                value={formatCount(r.saveCount)}
+                label="saves"
+                accentClassName="text-chili-soft"
+              />
+            </div>
+          )}
+          <p className={`${hasHype ? "mt-3 " : ""}text-sm leading-relaxed text-haze`}>
+            {r.reasonText}
+          </p>
         </Section>
 
         {/* Dish highlights */}

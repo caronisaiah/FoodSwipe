@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import type { Restaurant } from "@/lib/types";
 import { useSwipes, useHydrated } from "@/lib/storage";
-import { getRestaurantById } from "@/lib/seed/restaurants";
+import { RESTAURANTS, getRestaurantById } from "@/lib/seed/restaurants";
 import { priceLabel } from "@/lib/options";
 import { cuisineIcon } from "@/lib/emoji";
 import TagPill from "@/components/TagPill";
@@ -13,9 +15,33 @@ import MaterialIcon from "@/components/MaterialIcon";
 export default function SavedClient() {
   const isLoaded = useHydrated();
   const { savedIds, removeSwipe } = useSwipes();
+
+  // Resolve saved ids against seed + published DB restaurants. Seed resolves
+  // instantly; the merged list (incl. promoted DB restaurants) loads after.
+  const [byId, setById] = useState<Map<string, Restaurant>>(
+    () => new Map(RESTAURANTS.map((r) => [r.id, r])),
+  );
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/restaurants");
+        const data = (await res.json()) as { restaurants?: Restaurant[] };
+        if (!cancelled && Array.isArray(data.restaurants) && data.restaurants.length > 0) {
+          setById(new Map(data.restaurants.map((r) => [r.id, r])));
+        }
+      } catch {
+        // keep seed-only map
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const saved = savedIds
-    .map((id) => getRestaurantById(id))
-    .filter((r): r is NonNullable<typeof r> => Boolean(r));
+    .map((id) => byId.get(id) ?? getRestaurantById(id))
+    .filter((r): r is Restaurant => Boolean(r));
 
   return (
     <div className="no-scrollbar flex-1 overflow-y-auto px-4 pb-8 pt-6">

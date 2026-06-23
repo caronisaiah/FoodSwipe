@@ -179,3 +179,64 @@ export const ingestionJobs = pgTable("ingestion_jobs", {
 
 export type IngestionJobRow = typeof ingestionJobs.$inferSelect;
 export type NewIngestionJobRow = typeof ingestionJobs.$inferInsert;
+
+/**
+ * Published / live restaurants — DB-backed restaurants that the app feed serves
+ * ALONGSIDE the code-managed seed (lib/seed/restaurants.ts). Created only via the
+ * explicit promotion of a reviewed candidate (never automatically). Stores enough
+ * to satisfy the `Restaurant` type (lib/types.ts); arrays are re-validated against
+ * the controlled vocab on read (lib/db/restaurants.ts) — never trusted blindly.
+ *
+ * NO fabricated social proof: trend/vibe/video/save counts default to 0 (neutral
+ * internal placeholders, NOT real user metrics) so promoted restaurants never get
+ * a "Trending"/"Top Choice" badge and the profile hides the empty "hype" strip.
+ * `status` gates feed visibility ("published" shows, "hidden" does not).
+ */
+export const restaurants = pgTable("restaurants", {
+  id: text("id").primaryKey(),
+  // Public identifier used in URLs + photo/video API lookups. Unique across the
+  // published set; chosen at promotion to also avoid colliding with seed ids.
+  slug: text("slug").notNull(),
+  name: text("name").notNull(),
+  neighborhood: text("neighborhood").notNull().default(""),
+  address: text("address").notNull().default(""),
+  googlePlaceId: text("google_place_id"),
+  websiteDomain: text("website_domain"),
+  lat: doublePrecision("lat"),
+  lng: doublePrecision("lng"),
+  distanceMiles: doublePrecision("distance_miles").notNull().default(0),
+  priceLevel: integer("price_level").notNull().default(2),
+  cuisineTags: text("cuisine_tags").array(),
+  dietaryTags: text("dietary_tags").array(),
+  vibeTags: text("vibe_tags").array(),
+  dishHighlights: text("dish_highlights").array(),
+  bestFor: text("best_for").array(),
+  reasonText: text("reason_text").notNull().default(""),
+  // Neutral internal placeholders — NOT real metrics. Default 0 (no fake hype).
+  trendScore: integer("trend_score").notNull().default(0),
+  vibeScore: integer("vibe_score").notNull().default(0),
+  videoCount: integer("video_count").notNull().default(0),
+  recentVideoCount: integer("recent_video_count").notNull().default(0),
+  saveCount: integer("save_count").notNull().default(0),
+  // Provenance: the candidate this was promoted from (never edited via the API).
+  sourceCandidateId: text("source_candidate_id"),
+  // "published" (visible in feed) | "hidden" (kept, not served).
+  status: text("status").notNull().default("published"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  publishedAt: timestamp("published_at", { withTimezone: true }),
+}, (t) => [
+  // Public id must be unique across published restaurants.
+  uniqueIndex("restaurants_slug_key").on(t.slug),
+  // One published restaurant per source candidate (no double promotion).
+  uniqueIndex("restaurants_source_candidate_id_key")
+    .on(t.sourceCandidateId)
+    .where(sql`${t.sourceCandidateId} is not null`),
+  // One published restaurant per Google Place ID.
+  uniqueIndex("restaurants_google_place_id_key")
+    .on(t.googlePlaceId)
+    .where(sql`${t.googlePlaceId} is not null`),
+]);
+
+export type RestaurantRow = typeof restaurants.$inferSelect;
+export type NewRestaurantRow = typeof restaurants.$inferInsert;

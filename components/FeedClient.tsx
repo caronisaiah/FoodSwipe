@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import type { Restaurant } from "@/lib/types";
 import { RESTAURANTS } from "@/lib/seed/restaurants";
 import { rankRestaurants } from "@/lib/recommendations";
 import { usePreferences, useSwipes, useHydrated } from "@/lib/storage";
@@ -20,9 +21,30 @@ export default function FeedClient() {
   const { preferences } = usePreferences();
   const { recordSwipe, resetSwipes, savedIds, swipedIds } = useSwipes();
 
+  // Start from seed (instant + DB-outage-safe), then merge in published DB
+  // restaurants once fetched. setState only in the async continuation.
+  const [restaurants, setRestaurants] = useState<Restaurant[]>(RESTAURANTS);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/restaurants");
+        const data = (await res.json()) as { restaurants?: Restaurant[] };
+        if (!cancelled && Array.isArray(data.restaurants) && data.restaurants.length > 0) {
+          setRestaurants(data.restaurants);
+        }
+      } catch {
+        // keep seed-only deck on any failure
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const deck = useMemo(
-    () => rankRestaurants(RESTAURANTS, preferences),
-    [preferences],
+    () => rankRestaurants(restaurants, preferences),
+    [restaurants, preferences],
   );
 
   return (

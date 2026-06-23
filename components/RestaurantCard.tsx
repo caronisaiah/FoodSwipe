@@ -35,7 +35,14 @@ export default function RestaurantCard({ scored }: { scored: ScoredRestaurant })
           {r.name}
         </h2>
         <p className="mt-1.5 text-lg text-tan">
-          {r.neighborhood} • <span className="capitalize">{r.cuisineTags[0]}</span> •{" "}
+          {r.neighborhood}
+          {r.cuisineTags[0] && (
+            <>
+              {" • "}
+              <span className="capitalize">{r.cuisineTags[0]}</span>
+            </>
+          )}
+          {" • "}
           <span className="font-semibold text-saffron">{priceLabel(r.priceLevel)}</span>
         </p>
       </div>

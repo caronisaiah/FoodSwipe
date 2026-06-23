@@ -334,9 +334,17 @@ export default function AdminCandidates() {
 
       <header className="mb-3 flex items-center justify-between">
         <h1 className="font-display text-xl font-bold text-cream">Restaurant candidates</h1>
-        <Link href="/feed" className="text-xs text-haze underline-offset-2 hover:underline">
-          ← Back to app
-        </Link>
+        <div className="flex items-center gap-3 text-xs">
+          <Link
+            href="/admin/restaurants/published"
+            className="text-saffron underline-offset-2 hover:underline"
+          >
+            Published →
+          </Link>
+          <Link href="/feed" className="text-haze underline-offset-2 hover:underline">
+            Back to app
+          </Link>
+        </div>
       </header>
 
       <div className="mb-4">
@@ -678,8 +686,51 @@ function CandidateEditor({
   const [reviewNotes, setReviewNotes] = useState(candidate.reviewNotes ?? "");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<Msg>(null);
+  const [promoting, setPromoting] = useState(false);
+  const [promoteMsg, setPromoteMsg] = useState<Msg>(null);
+  const [promotedSlug, setPromotedSlug] = useState<string | null>(null);
 
   const snap = candidate.suggestedTags;
+
+  async function promote() {
+    if (promoting) return;
+    if (!secret.trim()) {
+      setPromoteMsg({ type: "err", text: "Enter the admin secret first." });
+      return;
+    }
+    setPromoting(true);
+    setPromoteMsg(null);
+    try {
+      const res = await fetch(`/api/admin/restaurants/candidates/${candidate.id}/promote`, {
+        method: "POST",
+        headers: { "x-foodswipe-admin-secret": secret },
+      });
+      const data = (await res.json()) as {
+        restaurant?: { slug?: string };
+        error?: string;
+        missingFields?: string[];
+      };
+      if (res.ok && data.restaurant?.slug) {
+        setPromotedSlug(data.restaurant.slug);
+        setPromoteMsg({ type: "ok", text: "Promoted to the live feed." });
+        return;
+      }
+      if (res.status === 409 && data.restaurant?.slug) {
+        setPromotedSlug(data.restaurant.slug);
+        setPromoteMsg({ type: "err", text: data.error ?? "Already promoted." });
+        return;
+      }
+      if (res.status === 422 && data.missingFields?.length) {
+        setPromoteMsg({ type: "err", text: `Missing required fields: ${data.missingFields.join(", ")}.` });
+        return;
+      }
+      setPromoteMsg({ type: "err", text: data.error ?? `Promotion failed (${res.status}).` });
+    } catch {
+      setPromoteMsg({ type: "err", text: "Network error during promotion." });
+    } finally {
+      setPromoting(false);
+    }
+  }
 
   function resetToSuggestions() {
     if (!snap) return;
@@ -817,6 +868,51 @@ function CandidateEditor({
           <p className="text-[10px] text-haze">
             “Approve” marks the candidate reviewed only — it does not publish to the feed.
           </p>
+
+          {/* Promote to feed — explicit, separate step; only for approved candidates */}
+          <div className="rounded-lg bg-ink-2 p-2 ring-1 ring-inset ring-white/5">
+            <p className="flex items-center gap-1.5 text-[11px] font-semibold text-cream">
+              <MaterialIcon name="rocket_launch" className="text-sm" />
+              Promote to live feed
+            </p>
+            {candidate.status === "approved" ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void promote()}
+                  disabled={promoting}
+                  className="mt-1.5 flex items-center gap-1 rounded-md bg-brand-gradient px-3 py-1.5 text-xs font-bold text-ink transition active:scale-[0.98] disabled:opacity-40"
+                >
+                  <MaterialIcon name="publish" className="text-sm" />
+                  {promoting ? "Promoting…" : "Promote to feed"}
+                </button>
+                <p className="mt-1 text-[10px] text-haze">
+                  Creates a live DB restaurant from the reviewed fields. Requires name,
+                  address, price, lat/lng, cuisine, a vibe/best-for, and reason text.
+                </p>
+              </>
+            ) : (
+              <p className="mt-1 text-[10px] text-haze">
+                Set status to <span className="text-cream">approved</span> and Save first to enable promotion.
+              </p>
+            )}
+            {promoteMsg && (
+              <p className={`mt-1 text-[11px] ${promoteMsg.type === "ok" ? "text-mint" : "text-chili-soft"}`}>
+                {promoteMsg.text}
+              </p>
+            )}
+            {promotedSlug && (
+              <a
+                href={`/restaurants/${promotedSlug}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 inline-flex items-center gap-1 text-[11px] text-saffron underline-offset-2 hover:underline"
+              >
+                <MaterialIcon name="open_in_new" className="text-[11px]" />
+                /restaurants/{promotedSlug}
+              </a>
+            )}
+          </div>
     </div>
   );
 }
