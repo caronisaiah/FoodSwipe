@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import MaterialIcon from "@/components/MaterialIcon";
 
@@ -58,6 +58,13 @@ interface VideoCandidate {
 
 type Msg = { type: "ok" | "err"; text: string } | null;
 
+/** A pickable restaurant for the slug combobox (id IS the public slug). */
+interface RestaurantOption {
+  id: string;
+  name: string;
+  neighborhood: string;
+}
+
 function parseList(s: string): string[] {
   return s.split(",").map((t) => t.trim()).filter((t) => t.length > 0);
 }
@@ -87,6 +94,31 @@ export default function AdminVideoCandidates() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<Msg>(null);
   const loadSeq = useRef(0);
+
+  // Attachable restaurants (seed + published) for the slug typeahead. Public list
+  // — no secret needed; the combobox just won't suggest if it can't load.
+  const [options, setOptions] = useState<RestaurantOption[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/restaurants");
+        const data = (await res.json()) as { restaurants?: { id: string; name: string; neighborhood?: string }[] };
+        if (!cancelled && Array.isArray(data.restaurants)) {
+          setOptions(
+            data.restaurants
+              .map((r) => ({ id: r.id, name: r.name, neighborhood: r.neighborhood ?? "" }))
+              .sort((a, b) => a.name.localeCompare(b.name)),
+          );
+        }
+      } catch {
+        // ignore — typeahead degrades to a plain input
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Intake form
   const [sourceUrl, setSourceUrl] = useState("");
@@ -248,12 +280,11 @@ export default function AdminVideoCandidates() {
             className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze/50 focus:ring-saffron/60"
           />
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-            <input
+            <SlugCombobox
               value={intakeSlug}
-              onChange={(e) => setIntakeSlug(e.target.value)}
-              placeholder="restaurant slug (e.g. le-diplomate)"
-              aria-label="Restaurant slug"
-              className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze/50 focus:ring-saffron/60"
+              onChange={setIntakeSlug}
+              options={options}
+              placeholder="restaurant slug — type a name to search"
             />
             <input
               value={intakeProposed}
@@ -326,6 +357,7 @@ export default function AdminVideoCandidates() {
               key={c.id}
               candidate={c}
               secret={secret}
+              options={options}
               expanded={expandedId === c.id}
               onToggle={() => setExpandedId((id) => (id === c.id ? null : c.id))}
               onChanged={onChanged}
@@ -340,12 +372,14 @@ export default function AdminVideoCandidates() {
 function CandidateRow({
   candidate,
   secret,
+  options,
   expanded,
   onToggle,
   onChanged,
 }: {
   candidate: VideoCandidate;
   secret: string;
+  options: RestaurantOption[];
   expanded: boolean;
   onToggle: () => void;
   onChanged: (updated: VideoCandidate) => void;
@@ -375,7 +409,9 @@ function CandidateRow({
         </span>
         <MaterialIcon name={expanded ? "expand_less" : "expand_more"} className="shrink-0 text-base text-haze" />
       </button>
-      {expanded && <CandidateDetail key={candidate.updatedAt} candidate={candidate} secret={secret} onChanged={onChanged} />}
+      {expanded && (
+        <CandidateDetail key={candidate.updatedAt} candidate={candidate} secret={secret} options={options} onChanged={onChanged} />
+      )}
     </li>
   );
 }
@@ -383,10 +419,12 @@ function CandidateRow({
 function CandidateDetail({
   candidate,
   secret,
+  options,
   onChanged,
 }: {
   candidate: VideoCandidate;
   secret: string;
+  options: RestaurantOption[];
   onChanged: (updated: VideoCandidate) => void;
 }) {
   const [restaurantSlug, setRestaurantSlug] = useState(candidate.restaurantSlug ?? "");
@@ -541,7 +579,13 @@ function CandidateDetail({
 
       {/* Editable review fields */}
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-        <TField label="Restaurant slug" value={restaurantSlug} onChange={setRestaurantSlug} placeholder="le-diplomate" />
+        <label className="block">
+          <span className="mb-1 flex items-baseline justify-between gap-2">
+            <span className="text-xs font-semibold text-cream">Restaurant slug</span>
+            <span className="text-[9px] text-haze">type a name to search</span>
+          </span>
+          <SlugCombobox value={restaurantSlug} onChange={setRestaurantSlug} options={options} placeholder="le-diplomate" />
+        </label>
         <TField label="Proposed name" value={proposed} onChange={setProposed} />
         <TField label="Creator handle" value={creatorHandle} onChange={setCreatorHandle} />
         <TField label="Match confidence (0–100)" value={confidence} onChange={setConfidence} placeholder="0–100" />
@@ -592,6 +636,81 @@ function CandidateDetail({
       {msg && (
         <p className={`text-[11px] ${msg.type === "ok" ? "text-mint" : "text-chili-soft"}`}>{msg.text}</p>
       )}
+    </div>
+  );
+}
+
+/**
+ * Restaurant-slug typeahead. Type a name OR a slug; matching restaurants (seed +
+ * published) appear in a dropdown, and picking one stores the actual slug (the
+ * value attach resolves). Still accepts free-typed slugs, and shows whether the
+ * current value is an exact known slug so a mistyped name is obvious before attach.
+ */
+function SlugCombobox({
+  value,
+  onChange,
+  options,
+  placeholder,
+}: {
+  value: string;
+  onChange: (slug: string) => void;
+  options: RestaurantOption[];
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const q = value.trim().toLowerCase();
+  const matches =
+    q.length === 0
+      ? options.slice(0, 8)
+      : options.filter((o) => o.id.toLowerCase().includes(q) || o.name.toLowerCase().includes(q)).slice(0, 8);
+  const exact = options.find((o) => o.id === value.trim());
+
+  return (
+    <div className="relative">
+      <input
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        placeholder={placeholder}
+        aria-label="Restaurant slug"
+        autoComplete="off"
+        className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze/50 focus:ring-saffron/60"
+      />
+      {open && matches.length > 0 && (
+        <ul className="absolute z-30 mt-1 max-h-56 w-full overflow-auto rounded-lg bg-surface-2 py-1 shadow-xl ring-1 ring-inset ring-white/15">
+          {matches.map((o) => (
+            <li key={o.id}>
+              <button
+                type="button"
+                // Prevent the input's blur (which closes the list) from firing before the click.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onChange(o.id);
+                  setOpen(false);
+                }}
+                className="flex w-full items-baseline gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-white/10"
+              >
+                <span className="truncate text-cream">{o.name}</span>
+                {o.neighborhood && <span className="shrink-0 truncate text-haze">{o.neighborhood}</span>}
+                <span className="ml-auto shrink-0 truncate font-mono text-[10px] text-haze">/{o.id}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {value.trim() !== "" &&
+        (exact ? (
+          <p className="mt-0.5 flex items-center gap-1 text-[10px] text-mint">
+            <MaterialIcon name="check_circle" className="text-[11px]" />
+            {exact.name}
+          </p>
+        ) : (
+          <p className="mt-0.5 text-[10px] text-haze">No exact slug match — pick one from the list.</p>
+        ))}
     </div>
   );
 }
