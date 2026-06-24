@@ -399,8 +399,10 @@ admin **approves** a candidate and explicitly **attaches** it.
   play **inline** (no download/rehost; validated by `lib/video.isEmbedUrlAllowed`,
   which checks host + exact official-embed path):
   - **TikTok** — public **oEmbed** (no key) for creator/caption/thumbnail + the
-    official **embed iframe** (`tiktok.com/embed/v2/{id}`), `embeddable` when the
-    numeric id is extractable; short links (vm./vt.) stay `source-link-only`.
+    official **Embed Player iframe** (`tiktok.com/player/v1/{id}`), `embeddable`
+    once the numeric id is known. Short links (`/t/`, vm./vt.) are **canonicalized**
+    by following the redirect (with a timeout); if TikTok blocks it they stay
+    `source-link-only`.
   - **YouTube** — reuses [`lib/youtube.ts`](lib/youtube.ts): canonical + nocookie
     embed (`embeddable`), optional Data-API metadata.
   - **Instagram** — official **`/{p|reel|tv}/{code}/embed/` iframe** (`embeddable`,

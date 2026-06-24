@@ -550,13 +550,19 @@ function CandidateDetail({
         )}
       </div>
 
-      {/* Resolver diagnostics */}
+      {/* Resolver / legal-status diagnostics (debug: where embeddability stands) */}
       <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px]">
         <span className="text-haze">Resolver</span>
         <span className="text-tan">
           {candidate.resolverStatus}
           {candidate.resolverError ? ` — ${candidate.resolverError}` : ""}
         </span>
+        <span className="text-haze">Candidate legal</span>
+        <span className={canEmbed ? "text-mint" : "text-tan"}>
+          {candidate.legalDisplayStatus} · {canEmbed ? "inline-playable" : "link-out"}
+        </span>
+        <span className="text-haze">Embed URL</span>
+        <span className="truncate font-mono text-[10px] text-tan">{candidate.embedUrl ?? "—"}</span>
         <span className="text-haze">Source</span>
         <span className="truncate text-tan">{candidate.normalizedSourceUrl}</span>
         {candidate.platformVideoId && (
@@ -567,7 +573,7 @@ function CandidateDetail({
         )}
         {candidate.attachedVideoId && (
           <>
-            <span className="text-haze">Attached</span>
+            <span className="text-haze">Attached row</span>
             <span className="truncate font-mono text-[10px] text-mint">{candidate.attachedVideoId}</span>
           </>
         )}

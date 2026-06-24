@@ -6,9 +6,11 @@ import { extractYouTubeId, fetchYouTubeMetadata, resolveYouTubeUrl } from "@/lib
  *
  * Detects platform, normalizes the URL (the dedupe key), extracts a platform
  * video id where possible, and resolves PUBLIC, OFFICIAL metadata only:
- *   - TikTok    — official public oEmbed (no key) for metadata + official embed
- *                 iframe (tiktok.com/embed/v2/{id}) so it plays inline. embeddable
- *                 when the numeric id is extractable; short links stay source-link-only.
+ *   - TikTok    — official public oEmbed (no key) for metadata + official Embed
+ *                 Player iframe (tiktok.com/player/v1/{id}) so it plays inline.
+ *                 embeddable once the numeric id is known; short links (/t/, vm./vt.)
+ *                 are canonicalized by following the redirect (timeout), else
+ *                 they fall back to source-link-only.
  *   - YouTube   — reuse lib/youtube (canonical + nocookie embed; optional Data API). embeddable.
  *   - Instagram — official /{p|reel|tv}/{code}/embed/ iframe so it plays inline
  *                 (no embed.js script, no token needed); oEmbed via
@@ -144,10 +146,11 @@ interface TikTokOEmbed {
 async function resolveTikTok(u: URL, raw: string): Promise<ResolvedSocialVideo> {
   const videoId = extractTikTokId(u);
   const normalizedSourceUrl = normalizeUrl("tiktok", u, videoId, null);
-  // Official TikTok embed iframe (the one TikTok's own embed.js renders into; no
-  // download/rehost). Needs the numeric id, so short links (vm./vt.) without an
-  // extractable id stay source-link-only.
-  const embedUrl = videoId ? `https://www.tiktok.com/embed/v2/${videoId}` : null;
+  // Official TikTok Embed Player iframe (developers.tiktok.com/doc/embed-player;
+  // no download/rehost). Needs the numeric id — short links are canonicalized
+  // upstream in resolveSocialVideo, and anything still without an id stays
+  // source-link-only.
+  const embedUrl = videoId ? `https://www.tiktok.com/player/v1/${videoId}` : null;
   const base: ResolvedSocialVideo = {
     platform: "tiktok",
     sourceUrl: raw,
@@ -287,6 +290,43 @@ async function resolveYouTube(raw: string): Promise<ResolvedSocialVideo> {
   };
 }
 
+const TIKTOK_REDIRECT_TIMEOUT_MS = 3500;
+
+/**
+ * Resolve a TikTok short link (vm./vt./ /t/{code}) to its canonical
+ * /@user/video/{id} URL by following the redirect with a timeout. Returns the
+ * canonical URL ONLY if it lands on a tiktok.com host with an extractable video
+ * id; otherwise null (caller keeps it source-link-only). We never read the body —
+ * only the final URL after redirects — so no media is downloaded. Never throws.
+ */
+async function canonicalizeTikTokUrl(raw: string): Promise<string | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIKTOK_REDIRECT_TIMEOUT_MS);
+  try {
+    const res = await fetch(raw, {
+      method: "GET",
+      redirect: "follow",
+      cache: "no-store",
+      signal: controller.signal,
+      headers: { accept: "text/html" },
+    });
+    const finalUrl = res.url; // final URL after redirects (body not consumed)
+    if (!finalUrl) return null;
+    let f: URL;
+    try {
+      f = new URL(finalUrl);
+    } catch {
+      return null;
+    }
+    if (!TIKTOK_HOSTS.has(f.hostname.toLowerCase())) return null;
+    return extractTikTokId(finalUrl) ? finalUrl : null;
+  } catch {
+    return null; // blocked / timeout / network → graceful source-link-only fallback
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Resolve a raw social URL into a review candidate's fields. Never throws; an
  * unsupported/invalid URL returns { ok: false, error }. A supported URL whose
@@ -308,7 +348,22 @@ export async function resolveSocialVideo(raw: unknown): Promise<ResolveResult> {
     return { ok: true, resolved: await resolveYouTube(rawStr) };
   }
   if (platform === "tiktok") {
-    return { ok: true, resolved: await resolveTikTok(u, rawStr) };
+    // A canonical /@user/video/{id} URL embeds directly; a short link (/t/{code},
+    // vm./vt.) has no id, so try to canonicalize it by following the redirect.
+    let tkUrl = u;
+    let tkRaw = rawStr;
+    if (!extractTikTokId(u)) {
+      const canonical = await canonicalizeTikTokUrl(rawStr);
+      if (canonical) {
+        try {
+          tkUrl = new URL(canonical);
+          tkRaw = canonical;
+        } catch {
+          // keep the original (source-link-only)
+        }
+      }
+    }
+    return { ok: true, resolved: await resolveTikTok(tkUrl, tkRaw) };
   }
   // instagram
   if (!extractInstagramShortcode(u)) {
