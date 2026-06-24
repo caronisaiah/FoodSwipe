@@ -50,13 +50,20 @@ export function hasUrl(value: unknown): value is string {
 }
 
 // ---- Embed allowlist ----
-// For v1 we only iframe trusted YouTube hosts; anything else degrades to a
-// preview/source-link rather than embedding an arbitrary admin-provided URL.
+// We iframe ONLY each platform's OWN official embed endpoint — never a download,
+// crop, or rehost. YouTube is matched by host (its embed lives at /embed/ on the
+// allowlisted hosts); TikTok + Instagram are matched by an exact official-embed
+// path shape so an arbitrary tiktok.com/instagram.com URL can't slip through as
+// an "embed". Anything else degrades to a preview/source-link.
 const EMBED_ALLOWED_HOSTS = new Set<string>([
   "www.youtube.com",
   "youtube.com",
   "www.youtube-nocookie.com",
 ]);
+// TikTok official player iframe: /player/v1/{id} or /embed/v2/{id}.
+const TIKTOK_EMBED_PATH = /^\/(?:player\/v1|embed\/v2)\/\d{6,25}\/?$/;
+// Instagram official iframe: /{p|reel|reels|tv}/{shortcode}/embed/.
+const INSTAGRAM_EMBED_PATH = /^\/(?:p|reel|reels|tv)\/[A-Za-z0-9_-]+\/embed\/?$/;
 
 export function isEmbedUrlAllowed(url: unknown): url is string {
   if (!hasUrl(url)) return false;
@@ -66,7 +73,11 @@ export function isEmbedUrlAllowed(url: unknown): url is string {
   } catch {
     return false;
   }
-  return parsed.protocol === "https:" && EMBED_ALLOWED_HOSTS.has(parsed.hostname);
+  if (parsed.protocol !== "https:") return false;
+  if (EMBED_ALLOWED_HOSTS.has(parsed.hostname)) return true; // YouTube (host-based)
+  if (parsed.hostname === "www.tiktok.com" && TIKTOK_EMBED_PATH.test(parsed.pathname)) return true;
+  if (parsed.hostname === "www.instagram.com" && INSTAGRAM_EMBED_PATH.test(parsed.pathname)) return true;
+  return false;
 }
 
 // ---- Display gating (what VideoEmbed will actually render) ----

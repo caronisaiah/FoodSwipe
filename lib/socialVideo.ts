@@ -6,12 +6,17 @@ import { extractYouTubeId, fetchYouTubeMetadata, resolveYouTubeUrl } from "@/lib
  *
  * Detects platform, normalizes the URL (the dedupe key), extracts a platform
  * video id where possible, and resolves PUBLIC, OFFICIAL metadata only:
- *   - TikTok    — official public oEmbed (no key). source-link-only.
+ *   - TikTok    — official public oEmbed (no key) for metadata + official PLAYER
+ *                 iframe (tiktok.com/player/v1/{id}) so it plays inline. embeddable
+ *                 when the numeric id is extractable; short links stay source-link-only.
  *   - YouTube   — reuse lib/youtube (canonical + nocookie embed; optional Data API). embeddable.
- *   - Instagram — official oEmbed via INSTAGRAM_OEMBED_TOKEN if configured; otherwise
- *                 a clean source-link-only candidate (resolverStatus explains why). Never fails.
+ *   - Instagram — official /{p|reel|tv}/{code}/embed/ iframe so it plays inline
+ *                 (no embed.js script, no token needed); oEmbed via
+ *                 INSTAGRAM_OEMBED_TOKEN only ENRICHES metadata when configured. embeddable.
  *
- * Hard rules: NO scraping, NO unofficial downloaders, NO media bytes stored.
+ * Every embed is the platform's OWN official player/embed endpoint, validated by
+ * lib/video.isEmbedUrlAllowed. Hard rules: NO scraping, NO unofficial downloaders,
+ * NO media bytes downloaded/stored/rehosted; thumbnails are referenced URLs only.
  * Thumbnails are kept BY REFERENCE only (validated https), matching the existing
  * legal model (lib/video). Unknown/unsupported URLs return a validation error.
  */
@@ -139,6 +144,9 @@ interface TikTokOEmbed {
 async function resolveTikTok(u: URL, raw: string): Promise<ResolvedSocialVideo> {
   const videoId = extractTikTokId(u);
   const normalizedSourceUrl = normalizeUrl("tiktok", u, videoId, null);
+  // Official TikTok player iframe (no download/rehost). Needs the numeric id, so
+  // short links (vm./vt.) without an extractable id stay source-link-only.
+  const embedUrl = videoId ? `https://www.tiktok.com/player/v1/${videoId}` : null;
   const base: ResolvedSocialVideo = {
     platform: "tiktok",
     sourceUrl: raw,
@@ -148,11 +156,11 @@ async function resolveTikTok(u: URL, raw: string): Promise<ResolvedSocialVideo> 
     creatorName: null,
     caption: null,
     thumbnailUrl: null,
-    embedUrl: null, // not in our embed allowlist — link out, never iframe
+    embedUrl,
     attributionText: "TikTok post",
     publishedAt: null,
     sourceFetchedAt: null,
-    legalDisplayStatus: "source-link-only",
+    legalDisplayStatus: embedUrl ? "embeddable" : "source-link-only",
     resolverStatus: "source-link-only",
     resolverError: null,
   };
@@ -192,6 +200,11 @@ interface IgOEmbed {
 async function resolveInstagram(u: URL, raw: string): Promise<ResolvedSocialVideo> {
   const shortcode = extractInstagramShortcode(u);
   const normalizedSourceUrl = normalizeUrl("instagram", u, null, shortcode);
+  // Official Instagram /embed/ iframe (no download/rehost, no embed.js script).
+  // Works for public posts without the oEmbed token; the token only enriches
+  // metadata below. No shortcode (odd URL) → stays source-link-only.
+  const kind = /\/reels?\//.test(u.pathname) ? "reel" : /\/tv\//.test(u.pathname) ? "tv" : "p";
+  const embedUrl = shortcode ? `https://www.instagram.com/${kind}/${shortcode}/embed/` : null;
   const base: ResolvedSocialVideo = {
     platform: "instagram",
     sourceUrl: raw,
@@ -201,11 +214,11 @@ async function resolveInstagram(u: URL, raw: string): Promise<ResolvedSocialVide
     creatorName: null,
     caption: null,
     thumbnailUrl: null,
-    embedUrl: null, // not embedded in Phase 1 — link out
+    embedUrl,
     attributionText: "Instagram post",
     publishedAt: null,
     sourceFetchedAt: null,
-    legalDisplayStatus: "source-link-only",
+    legalDisplayStatus: embedUrl ? "embeddable" : "source-link-only",
     resolverStatus: "source-link-only",
     resolverError: null,
   };

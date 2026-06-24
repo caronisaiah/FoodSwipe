@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { isEmbedUrlAllowed } from "@/lib/video";
 import MaterialIcon from "@/components/MaterialIcon";
 
 /*
@@ -67,20 +68,6 @@ interface RestaurantOption {
 
 function parseList(s: string): string[] {
   return s.split(",").map((t) => t.trim()).filter((t) => t.length > 0);
-}
-
-// Mirror lib/video's EMBED_ALLOWED_HOSTS (that module is server-only, so the host
-// allowlist is inlined here). Only an https YouTube/nocookie URL is ever iframed —
-// never trust the stored embedUrl by platform+presence alone.
-const YT_EMBED_HOSTS = new Set(["www.youtube.com", "youtube.com", "www.youtube-nocookie.com"]);
-function isAllowedYouTubeEmbed(url: string | null): boolean {
-  if (!url) return false;
-  try {
-    const u = new URL(url);
-    return u.protocol === "https:" && YT_EMBED_HOSTS.has(u.hostname);
-  } catch {
-    return false;
-  }
 }
 
 export default function AdminVideoCandidates() {
@@ -244,9 +231,14 @@ export default function AdminVideoCandidates() {
 
       <header className="mb-3 flex items-center justify-between">
         <h1 className="font-display text-xl font-bold text-cream">Video candidates</h1>
-        <Link href="/admin/videos" className="text-xs text-haze underline-offset-2 hover:underline">
-          Video intake →
-        </Link>
+        <div className="flex items-center gap-3 text-xs">
+          <Link href="/admin/restaurants/profile" className="text-saffron underline-offset-2 hover:underline">
+            Profile editor →
+          </Link>
+          <Link href="/admin/videos" className="text-haze underline-offset-2 hover:underline">
+            Video intake
+          </Link>
+        </div>
       </header>
 
       <div className="mb-4">
@@ -439,7 +431,9 @@ function CandidateDetail({
   const [attaching, setAttaching] = useState(false);
   const [msg, setMsg] = useState<Msg>(null);
 
-  const isYouTubeEmbed = candidate.platform === "youtube" && isAllowedYouTubeEmbed(candidate.embedUrl);
+  // Inline preview for any official, allowlisted embed (YouTube / TikTok / Instagram).
+  const canEmbed = isEmbedUrlAllowed(candidate.embedUrl);
+  const verticalEmbed = candidate.platform === "tiktok" || candidate.platform === "instagram";
 
   async function save(overrideStatus?: string) {
     if (saving) return;
@@ -508,15 +502,17 @@ function CandidateDetail({
     <div className="space-y-2.5 border-t border-line bg-ink-2/40 p-3">
       {/* Preview */}
       <div className="overflow-hidden rounded-lg bg-ink-2 ring-1 ring-inset ring-white/5">
-        {isYouTubeEmbed ? (
-          <div className="relative aspect-video w-full">
+        {canEmbed ? (
+          <div
+            className={`relative mx-auto w-full ${verticalEmbed ? "aspect-[9/16] max-w-[280px]" : "aspect-video"}`}
+          >
             <iframe
               src={candidate.embedUrl ?? ""}
-              title={candidate.caption ?? "YouTube preview"}
+              title={candidate.caption ?? `${PLATFORM_LABEL[candidate.platform] ?? candidate.platform} preview`}
               className="absolute inset-0 h-full w-full"
               loading="lazy"
               referrerPolicy="strict-origin-when-cross-origin"
-              allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               allowFullScreen
             />
           </div>

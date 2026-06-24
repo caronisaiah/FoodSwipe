@@ -395,13 +395,17 @@ admin **approves** a candidate and explicitly **attaches** it.
 - **Resolver** ([`lib/socialVideo.ts`](lib/socialVideo.ts), server-only): detects
   platform, normalizes the URL (the dedupe key), extracts a platform video id, and
   fetches **official, public** metadata only.
-  - **TikTok** — public **oEmbed** (no key): creator/caption/thumbnail. Stored
-    `source-link-only` (not in our embed allowlist → links out, never iframed).
+  All three resolve to the platform's **official iframe embed** so attached videos
+  play **inline** (no download/rehost; validated by `lib/video.isEmbedUrlAllowed`,
+  which checks host + exact official-embed path):
+  - **TikTok** — public **oEmbed** (no key) for creator/caption/thumbnail + the
+    official **player iframe** (`tiktok.com/player/v1/{id}`), `embeddable` when the
+    numeric id is extractable; short links (vm./vt.) stay `source-link-only`.
   - **YouTube** — reuses [`lib/youtube.ts`](lib/youtube.ts): canonical + nocookie
     embed (`embeddable`), optional Data-API metadata.
-  - **Instagram** — official oEmbed **only if `INSTAGRAM_OEMBED_TOKEN` is set**;
-    otherwise it does **not** fail — it creates a `source-link-only` candidate with
-    `resolverStatus: "missing-credentials"`. Linked out, never iframed.
+  - **Instagram** — official **`/{p|reel|tv}/{code}/embed/` iframe** (`embeddable`,
+    no embed.js script, no token needed); the optional `INSTAGRAM_OEMBED_TOKEN`
+    only **enriches** metadata when set (its absence no longer means link-out).
   - Unknown/unsupported URL → a clean **422** validation error.
   - No scraping, no unofficial downloaders, **no media bytes stored**; thumbnails
     are kept **by reference** (validated https) like the existing video model.
@@ -420,11 +424,31 @@ admin **approves** a candidate and explicitly **attaches** it.
     marks the candidate `attached`. **Idempotent**; **never** attaches a
     rejected/needs_review candidate; never auto-runs.
 - **Console.** [`/admin/videos/candidates`](app/admin/videos/candidates/page.tsx):
-  URL intake, status/platform filters, a compact queue, expandable detail with a
-  YouTube nocookie embed (or thumbnail + source link for TikTok/IG), resolver
-  diagnostics, match confidence/reasons, editable review notes, and
-  Save/Approve/Reject/Attach (Attach disabled unless approved + slug). The existing
-  [`/admin/videos`](app/admin/videos/page.tsx) intake tool is unchanged.
+  URL intake (with a restaurant-slug typeahead), status/platform filters, a compact
+  queue, expandable detail that plays the official embed inline (TikTok/IG/YouTube)
+  or shows thumbnail + source link, resolver diagnostics, match confidence/reasons,
+  editable review notes, and Save/Approve/Reject/Attach (Attach disabled unless
+  approved + slug). The existing [`/admin/videos`](app/admin/videos/page.tsx) intake
+  tool is unchanged.
+
+### Profile editor (admin)
+
+[`/admin/restaurants/profile`](app/admin/restaurants/profile/page.tsx) is a
+restaurant-centric admin page (alongside the review queue): pick a restaurant via
+the slug typeahead, then edit its tags + manage its videos in one place.
+
+- **Tags.** Published DB restaurants are fully editable (via the existing
+  vocab-validated `PATCH /api/admin/restaurants/published/[id]`); seed restaurants
+  are code-managed, so their tags are shown **read-only** with a note.
+- **Videos.** Lists the profile's current videos (with an inline-vs-link-out
+  indicator) and removes them via the existing soft-delete
+  `DELETE /api/admin/videos/[id]`. **Add** resolves a URL through the same official
+  resolver + legal-safe `normalizeVideo`/`insertVideo` and attaches it directly to
+  the restaurant ([`POST /api/admin/restaurants/[slug]/videos`](app/api/admin/restaurants/[slug]/videos/route.ts),
+  admin-gated, dedupes by source URL). This is a deliberate direct attach for an
+  admin curating a known profile — the review queue remains the path for
+  *discovered* videos. Only **visible** restaurants (seed + published) appear in the
+  picker; hidden published restaurants are managed from the published editor.
 
 ### Ranking
 

@@ -77,11 +77,13 @@ export default function VideoEmbed({
     return (
       <div className={root}>
         {/*
-          Only allowlisted YouTube hosts reach here (see lib/video.isEmbedUrlAllowed).
-          We harden with referrerPolicy but intentionally do NOT set `sandbox`:
-          YouTube's player needs scripts + same-origin + fullscreen + popups, and a
-          sandbox permissive enough to allow those (allow-scripts + allow-same-origin)
-          effectively negates the sandbox. We rely on the host allowlist instead.
+          Only official, allowlisted embeds reach here — YouTube nocookie, TikTok's
+          player iframe, or Instagram's /embed/ iframe (see lib/video.isEmbedUrlAllowed,
+          which validates host + exact official path). Each is the platform's own
+          player (no download/rehost). We harden with referrerPolicy but intentionally
+          do NOT set `sandbox`: these players need scripts + same-origin + fullscreen,
+          and a sandbox permissive enough to allow those negates it — we rely on the
+          allowlist instead.
         */}
         <iframe
           src={video.embedUrl}
