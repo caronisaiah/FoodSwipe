@@ -1,3 +1,5 @@
+"use client";
+
 import type { Platform, Video } from "@/lib/types";
 import {
   hasUrl,
@@ -72,10 +74,20 @@ export default function VideoEmbed({
   const sourceHref = videoSourceHref(video);
   const unavailable = video.legalDisplayStatus === "unavailable";
 
-  // --- Real embed path (no seed video uses this; the admin tool can) ---
+  // --- Real embed path (official iframe: YouTube / TikTok / Instagram) ---
   if (canEmbed) {
     return (
-      <div className={root}>
+      // Drag-inert zone: stop pointerdown from bubbling to an ancestor swipe
+      // handler (the feed card's framer `drag="x"`), so taps/scrubs reach the
+      // player instead of dragging the card. Same pattern as the card's Share
+      // button. The iframe owns its own touch (it's cross-origin); `touch-action:
+      // auto` lets the browser route gestures into the player rather than
+      // reserving them for the card's vertical scroll.
+      <div
+        className={root}
+        style={{ touchAction: "auto" }}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
         {/*
           Only official, allowlisted embeds reach here — YouTube nocookie, TikTok's
           player iframe, or Instagram's /embed/ iframe (see lib/video.isEmbedUrlAllowed,

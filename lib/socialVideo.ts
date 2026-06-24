@@ -6,8 +6,8 @@ import { extractYouTubeId, fetchYouTubeMetadata, resolveYouTubeUrl } from "@/lib
  *
  * Detects platform, normalizes the URL (the dedupe key), extracts a platform
  * video id where possible, and resolves PUBLIC, OFFICIAL metadata only:
- *   - TikTok    — official public oEmbed (no key) for metadata + official PLAYER
- *                 iframe (tiktok.com/player/v1/{id}) so it plays inline. embeddable
+ *   - TikTok    — official public oEmbed (no key) for metadata + official embed
+ *                 iframe (tiktok.com/embed/v2/{id}) so it plays inline. embeddable
  *                 when the numeric id is extractable; short links stay source-link-only.
  *   - YouTube   — reuse lib/youtube (canonical + nocookie embed; optional Data API). embeddable.
  *   - Instagram — official /{p|reel|tv}/{code}/embed/ iframe so it plays inline
@@ -144,9 +144,10 @@ interface TikTokOEmbed {
 async function resolveTikTok(u: URL, raw: string): Promise<ResolvedSocialVideo> {
   const videoId = extractTikTokId(u);
   const normalizedSourceUrl = normalizeUrl("tiktok", u, videoId, null);
-  // Official TikTok player iframe (no download/rehost). Needs the numeric id, so
-  // short links (vm./vt.) without an extractable id stay source-link-only.
-  const embedUrl = videoId ? `https://www.tiktok.com/player/v1/${videoId}` : null;
+  // Official TikTok embed iframe (the one TikTok's own embed.js renders into; no
+  // download/rehost). Needs the numeric id, so short links (vm./vt.) without an
+  // extractable id stay source-link-only.
+  const embedUrl = videoId ? `https://www.tiktok.com/embed/v2/${videoId}` : null;
   const base: ResolvedSocialVideo = {
     platform: "tiktok",
     sourceUrl: raw,
