@@ -60,6 +60,7 @@ interface VideoLite {
   sourceUrl?: string | null;
   embedUrl?: string | null;
   legalDisplayStatus: string;
+  sourceType?: string;
 }
 
 type Msg = { type: "ok" | "err"; text: string } | null;
@@ -576,43 +577,66 @@ function VideosPanel({ slug, secret }: { slug: string; secret: string }) {
             return (
               <li
                 key={v.id}
-                className="flex items-center gap-2 rounded-lg bg-ink-2 p-2 ring-1 ring-inset ring-white/5"
+                className="rounded-lg bg-ink-2 p-2 ring-1 ring-inset ring-white/5"
               >
-                <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-tan ring-1 ring-inset ring-white/15">
-                  {v.platform}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-semibold text-cream">
-                    {v.creatorDisplayName || v.creatorHandle}
-                    <span className="ml-1 font-normal text-haze">{v.caption}</span>
-                  </p>
-                  <p className="flex items-center gap-1 text-[10px] text-haze">
-                    <MaterialIcon
-                      name={inline ? "play_circle" : "open_in_new"}
-                      className={`text-[11px] ${inline ? "text-mint" : "text-haze"}`}
-                    />
-                    {inline ? "plays inline" : "links out"} · {v.legalDisplayStatus}
-                  </p>
-                </div>
-                {v.sourceUrl && (
-                  <a
-                    href={v.sourceUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="shrink-0 rounded-md p-1.5 text-haze hover:bg-white/10 hover:text-cream"
-                    aria-label="Open source"
+                <div className="flex items-center gap-2">
+                  <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-tan ring-1 ring-inset ring-white/15">
+                    {v.platform}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-semibold text-cream">
+                      {v.creatorDisplayName || v.creatorHandle}
+                      <span className="ml-1 font-normal text-haze">{v.caption}</span>
+                    </p>
+                    <p className="flex items-center gap-1 text-[10px] text-haze">
+                      <MaterialIcon
+                        name={inline ? "play_circle" : "open_in_new"}
+                        className={`text-[11px] ${inline ? "text-mint" : "text-haze"}`}
+                      />
+                      {inline ? "plays inline" : "links out"} · {v.legalDisplayStatus}
+                    </p>
+                  </div>
+                  {v.sourceUrl && (
+                    <a
+                      href={v.sourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="shrink-0 rounded-md p-1.5 text-haze hover:bg-white/10 hover:text-cream"
+                      aria-label="Open source"
+                    >
+                      <MaterialIcon name="open_in_new" className="text-sm" />
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void removeVideo(v.id)}
+                    aria-label="Remove video"
+                    className="shrink-0 rounded-md p-1.5 text-haze hover:bg-chili/10 hover:text-chili-soft"
                   >
-                    <MaterialIcon name="open_in_new" className="text-sm" />
-                  </a>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void removeVideo(v.id)}
-                  aria-label="Remove video"
-                  className="shrink-0 rounded-md p-1.5 text-haze hover:bg-chili/10 hover:text-chili-soft"
-                >
-                  <MaterialIcon name="delete" className="text-sm" />
-                </button>
+                    <MaterialIcon name="delete" className="text-sm" />
+                  </button>
+                </div>
+
+                {/* Raw debug — the exact stored restaurant_videos fields. */}
+                <details className="mt-1.5">
+                  <summary className="cursor-pointer text-[10px] uppercase tracking-wide text-haze">
+                    raw row
+                  </summary>
+                  <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 font-mono text-[10px]">
+                    <dt className="text-haze">id</dt>
+                    <dd className="truncate text-tan">{v.id}</dd>
+                    <dt className="text-haze">platform</dt>
+                    <dd className="text-tan">{v.platform}</dd>
+                    <dt className="text-haze">sourceType</dt>
+                    <dd className="text-tan">{v.sourceType ?? "—"}</dd>
+                    <dt className="text-haze">legalDisplayStatus</dt>
+                    <dd className={inline ? "text-mint" : "text-tan"}>{v.legalDisplayStatus}</dd>
+                    <dt className="text-haze">embedUrl</dt>
+                    <dd className="break-all text-tan">{v.embedUrl ?? "—"}</dd>
+                    <dt className="text-haze">sourceUrl</dt>
+                    <dd className="break-all text-tan">{v.sourceUrl ?? "—"}</dd>
+                  </dl>
+                </details>
               </li>
             );
           })}

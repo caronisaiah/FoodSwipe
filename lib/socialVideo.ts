@@ -61,6 +61,13 @@ const YOUTUBE_HOSTS = new Set([
 ]);
 
 function parseUrl(raw: unknown): URL | null {
+  // Accept an already-parsed URL too — extractTikTokId/extractInstagramShortcode
+  // are called with both raw strings AND URL objects (resolveSocialVideo passes
+  // the parsed `u`). Rejecting non-strings here was silently dropping the video
+  // id for every TikTok/Instagram URL, forcing source-link-only.
+  if (raw instanceof URL) {
+    return raw.protocol === "https:" || raw.protocol === "http:" ? raw : null;
+  }
   if (typeof raw !== "string" || raw.trim() === "") return null;
   try {
     const u = new URL(raw.trim());
