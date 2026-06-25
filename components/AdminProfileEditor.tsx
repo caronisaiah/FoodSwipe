@@ -74,6 +74,30 @@ interface GeneratedQuery {
   warnings?: string[];
 }
 
+/** A dry-run search lead (mirrors lib/discovery/normalizeSearchResults). */
+interface DiscoveryLeadLite {
+  key: string;
+  title: string;
+  url: string;
+  snippet: string;
+  query: string;
+  detectedPlatform: string | null;
+  resolverStatus: string;
+  resolverError?: string;
+  embedUrl?: string | null;
+  legalDisplayStatus?: string | null;
+  matchConfidence?: number;
+  matchReasons?: string[];
+}
+interface DiscoveryStats {
+  rawResults: number;
+  socialResults: number;
+  resolved: number;
+  failed: number;
+  duplicatesSkipped: number;
+  failedQueries: number;
+}
+
 type Msg = { type: "ok" | "err"; text: string } | null;
 
 function parseList(s: string): string[] {
@@ -328,6 +352,41 @@ function FindVideosPanel({ slug, secret }: { slug: string; secret: string }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  // Slice 2: provider-backed dry-run search.
+  const [leads, setLeads] = useState<DiscoveryLeadLite[] | null>(null);
+  const [stats, setStats] = useState<DiscoveryStats | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+
+  async function runDrySearch() {
+    if (searching) return;
+    if (!secret.trim()) {
+      setSearchError("Enter the admin secret first.");
+      return;
+    }
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const res = await fetch(`/api/admin/restaurants/${slug}/discovery/search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-foodswipe-admin-secret": secret },
+        body: JSON.stringify({}), // defaults: generated queries, capped, resolve=true
+      });
+      const data = (await res.json()) as { leads?: DiscoveryLeadLite[]; stats?: DiscoveryStats; error?: string };
+      if (!res.ok) {
+        setLeads(null);
+        setStats(null);
+        setSearchError(data.error ?? `Search failed (${res.status}).`);
+        return;
+      }
+      setLeads(Array.isArray(data.leads) ? data.leads : []);
+      setStats(data.stats ?? null);
+    } catch {
+      setSearchError("Network error running search.");
+    } finally {
+      setSearching(false);
+    }
+  }
 
   async function findVideos() {
     if (loading) return;
@@ -377,15 +436,26 @@ function FindVideosPanel({ slug, secret }: { slug: string; secret: string }) {
           <MaterialIcon name="search" className="text-sm" />
           Find videos
         </p>
-        <button
-          type="button"
-          onClick={() => void findVideos()}
-          disabled={loading}
-          className="flex items-center gap-1 rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-cream ring-1 ring-inset ring-white/15 hover:bg-white/20 disabled:opacity-40"
-        >
-          <MaterialIcon name="search" className="text-sm" />
-          {loading ? "Generating…" : queries ? "Regenerate" : "Find videos"}
-        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => void findVideos()}
+            disabled={loading}
+            className="flex items-center gap-1 rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-cream ring-1 ring-inset ring-white/15 hover:bg-white/20 disabled:opacity-40"
+          >
+            <MaterialIcon name="search" className="text-sm" />
+            {loading ? "Generating…" : queries ? "Regenerate" : "Find videos"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void runDrySearch()}
+            disabled={searching}
+            className="flex items-center gap-1 rounded-lg bg-brand-gradient px-3 py-1.5 text-xs font-bold text-ink transition active:scale-[0.98] disabled:opacity-40"
+          >
+            <MaterialIcon name="travel_explore" className="text-sm" />
+            {searching ? "Searching…" : "Run dry search"}
+          </button>
+        </div>
       </div>
 
       <p className="mb-2 text-[11px] leading-relaxed text-haze">
@@ -446,6 +516,76 @@ function FindVideosPanel({ slug, secret }: { slug: string; secret: string }) {
           ))}
         </ul>
       )}
+
+      {/* Slice 2: dry-run search results */}
+      <div className="mt-3 border-t border-line pt-3">
+        <p className="mb-1.5 flex items-start gap-1 text-[10px] leading-relaxed text-saffron">
+          <MaterialIcon name="payments" className="mt-px text-[12px]" />
+          Dry run calls Brave Search and resolves public social URLs. It does not
+          create candidates or attach videos.
+        </p>
+        {searchError && <p className="mb-2 text-xs text-chili-soft">{searchError}</p>}
+        {stats && (
+          <p className="mb-2 text-[10px] text-haze">
+            {leads?.length ?? 0} leads · {stats.socialResults} social / {stats.rawResults} raw · resolved{" "}
+            {stats.resolved}, failed {stats.failed}, dupes {stats.duplicatesSkipped}
+            {stats.failedQueries > 0 ? ` · ${stats.failedQueries} query error(s)` : ""}
+          </p>
+        )}
+        {leads && leads.length === 0 && !searchError && (
+          <p className="text-sm text-haze">No social leads found for these queries.</p>
+        )}
+        {leads && leads.length > 0 && (
+          <ul className="space-y-1.5">
+            {leads.map((lead) => {
+              const conf = lead.matchConfidence ?? 0;
+              const tone = conf >= 60 ? "text-mint" : conf >= 30 ? "text-saffron" : "text-haze";
+              return (
+                <li
+                  key={lead.key}
+                  className={`rounded-lg bg-ink-2 p-2 ring-1 ring-inset ring-white/5 ${conf < 25 ? "opacity-60" : ""}`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="shrink-0 rounded-full bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-tan ring-1 ring-inset ring-white/15">
+                      {lead.detectedPlatform ?? "?"}
+                    </span>
+                    <span className={`shrink-0 font-display text-xs font-bold ${tone}`}>{conf}</span>
+                    <span className="ml-auto flex shrink-0 items-center gap-1 text-[10px] text-haze">
+                      {lead.resolverStatus === "resolved" ? (
+                        <span className="flex items-center gap-0.5 text-mint">
+                          <MaterialIcon name="play_circle" className="text-[11px]" /> embeddable
+                        </span>
+                      ) : lead.resolverStatus === "failed" ? (
+                        <span className="text-chili-soft">resolve failed</span>
+                      ) : (
+                        <span>{lead.resolverStatus}</span>
+                      )}
+                    </span>
+                  </div>
+                  <p className="mt-1 truncate text-xs font-semibold text-cream">{lead.title || "(no title)"}</p>
+                  {lead.snippet && <p className="line-clamp-2 text-[11px] text-haze">{lead.snippet}</p>}
+                  <a
+                    href={lead.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-0.5 inline-flex max-w-full items-center gap-1 truncate text-[11px] text-saffron underline-offset-2 hover:underline"
+                  >
+                    <MaterialIcon name="open_in_new" className="shrink-0 text-[12px]" />
+                    <span className="truncate">{lead.url}</span>
+                  </a>
+                  {lead.matchReasons && lead.matchReasons.length > 0 && (
+                    <p className="mt-0.5 text-[10px] text-haze">{lead.matchReasons.join(" · ")}</p>
+                  )}
+                  {lead.resolverError && (
+                    <p className="text-[10px] text-chili-soft">{lead.resolverError}</p>
+                  )}
+                  <p className="text-[9px] text-haze/70">found by: {lead.query}</p>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
     </section>
   );
 }

@@ -452,10 +452,13 @@ the slug typeahead, then edit its tags + manage its videos in one place.
   *discovered* videos. Only **visible** restaurants (seed + published) appear in the
   picker; hidden published restaurants are managed from the published editor.
 
-### Social video discovery (Slice 1)
+### Social video discovery (Slices 1–2)
 
-An admin-only assistant that speeds up *finding* review videos — it does **not**
-search, import, or attach anything. [`lib/discovery/queryGenerator.ts`](lib/discovery/queryGenerator.ts)
+An admin-only assistant that speeds up *finding* review videos. It is strictly a
+**read-only research aid**: it never imports, creates candidates, or attaches
+anything, and it never downloads, proxies, caches, or rehosts media.
+
+**Slice 1 — query generation.** [`lib/discovery/queryGenerator.ts`](lib/discovery/queryGenerator.ts)
 is a pure, deterministic generator that turns a restaurant into ~6–10
 **name-anchored** search queries (every query quotes the exact name + a location
 qualifier; never a bare cuisine/dish term), platform-targeted with `site:` filters
@@ -466,13 +469,31 @@ typed (`exact_name` / `review` / `dish` / `neighborhood` / `creator_keyword` /
 - **Route:** [`GET /api/admin/restaurants/[slug]/discovery/queries`](app/api/admin/restaurants/[slug]/discovery/queries/route.ts)
   — admin-secret gated, resolves the restaurant (seed or published), returns
   `{ restaurant, queries }`. **No external API calls, no DB writes, `no-store`.**
-- **UI:** a "Find videos" panel in [`/admin/restaurants/profile`](app/admin/restaurants/profile/page.tsx)
-  lists the queries with a one-click **"Run"** link (opens a normal web search in a
-  new tab) + copy. The queries are **manual leads** — nothing is imported until a
-  URL is added via the profile editor or approved in the review queue.
-- **Out of scope here (future Slice 2+):** a provider-backed dry-run search (Brave/
-  Google CSE behind a provider interface), normalization, scoring, and creating
-  `video_candidates` from selected results. No scraping, no media download.
+
+**Slice 2 — provider-backed dry-run search.** A "Run dry search" action behind a
+swappable search-provider interface ([`lib/discovery/searchProvider.ts`](lib/discovery/searchProvider.ts),
+Brave Web Search only). The route runs the generated (or supplied) queries through
+Brave **server-side** (the key never reaches the client), normalizes results to
+TikTok/Instagram/YouTube **leads** ([`normalizeSearchResults.ts`](lib/discovery/normalizeSearchResults.ts),
+non-social URLs dropped), optionally resolves each through the existing
+`resolveSocialVideo` pipeline, and scores them with a conservative, explainable
+0–100 match score ([`scoreDiscoveryLead.ts`](lib/discovery/scoreDiscoveryLead.ts) —
+name/location/dish/direct-video signals only, **never** view/like/comment counts).
+
+- **Route:** [`POST /api/admin/restaurants/[slug]/discovery/search`](app/api/admin/restaurants/[slug]/discovery/search/route.ts)
+  — admin-secret gated; **503** if `BRAVE_SEARCH_API_KEY` is unset, **502** if Brave
+  rejects the key. Caps: ≤8 queries × ≤10 results, ≤40 resolved leads. Returns
+  `{ restaurant, provider, queriesRun, leads, stats }`. **Writes nothing** — no
+  `video_candidates`, no `restaurant_videos`, no migrations, `no-store`.
+- **UI:** the "Find videos" panel in [`/admin/restaurants/profile`](app/admin/restaurants/profile/page.tsx)
+  shows the generated queries (Slice 1, with a one-click **"Run"** web-search link)
+  plus a **"Run dry search"** button that renders lead cards (platform, title,
+  snippet, source link, the query that found it, match score + reasons, resolver
+  status). Search results are **leads, not truth** — there are no candidate-creation
+  buttons yet, so nothing is imported until a URL is added via the profile editor or
+  approved in the review queue.
+- **Out of scope here (future Slice 3+):** turning a selected lead into a
+  `video_candidate` for the review queue. Still no scraping and no media download.
 
 ### Ranking
 
@@ -532,6 +553,7 @@ FOODSWIPE_ADMIN_SECRET="a-long-random-string"                       # gate for a
 YOUTUBE_API_KEY="..."                                              # optional — YouTube metadata enrichment
 GOOGLE_MAPS_API_KEY="..."                                          # optional — Google Place Photos on profiles
 LOGODEV_TOKEN="pk_..."                                             # optional — brand-logo hero fallback (publishable token)
+BRAVE_SEARCH_API_KEY="..."                                         # optional — admin "Run dry search" video discovery (server-only)
 ```
 
 `DATABASE_URL` and `FOODSWIPE_ADMIN_SECRET` enable shared persistence (the app
@@ -558,6 +580,15 @@ keep it in a non-`NEXT_PUBLIC_` env var so it is not inlined into the client JS
 bundle: the logo URL is built server-side in `lib/logos.ts` and the browser loads
 the image directly from Logo.dev's CDN. No token (or a failed logo load) falls
 through to the placeholder. We never download, store, crop, or rehost the logo.
+
+`BRAVE_SEARCH_API_KEY` is optional: it powers the admin **"Run dry search"**
+video-discovery action (see [Social video discovery](#social-video-discovery-slices-12)).
+Get a free key from the [Brave Search API](https://brave.com/search/api/) dashboard.
+It is **server-only** — read just inside `lib/discovery/searchProvider.ts`, sent to
+Brave via the `X-Subscription-Token` header, never prefixed with `NEXT_PUBLIC_`,
+never exposed to the client, and never logged. Without it the discovery route
+returns a clean `503` and the rest of the app is unaffected. The dry-run search
+reads only — it creates no candidates and attaches nothing.
 
 Create the table once. The simplest path:
 
@@ -596,7 +627,9 @@ The app deploys cleanly to Vercel:
 1. Import the GitHub repository in Vercel (Next.js is auto-detected; defaults are
    fine).
 2. Add `DATABASE_URL` and `FOODSWIPE_ADMIN_SECRET` as environment variables, then
-   deploy (or redeploy if the variables were added after the first build).
+   deploy (or redeploy if the variables were added after the first build). Add the
+   optional keys (`BRAVE_SEARCH_API_KEY`, `YOUTUBE_API_KEY`, `GOOGLE_MAPS_API_KEY`,
+   `LOGODEV_TOKEN`) only if you want those features; each degrades cleanly when unset.
 3. Create the `restaurant_videos` table once — via the Neon SQL editor using the
    committed migration, or `db:push` from a non-intercepted network.
 
