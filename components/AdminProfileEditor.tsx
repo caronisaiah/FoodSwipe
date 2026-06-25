@@ -63,6 +63,17 @@ interface VideoLite {
   sourceType?: string;
 }
 
+/** A generated discovery query (mirrors lib/discovery/queryGenerator). */
+interface GeneratedQuery {
+  key: string;
+  query: string;
+  platform: string;
+  queryType: string;
+  reason: string;
+  searchUrl: string;
+  warnings?: string[];
+}
+
 type Msg = { type: "ok" | "err"; text: string } | null;
 
 function parseList(s: string): string[] {
@@ -304,7 +315,138 @@ function ProfilePanel({
       )}
 
       <VideosPanel slug={restaurant.id} secret={secret} />
+
+      <FindVideosPanel slug={restaurant.id} secret={secret} />
     </div>
+  );
+}
+
+/* ----- discovery: deterministic search-query leads (Slice 1, no external API) ----- */
+
+function FindVideosPanel({ slug, secret }: { slug: string; secret: string }) {
+  const [queries, setQueries] = useState<GeneratedQuery[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  async function findVideos() {
+    if (loading) return;
+    if (!secret.trim()) {
+      setError("Enter the admin secret first.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/restaurants/${slug}/discovery/queries`, {
+        headers: { "x-foodswipe-admin-secret": secret },
+      });
+      const data = (await res.json()) as { queries?: GeneratedQuery[]; error?: string };
+      if (!res.ok) {
+        setQueries(null);
+        setError(data.error ?? `Failed (${res.status}).`);
+        return;
+      }
+      setQueries(Array.isArray(data.queries) ? data.queries : []);
+    } catch {
+      setError("Network error generating queries.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function copy(q: GeneratedQuery) {
+    try {
+      await navigator.clipboard.writeText(q.query);
+      setCopiedKey(q.key);
+      setTimeout(() => setCopiedKey(null), 1200);
+    } catch {
+      // clipboard blocked — the text is still visible/selectable
+    }
+  }
+
+  // De-duplicated name-level cautions across all queries.
+  const bannerWarnings = queries
+    ? Array.from(new Set(queries.flatMap((q) => q.warnings ?? [])))
+    : [];
+
+  return (
+    <section className="rounded-xl bg-surface p-3 ring-1 ring-inset ring-white/10">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-haze">
+          <MaterialIcon name="search" className="text-sm" />
+          Find videos
+        </p>
+        <button
+          type="button"
+          onClick={() => void findVideos()}
+          disabled={loading}
+          className="flex items-center gap-1 rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-cream ring-1 ring-inset ring-white/15 hover:bg-white/20 disabled:opacity-40"
+        >
+          <MaterialIcon name="search" className="text-sm" />
+          {loading ? "Generating…" : queries ? "Regenerate" : "Find videos"}
+        </button>
+      </div>
+
+      <p className="mb-2 text-[11px] leading-relaxed text-haze">
+        Manual search leads only — opening a query searches the web in a new tab. No
+        videos are imported or attached until you paste a URL into Add by URL above
+        or approve it in the review queue.
+      </p>
+
+      {error && <p className="mb-2 text-xs text-chili-soft">{error}</p>}
+
+      {bannerWarnings.length > 0 && (
+        <div className="mb-2 rounded-lg bg-saffron/10 p-2 text-[11px] text-saffron ring-1 ring-inset ring-saffron/20">
+          {bannerWarnings.map((w, i) => (
+            <p key={i} className="flex items-start gap-1">
+              <MaterialIcon name="warning" className="mt-px text-[12px]" />
+              {w}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {queries && queries.length === 0 && !error && (
+        <p className="text-sm text-haze">No queries generated.</p>
+      )}
+
+      {queries && queries.length > 0 && (
+        <ul className="space-y-1.5">
+          {queries.map((q) => (
+            <li key={q.key} className="rounded-lg bg-ink-2 p-2 ring-1 ring-inset ring-white/5">
+              <div className="flex items-center gap-2">
+                <span className="shrink-0 rounded-full bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-tan ring-1 ring-inset ring-white/15">
+                  {q.platform}
+                </span>
+                <span className="shrink-0 text-[10px] uppercase tracking-wide text-haze">{q.queryType}</span>
+                <span className="ml-auto flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => void copy(q)}
+                    aria-label="Copy query"
+                    className="rounded-md p-1 text-haze hover:bg-white/10 hover:text-cream"
+                  >
+                    <MaterialIcon name={copiedKey === q.key ? "check" : "content_copy"} className="text-sm" />
+                  </button>
+                  <a
+                    href={q.searchUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 rounded-md bg-white/10 px-2 py-1 text-[11px] font-semibold text-cream ring-1 ring-inset ring-white/15 hover:bg-white/20"
+                  >
+                    <MaterialIcon name="open_in_new" className="text-[12px]" />
+                    Run
+                  </a>
+                </span>
+              </div>
+              <p className="mt-1 break-all font-mono text-[11px] text-cream">{q.query}</p>
+              <p className="text-[10px] text-haze">{q.reason}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

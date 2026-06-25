@@ -452,6 +452,28 @@ the slug typeahead, then edit its tags + manage its videos in one place.
   *discovered* videos. Only **visible** restaurants (seed + published) appear in the
   picker; hidden published restaurants are managed from the published editor.
 
+### Social video discovery (Slice 1)
+
+An admin-only assistant that speeds up *finding* review videos — it does **not**
+search, import, or attach anything. [`lib/discovery/queryGenerator.ts`](lib/discovery/queryGenerator.ts)
+is a pure, deterministic generator that turns a restaurant into ~6–10
+**name-anchored** search queries (every query quotes the exact name + a location
+qualifier; never a bare cuisine/dish term), platform-targeted with `site:` filters
+(`tiktok.com`, `instagram.com/reel`, `youtube.com/shorts`, plus a web fallback) and
+typed (`exact_name` / `review` / `dish` / `neighborhood` / `creator_keyword` /
+`fallback`). Short/generic or chain-like names get a caution.
+
+- **Route:** [`GET /api/admin/restaurants/[slug]/discovery/queries`](app/api/admin/restaurants/[slug]/discovery/queries/route.ts)
+  — admin-secret gated, resolves the restaurant (seed or published), returns
+  `{ restaurant, queries }`. **No external API calls, no DB writes, `no-store`.**
+- **UI:** a "Find videos" panel in [`/admin/restaurants/profile`](app/admin/restaurants/profile/page.tsx)
+  lists the queries with a one-click **"Run"** link (opens a normal web search in a
+  new tab) + copy. The queries are **manual leads** — nothing is imported until a
+  URL is added via the profile editor or approved in the review queue.
+- **Out of scope here (future Slice 2+):** a provider-backed dry-run search (Brave/
+  Google CSE behind a provider interface), normalization, scoring, and creating
+  `video_candidates` from selected results. No scraping, no media download.
+
 ### Ranking
 
 [`lib/recommendations.ts`](lib/recommendations.ts) is a pure, readable weighted
