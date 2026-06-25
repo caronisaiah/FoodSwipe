@@ -81,6 +81,7 @@ interface DiscoveryLeadLite {
   url: string;
   snippet: string;
   query: string;
+  rank?: number;
   detectedPlatform: string | null;
   resolverStatus: string;
   resolverError?: string;
@@ -96,6 +97,27 @@ interface DiscoveryStats {
   failed: number;
   duplicatesSkipped: number;
   failedQueries: number;
+}
+
+/** Slice 3: result of creating video_candidates from selected leads. */
+interface CreatedCandidateLite {
+  id: string;
+  sourceUrl: string;
+  normalizedSourceUrl: string;
+  platform: string;
+  status: string;
+  matchConfidence: number | null;
+}
+interface FailedLeadLite {
+  url: string;
+  error: string;
+}
+interface CreateCandidatesResult {
+  restaurant: { id: string; name: string; slug: string };
+  created: CreatedCandidateLite[];
+  duplicates: CreatedCandidateLite[];
+  failed: FailedLeadLite[];
+  stats: { requested: number; created: number; duplicates: number; failed: number };
 }
 
 type Msg = { type: "ok" | "err"; text: string } | null;
@@ -357,6 +379,11 @@ function FindVideosPanel({ slug, secret }: { slug: string; secret: string }) {
   const [stats, setStats] = useState<DiscoveryStats | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  // Slice 3: select leads → create video_candidates (needs_review).
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [creating, setCreating] = useState(false);
+  const [createMsg, setCreateMsg] = useState<Msg>(null);
+  const [createResult, setCreateResult] = useState<CreateCandidatesResult | null>(null);
 
   async function runDrySearch() {
     if (searching) return;
@@ -366,6 +393,10 @@ function FindVideosPanel({ slug, secret }: { slug: string; secret: string }) {
     }
     setSearching(true);
     setSearchError(null);
+    // A fresh search invalidates any prior selection + creation summary.
+    setSelected(new Set());
+    setCreateResult(null);
+    setCreateMsg(null);
     try {
       const res = await fetch(`/api/admin/restaurants/${slug}/discovery/search`, {
         method: "POST",
@@ -385,6 +416,58 @@ function FindVideosPanel({ slug, secret }: { slug: string; secret: string }) {
       setSearchError("Network error running search.");
     } finally {
       setSearching(false);
+    }
+  }
+
+  function toggleLead(key: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  async function createCandidates() {
+    if (creating) return;
+    if (!secret.trim()) {
+      setCreateMsg({ type: "err", text: "Enter the admin secret first." });
+      return;
+    }
+    if (!leads || selected.size === 0) return;
+    const chosen = leads.filter((l) => selected.has(l.key));
+    setCreating(true);
+    setCreateMsg(null);
+    try {
+      const res = await fetch(`/api/admin/restaurants/${slug}/discovery/candidates`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-foodswipe-admin-secret": secret },
+        body: JSON.stringify({
+          leads: chosen.map((l) => ({
+            url: l.url,
+            title: l.title,
+            snippet: l.snippet,
+            query: l.query,
+            rank: l.rank,
+            provider: "brave",
+          })),
+        }),
+      });
+      const data = (await res.json()) as CreateCandidatesResult & { error?: string };
+      if (!res.ok) {
+        setCreateMsg({ type: "err", text: data.error ?? `Create failed (${res.status}).` });
+        return;
+      }
+      setCreateResult(data);
+      setCreateMsg({
+        type: "ok",
+        text: `Created ${data.stats.created} · ${data.stats.duplicates} already queued · ${data.stats.failed} failed.`,
+      });
+      setSelected(new Set()); // selection consumed
+    } catch {
+      setCreateMsg({ type: "err", text: "Network error creating candidates." });
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -536,16 +619,83 @@ function FindVideosPanel({ slug, secret }: { slug: string; secret: string }) {
           <p className="text-sm text-haze">No social leads found for these queries.</p>
         )}
         {leads && leads.length > 0 && (
-          <ul className="space-y-1.5">
+          <>
+            {/* Slice 3: select leads → create needs_review candidates */}
+            <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg bg-ink-2/60 p-2 ring-1 ring-inset ring-white/10">
+              <p className="min-w-0 flex-1 text-[10px] leading-relaxed text-haze">
+                Selected leads become video <span className="text-cream">candidates for review</span>.
+                They are <span className="text-cream">not attached</span> to the restaurant yet.
+              </p>
+              <button
+                type="button"
+                onClick={() => void createCandidates()}
+                disabled={creating || selected.size === 0}
+                className="flex shrink-0 items-center gap-1 rounded-lg bg-brand-gradient px-3 py-1.5 text-xs font-bold text-ink transition active:scale-[0.98] disabled:opacity-40"
+              >
+                <MaterialIcon name="playlist_add" className="text-sm" />
+                {creating ? "Creating…" : `Create selected candidates${selected.size ? ` (${selected.size})` : ""}`}
+              </button>
+            </div>
+            {createMsg && (
+              <p className={`mb-2 text-xs ${createMsg.type === "ok" ? "text-mint" : "text-chili-soft"}`}>
+                {createMsg.text}
+              </p>
+            )}
+            {createResult && (
+              <div className="mb-2 rounded-lg bg-ink-2 p-2 text-[11px] ring-1 ring-inset ring-white/10">
+                <p className="text-cream">
+                  <span className="text-mint">{createResult.stats.created} created</span> ·{" "}
+                  {createResult.stats.duplicates} already queued · {createResult.stats.failed} failed
+                </p>
+                {createResult.stats.created > 0 && (
+                  <a
+                    href="/admin/videos/candidates"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-0.5 inline-flex items-center gap-1 text-saffron underline-offset-2 hover:underline"
+                  >
+                    <MaterialIcon name="open_in_new" className="text-[12px]" />
+                    Review queue (needs_review) →
+                  </a>
+                )}
+                {createResult.duplicates.length > 0 && (
+                  <div className="mt-1">
+                    <p className="text-haze">Already in the queue:</p>
+                    {createResult.duplicates.map((d) => (
+                      <p key={d.id} className="truncate text-tan">• {d.sourceUrl}</p>
+                    ))}
+                  </div>
+                )}
+                {createResult.failed.length > 0 && (
+                  <div className="mt-1">
+                    <p className="text-haze">Could not resolve:</p>
+                    {createResult.failed.map((f, i) => (
+                      <p key={i} className="truncate text-chili-soft">• {f.url} — {f.error}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            <ul className="space-y-1.5">
             {leads.map((lead) => {
               const conf = lead.matchConfidence ?? 0;
               const tone = conf >= 60 ? "text-mint" : conf >= 30 ? "text-saffron" : "text-haze";
+              const isSelected = selected.has(lead.key);
               return (
                 <li
                   key={lead.key}
-                  className={`rounded-lg bg-ink-2 p-2 ring-1 ring-inset ring-white/5 ${conf < 25 ? "opacity-60" : ""}`}
+                  className={`rounded-lg bg-ink-2 p-2 ring-1 ring-inset ${
+                    isSelected ? "ring-saffron/50" : "ring-white/5"
+                  } ${conf < 25 && !isSelected ? "opacity-60" : ""}`}
                 >
                   <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleLead(lead.key)}
+                      aria-label={`Select lead: ${lead.title || lead.url}`}
+                      className="h-3.5 w-3.5 shrink-0 accent-saffron"
+                    />
                     <span className="shrink-0 rounded-full bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-tan ring-1 ring-inset ring-white/15">
                       {lead.detectedPlatform ?? "?"}
                     </span>
@@ -583,7 +733,8 @@ function FindVideosPanel({ slug, secret }: { slug: string; secret: string }) {
                 </li>
               );
             })}
-          </ul>
+            </ul>
+          </>
         )}
       </div>
     </section>

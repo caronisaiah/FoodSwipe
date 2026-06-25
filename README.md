@@ -452,11 +452,12 @@ the slug typeahead, then edit its tags + manage its videos in one place.
   *discovered* videos. Only **visible** restaurants (seed + published) appear in the
   picker; hidden published restaurants are managed from the published editor.
 
-### Social video discovery (Slices 1–2)
+### Social video discovery (Slices 1–3)
 
-An admin-only assistant that speeds up *finding* review videos. It is strictly a
-**read-only research aid**: it never imports, creates candidates, or attaches
-anything, and it never downloads, proxies, caches, or rehosts media.
+An admin-only assistant that speeds up *finding* review videos. Through Slice 2 it
+is a **read-only research aid**; Slice 3 adds one explicit, admin-driven write —
+creating review **candidates** — and nothing else. It never downloads, proxies,
+caches, or rehosts media, never attaches, and never auto-approves.
 
 **Slice 1 — query generation.** [`lib/discovery/queryGenerator.ts`](lib/discovery/queryGenerator.ts)
 is a pure, deterministic generator that turns a restaurant into ~6–10
@@ -489,11 +490,31 @@ name/location/dish/direct-video signals only, **never** view/like/comment counts
   shows the generated queries (Slice 1, with a one-click **"Run"** web-search link)
   plus a **"Run dry search"** button that renders lead cards (platform, title,
   snippet, source link, the query that found it, match score + reasons, resolver
-  status). Search results are **leads, not truth** — there are no candidate-creation
-  buttons yet, so nothing is imported until a URL is added via the profile editor or
-  approved in the review queue.
-- **Out of scope here (future Slice 3+):** turning a selected lead into a
-  `video_candidate` for the review queue. Still no scraping and no media download.
+  status). Search results are **leads, not truth**.
+
+**Slice 3 — create candidates from selected leads.** The lead cards now carry a
+checkbox; a **"Create selected candidates"** button turns the admin's explicit
+selection into `video_candidates` (status **`needs_review`**), pre-associated to the
+restaurant. It is the only discovery write, and it reuses the **same canonical
+[`createVideoCandidate`](lib/db/videoCandidates.ts) path** as manual intake — so the
+existing dedupe (unique `normalized_source_url`, then `platform`+`platform_video_id`)
+and the legal-safe attach gate are unchanged.
+
+- **Route:** [`POST /api/admin/restaurants/[slug]/discovery/candidates`](app/api/admin/restaurants/[slug]/discovery/candidates/route.ts)
+  — admin-secret + DB gated; max **20** selected leads/request. The client is **not
+  trusted**: every selected URL is **re-resolved server-side** via `resolveSocialVideo`,
+  and identity fields (platform / normalized URL / video id / embed URL / legal status)
+  plus the match score are recomputed on the server — any client-supplied
+  `matchConfidence`/`embedUrl` is ignored. Returns `{ restaurant, created, duplicates,
+  failed, stats }`; duplicates are reported (never re-statused), unresolvable URLs go
+  to `failed`. **Writes only `video_candidates`** — no `restaurant_videos`, no attach,
+  no auto-approval, no migration, `no-store`.
+- **UI result:** a summary of created / already-queued / failed counts and a link to
+  the [review queue](app/admin/videos/candidates). Created candidates are
+  `needs_review` and must still be **approved and attached by hand** in the review
+  console — the existing review queue remains the sole approval/attach gate.
+- **Out of scope here (future):** any auto-approval, auto-attach, or scheduled run.
+  Discovery still never scrapes or downloads media.
 
 ### Ranking
 
