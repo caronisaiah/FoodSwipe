@@ -37,6 +37,7 @@ export async function GET(
   const queries = generateDiscoveryQueries({
     name: restaurant.name,
     slug: restaurant.id, // public slug (seed id or published slug)
+    market: restaurant.market,
     neighborhood: restaurant.neighborhood,
     address: restaurant.address,
     cuisineTags: restaurant.cuisineTags,

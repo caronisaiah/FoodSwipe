@@ -94,6 +94,7 @@ function rowToRestaurant(row: RestaurantRow): Restaurant {
   return {
     id: row.slug,
     name: row.name,
+    market: normalizeMarket(row.market),
     neighborhood: row.neighborhood ?? "",
     address: row.address ?? "",
     googlePlaceId: row.googlePlaceId ?? undefined,

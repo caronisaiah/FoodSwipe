@@ -7,6 +7,7 @@ import type {
   VideoSourceType,
 } from "@/lib/types";
 import { enforceVideoInvariants } from "@/lib/video";
+import { DEFAULT_MARKET } from "@/lib/markets";
 
 /**
  * Seed dataset — Washington, DC.
@@ -109,7 +110,10 @@ function video(
   });
 }
 
-export const RESTAURANTS: Restaurant[] = [
+// Seed restaurants are all Washington, DC. `market` is injected by the adapter
+// below so we keep one source of truth for the DC default instead of repeating
+// it on every literal.
+const SEED_RAW: Omit<Restaurant, "market">[] = [
   {
     id: "le-diplomate",
     name: "Le Diplomate",
@@ -756,6 +760,9 @@ export const RESTAURANTS: Restaurant[] = [
     ],
   },
 ];
+
+/** Seed dataset with the DC market applied (single source of the default). */
+export const RESTAURANTS: Restaurant[] = SEED_RAW.map((r) => ({ ...r, market: DEFAULT_MARKET }));
 
 /** O(1) lookup by id for the profile route and saved page. */
 export const RESTAURANTS_BY_ID: Record<string, Restaurant> = Object.fromEntries(

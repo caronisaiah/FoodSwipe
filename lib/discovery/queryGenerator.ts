@@ -1,5 +1,5 @@
 /**
- * Social video discovery — Slice 1: deterministic search-query generator.
+ * Social video discovery — deterministic search-query generator.
  *
  * PURE + side-effect-free. Given a restaurant, it produces a small set of
  * name-anchored, platform-targeted search queries an admin can run by hand to
@@ -10,7 +10,17 @@
  *
  * Anti-flood rules: every query is anchored on the EXACT restaurant name in
  * quotes plus a location qualifier; we never emit bare cuisine/dish queries.
+ *
+ * Market-aware (A2): the location qualifier comes from the restaurant's MARKET
+ * (lib/markets), not a hardcoded "Washington DC". DC restaurants still get
+ * "Washington DC"; an NYC restaurant gets "New York" (+ its neighborhood/borough
+ * if present). Examples:
+ *   DC  (market "dc"):  "Le Diplomate" "Washington DC" site:tiktok.com
+ *   NYC (market "nyc"): "Lucali" "New York" site:tiktok.com
+ *                       "Lucali" "Carroll Gardens" site:tiktok.com  (neighborhood)
  */
+
+import { getMarketLocationTerms, getMarketQueryCity, normalizeMarket, type Market } from "@/lib/markets";
 
 export type DiscoveryPlatform = "tiktok" | "instagram" | "youtube" | "web";
 
@@ -25,6 +35,8 @@ export type DiscoveryQueryType =
 export interface DiscoveryRestaurantInput {
   name: string;
   slug?: string | null;
+  /** Market id (lib/markets). Omitted/unknown → DC (DC-first default). */
+  market?: Market | null;
   neighborhood?: string | null;
   address?: string | null;
   cuisineTags?: string[] | null;
@@ -48,11 +60,24 @@ export interface GeneratedDiscoveryQuery {
 }
 
 // Tokens that don't make a name distinctive (so we can flag generic names).
-const STOPWORDS = new Set([
+// Market location words (e.g. "washington", "brooklyn") are added per-market at
+// call time so the generic-name check is market-aware, not DC-only.
+const BASE_STOPWORDS = new Set([
   "the", "a", "an", "of", "and", "at", "on", "in", "to", "for", "co", "by",
   "restaurant", "cafe", "café", "bar", "grill", "kitchen", "house", "eatery",
-  "bistro", "tavern", "dc", "washington",
+  "bistro", "tavern",
 ]);
+
+/** Split a market's location terms into single tokens usable as stopwords. */
+function marketStopwords(market: Market): Set<string> {
+  const stops = new Set(BASE_STOPWORDS);
+  for (const term of getMarketLocationTerms(market)) {
+    for (const tok of term.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/)) {
+      if (tok.length >= 3) stops.add(tok);
+    }
+  }
+  return stops;
+}
 
 // A few obvious chains — these almost always have many locations, so a query
 // must be location-anchored and the admin must verify the city/handle.
@@ -62,26 +87,16 @@ const KNOWN_CHAINS = new Set([
   "pizzahut", "kfc", "popeyes", "wingstop", "panerabread",
 ]);
 
-function distinctiveTokens(name: string): string[] {
+function distinctiveTokens(name: string, stops: Set<string>): string[] {
   return name
     .toLowerCase()
     .replace(/[^a-z0-9 ]/g, " ")
     .split(/\s+/)
-    .filter((t) => t.length >= 3 && !STOPWORDS.has(t));
+    .filter((t) => t.length >= 3 && !stops.has(t));
 }
 
 function isChainLike(name: string): boolean {
   return KNOWN_CHAINS.has(name.toLowerCase().replace(/[^a-z0-9]/g, ""));
-}
-
-/**
- * Derive a location qualifier. The app is currently DC-first, so when the address
- * doesn't clearly indicate otherwise we fall back to "Washington DC".
- */
-function deriveCity(address?: string | null): string {
-  const a = (address ?? "").toLowerCase();
-  if (a.includes("washington") || /\bdc\b/.test(a)) return "Washington DC";
-  return "Washington DC";
 }
 
 function searchUrl(query: string): string {
@@ -99,15 +114,22 @@ export function generateDiscoveryQueries(
   const name = (input.name ?? "").trim();
   if (!name) return [];
 
+  const market = normalizeMarket(input.market);
+  const stops = marketStopwords(market);
+
   const quoted = `"${name}"`;
-  const city = deriveCity(input.address);
+  // Location qualifier comes from the MARKET (DC → "Washington DC", NYC → "New
+  // York"), never hardcoded.
+  const city = getMarketQueryCity(market);
   const cityQ = `"${city}"`;
 
   const neighborhood = (input.neighborhood ?? "").trim();
+  const nbLower = neighborhood.toLowerCase();
+  // A neighborhood adds signal only if it isn't just the city/market name itself.
   const neighborhoodUsable =
     neighborhood.length > 0 &&
-    !/^(washington|dc|washington,?\s*dc)$/i.test(neighborhood) &&
-    neighborhood.toLowerCase() !== city.toLowerCase();
+    nbLower !== city.toLowerCase() &&
+    !getMarketLocationTerms(market).includes(nbLower);
 
   const dishes = (Array.isArray(input.dishHighlights) ? input.dishHighlights : [])
     .map((d) => (typeof d === "string" ? d.trim() : ""))
@@ -118,7 +140,7 @@ export function generateDiscoveryQueries(
   const warnings: string[] = [];
   if (isChainLike(name)) {
     warnings.push("Name looks like a chain — results may be other locations; verify the city/handle before importing.");
-  } else if (distinctiveTokens(name).length <= 1) {
+  } else if (distinctiveTokens(name, stops).length <= 1) {
     warnings.push("Short/generic name — results may be ambiguous; verify against the address/neighborhood.");
   }
   const warn = warnings.length > 0 ? warnings : undefined;

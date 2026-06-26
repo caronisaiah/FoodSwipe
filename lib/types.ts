@@ -6,6 +6,8 @@
  * local seed data in `lib/seed`.
  */
 
+import type { Market } from "@/lib/markets";
+
 /** Where a piece of review content originated. */
 export type Platform = "TikTok" | "Instagram" | "YouTube" | "Web";
 
@@ -158,6 +160,8 @@ export interface ManualVideoEntry {
 export interface Restaurant {
   id: string;
   name: string;
+  /** Market this restaurant belongs to (multi-market). Seed data is all "dc". */
+  market: Market;
   neighborhood: string;
   address: string;
   /**

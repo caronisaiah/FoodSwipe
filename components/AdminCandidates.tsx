@@ -375,7 +375,11 @@ export default function AdminCandidates() {
             className="space-y-3"
           >
             <Field label="Search query" hint="cuisine + neighborhood">
-              <TextInput value={query} onChange={setQuery} placeholder="brunch in Shaw, Washington DC" />
+              <TextInput
+                value={query}
+                onChange={setQuery}
+                placeholder={market === "nyc" ? "pizza in Williamsburg, Brooklyn" : "brunch in Shaw, Washington DC"}
+              />
             </Field>
             <Field label="Market" hint="where these restaurants are">
               <select

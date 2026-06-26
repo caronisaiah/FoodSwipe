@@ -18,6 +18,7 @@ import {
   useTransform,
 } from "framer-motion";
 import type { ScoredRestaurant, SwipeDirection } from "@/lib/types";
+import { getMarketShortName } from "@/lib/markets";
 import RestaurantCard from "@/components/RestaurantCard";
 import RestaurantProfileView from "@/components/RestaurantProfileView";
 import MaterialIcon from "@/components/MaterialIcon";
@@ -196,7 +197,7 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
       const url = `${window.location.origin}/restaurants/${r.id}`;
       try {
         if (typeof navigator !== "undefined" && navigator.share) {
-          await navigator.share({ title: r.name, text: `${r.name} — ${r.neighborhood}, DC`, url });
+          await navigator.share({ title: r.name, text: `${r.name} — ${r.neighborhood}, ${getMarketShortName(r.market)}`, url });
           return;
         }
       } catch {
@@ -257,7 +258,7 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
         >
           {trending && (
             <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-chili/90 px-3 py-1.5 text-[11px] font-bold uppercase tracking-widest text-cream shadow-lg backdrop-blur-md">
-              <MaterialIcon name="trending_up" className="text-[16px]" /> Trending in DC
+              <MaterialIcon name="trending_up" className="text-[16px]" /> Trending in {getMarketShortName(r.market)}
             </span>
           )}
           {topChoice && (

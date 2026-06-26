@@ -381,49 +381,62 @@ seed **plus** DB-published restaurants.
   a **Promote to feed** action on approved candidates (showing `missingFields` on
   failure and the resulting `/restaurants/[slug]` link on success).
 
-### Markets (multi-market — A1)
+### Markets (multi-market — A1 + A2)
 
 FoodSwipe is DC-first but is being prepared for additional markets (e.g. NYC).
-**Slice A1 is the write-path foundation only** — it makes new data carry a market
-and compute the right distance, without changing the public app's DC-first
-behavior.
+**A1** added the write-path foundation (data carries a market; distance uses the
+market origin). **A2** makes the read/discovery side market-aware while keeping the
+public app DC-first. No new schema/migration was needed for A2.
 
 - **Config.** [`lib/markets.ts`](lib/markets.ts) is the allow-list source of truth:
-  markets `dc` and `nyc`, each with a display name and a geographic **origin**
-  (DC `38.9072,-77.0369`; NYC `40.7128,-74.0060`). Helpers `isAllowedMarket`,
-  `normalizeMarket` (coerce untrusted input → default `dc`), `getMarketOrigin`,
-  `getMarketDisplayName`, `listMarkets`. The default everywhere is **`dc`**.
-- **Schema.** Migration `0009_tidy_speed.sql` adds a `market text NOT NULL DEFAULT
-  'dc'` column to `candidate_restaurants` and `restaurants` (the `DEFAULT` backfills
-  all existing rows to `dc`), plus `(status, market, created_at)` indexes for
-  market-scoped admin/feed queries. `video_candidates` and `restaurant_videos` do
-  **not** get a market column in A1 (see below).
+  markets `dc` and `nyc`, each with `displayName` ("Washington, DC" / "New York
+  City"), `shortName` ("DC" / "NYC"), a geographic **origin** (DC `38.9072,-77.0369`;
+  NYC `40.7128,-74.0060`), a `queryCity` (discovery qualifier — "Washington DC" /
+  "New York"), and `locationTerms` (scoring detection: city + abbreviations +
+  boroughs). Helpers: `isAllowedMarket`, `normalizeMarket` (coerce untrusted → `dc`),
+  `getMarketOrigin`, `getMarketDisplayName`, `getMarketShortName`, `getMarketQueryCity`,
+  `getMarketLocationTerms`, `listMarkets`. The default everywhere is **`dc`**.
+- **Schema (A1).** Migration `0009_tidy_speed.sql` adds `market text NOT NULL DEFAULT
+  'dc'` to `candidate_restaurants` and `restaurants` (the `DEFAULT` backfills existing
+  rows), plus `(status, market, created_at)` indexes. `video_candidates` and
+  `restaurant_videos` get **no** market column (see below).
+- **Types & seed (A2).** The public `Restaurant` type carries `market`. Seed
+  restaurants are all `dc` (injected by a typed adapter — one source of the
+  default). Published rows map `market` through on read.
 - **Import.** [`…/candidates/import/google`](app/api/admin/restaurants/candidates/import/google/route.ts)
-  accepts an optional `market` (default `dc`; an invalid value is **rejected**,
-  not coerced) and stores it on the imported candidate. The candidates console has
-  a **Market** dropdown for the import. Dry-run behavior is unchanged.
+  accepts an optional `market` (default `dc`; invalid is **rejected** with `400`),
+  stores it on the candidate, and the candidates console has a **Market** dropdown.
 - **Promotion → distance.** Promotion copies `candidate.market` into
-  `restaurants.market` and computes `distanceMiles` from **that market's origin**
-  (not a hardcoded DC origin). Editing a published row's lat/lng recomputes from
-  the row's own market.
-- **Reads.** `/api/restaurants` gains an **optional, backward-compatible**
-  `?market=dc|nyc`: omitted → today's behavior (seed + all published); an explicit
-  market returns only that market's rows (the seed is the `dc` market), and is
-  honest about an empty result (no seed fallback). The public app remains
-  **DC-first** — there is no market selector and the feed is not filtered by
-  market yet.
-- **Deferred (A2/A3):** public market selector + feed filtering, market-aware
-  discovery query generation/scoring, UI market labels, and any change to slug
-  uniqueness. **Restaurant slugs stay globally unique** in A1, so every existing
-  slug-based lookup (`/restaurants/[id]`, the videos/photo routes, `restaurant_videos`,
+  `restaurants.market` and computes `distanceMiles` from **that market's origin**;
+  editing a published row's lat/lng recomputes from the row's market.
+- **Public read (A2).** `/api/restaurants` is **DC by default**: no `?market` → DC
+  (seed + DC published, unchanged today); `?market=dc` → DC; `?market=nyc` → NYC
+  published rows **only** (seed is the DC market, never mixed in), honest-empty if
+  none. An invalid market **falls back to the DC default** (this public read route
+  is degrade-safe; it does not `400` like the admin write route). No market selector
+  UI yet — the public app stays DC-first.
+- **Discovery (A2).** [`queryGenerator`](lib/discovery/queryGenerator.ts) derives the
+  location qualifier from the restaurant's market (DC → `"Washington DC"`, NYC →
+  `"New York"` + neighborhood/borough), and [`scoreDiscoveryLead`](lib/discovery/scoreDiscoveryLead.ts)
+  awards the city-match using the market's `locationTerms` (NYC scores New York / NYC
+  / Manhattan / Brooklyn / Queens / Bronx / Staten Island). Every query is still
+  anchored on the exact quoted name; no engagement/popularity is ever used.
+- **UI labels (A2).** The "Trending in …" badge and share text are market-derived
+  via `getMarketShortName` ("Trending in DC" / "Trending in NYC"). DC output is
+  byte-identical to before.
+- **Deferred (A3+):** public **market selector** + a user-facing feed switch,
+  **per-market saved/swipe scoping** (localStorage stays global for now — DC + NYC
+  saves share one bucket), admin **pagination/bulk/readiness dashboard**, and any
+  change to **slug uniqueness**. **Restaurant slugs stay globally unique**, so every
+  slug-based lookup (`/restaurants/[id]`, videos/photo routes, `restaurant_videos`,
   saved/swipe storage, discovery candidate creation) stays unambiguous; cross-market
-  duplicate slugs are deferred until those lookups are made market-aware.
-- **Why no market on `video_candidates`/`restaurant_videos` yet.** Videos are keyed
-  by the **globally-unique** restaurant id/slug, so a video row resolves
-  unambiguously and inherits its restaurant's market transitively — no own column
-  needed. `video_candidates` has no distance and discovery isn't market-aware until
-  A2, so its market column lands in A2 alongside the code that populates and filters
-  it (a trivial additive migration), rather than shipping an unpopulated column now.
+  duplicate slugs remain deferred until those lookups are market-aware.
+- **Why still no market on `video_candidates`/`restaurant_videos`.** Videos are keyed
+  by the **globally-unique** restaurant id/slug, so a video row resolves unambiguously
+  and inherits its restaurant's market transitively — no own column needed. Discovery
+  scoring reads the **restaurant's** market directly, so `video_candidates` needs no
+  market column either; it can be added later only if a feature actually filters
+  candidates by market.
 
 ### Social video intake (Phase 1)
 

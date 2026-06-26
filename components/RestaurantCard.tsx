@@ -1,6 +1,7 @@
 import type { ScoredRestaurant } from "@/lib/types";
 import { priceLabel } from "@/lib/options";
 import { cuisineIcon } from "@/lib/emoji";
+import { getMarketShortName } from "@/lib/markets";
 import HeroMedia from "@/components/HeroMedia";
 import MaterialIcon from "@/components/MaterialIcon";
 
@@ -26,7 +27,7 @@ export default function RestaurantCard({ scored }: { scored: ScoredRestaurant })
 
       {trending && (
         <span className="absolute left-4 top-4 z-20 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-chili/90 px-3 py-1.5 text-[11px] font-bold uppercase tracking-widest text-cream shadow-lg backdrop-blur-md">
-          <MaterialIcon name="trending_up" className="text-[16px]" /> Trending in DC
+          <MaterialIcon name="trending_up" className="text-[16px]" /> Trending in {getMarketShortName(r.market)}
         </span>
       )}
 

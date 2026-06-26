@@ -19,25 +19,56 @@ export const DEFAULT_MARKET: Market = "dc";
 
 export interface MarketConfig {
   id: Market;
+  /** Full UI name, e.g. "Washington, DC". */
   displayName: string;
+  /** Compact UI label used in badges/share text, e.g. "DC" / "NYC". */
+  shortName: string;
   /** Geographic origin for distanceMiles (honest estimate, never a fake metric). */
   origin: { lat: number; lng: number };
-  /** Location qualifiers a later discovery slice (A2) can use; unused in A1. */
+  /**
+   * Primary location qualifier for discovery SEARCH QUERIES — the string quoted
+   * alongside the restaurant name (A2 query generation), e.g. "Washington DC" /
+   * "New York".
+   */
+  queryCity: string;
+  /** Optional alternate query qualifiers (e.g. "DC", "NYC"). */
   searchTerms: string[];
+  /**
+   * Lowercase location terms used for discovery SCORING — a lead's title/snippet/
+   * URL is checked for any of these (word-boundary matched) to award a city hit.
+   * Includes the city, common abbreviations, and boroughs/areas. NEVER popularity.
+   */
+  locationTerms: string[];
 }
 
 const MARKET_CONFIG: Record<Market, MarketConfig> = {
   dc: {
     id: "dc",
     displayName: "Washington, DC",
+    shortName: "DC",
     origin: { lat: 38.9072, lng: -77.0369 },
-    searchTerms: ["Washington DC", "Washington, DC", "DC"],
+    queryCity: "Washington DC",
+    searchTerms: ["Washington DC", "DC"],
+    locationTerms: ["washington", "dc", "d.c."],
   },
   nyc: {
     id: "nyc",
     displayName: "New York City",
+    shortName: "NYC",
     origin: { lat: 40.7128, lng: -74.006 },
-    searchTerms: ["New York City", "NYC", "New York", "Manhattan", "Brooklyn", "Queens", "Bronx"],
+    queryCity: "New York",
+    searchTerms: ["New York", "NYC"],
+    locationTerms: [
+      "new york",
+      "new york city",
+      "nyc",
+      "manhattan",
+      "brooklyn",
+      "queens",
+      "the bronx",
+      "bronx",
+      "staten island",
+    ],
   },
 };
 
@@ -69,6 +100,21 @@ export function getMarketOrigin(market: unknown): { lat: number; lng: number } {
 /** Human-readable market name; defaults to DC for unknown input. */
 export function getMarketDisplayName(market: unknown): string {
   return MARKET_CONFIG[normalizeMarket(market)].displayName;
+}
+
+/** Compact market label for badges/share text ("DC"/"NYC"); defaults to DC. */
+export function getMarketShortName(market: unknown): string {
+  return MARKET_CONFIG[normalizeMarket(market)].shortName;
+}
+
+/** Primary location qualifier for discovery queries ("Washington DC"/"New York"). */
+export function getMarketQueryCity(market: unknown): string {
+  return MARKET_CONFIG[normalizeMarket(market)].queryCity;
+}
+
+/** Lowercase location terms for discovery SCORING (city + abbreviations + areas). */
+export function getMarketLocationTerms(market: unknown): string[] {
+  return MARKET_CONFIG[normalizeMarket(market)].locationTerms;
 }
 
 /** Full config for a market; defaults to DC for unknown input. */

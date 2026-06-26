@@ -79,6 +79,7 @@ export async function POST(
   const generated = generateDiscoveryQueries({
     name: restaurant.name,
     slug: restaurant.id,
+    market: restaurant.market,
     neighborhood: restaurant.neighborhood,
     address: restaurant.address,
     cuisineTags: restaurant.cuisineTags,
@@ -178,6 +179,7 @@ export async function POST(
   // Score (no engagement counts).
   const scoreInput = {
     name: restaurant.name,
+    market: restaurant.market,
     address: restaurant.address,
     neighborhood: restaurant.neighborhood,
     cuisineTags: restaurant.cuisineTags,

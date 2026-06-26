@@ -113,6 +113,7 @@ export async function POST(
 
   const scoreInput: ScoreRestaurantInput = {
     name: restaurant.name,
+    market: restaurant.market,
     address: restaurant.address,
     neighborhood: restaurant.neighborhood,
     cuisineTags: restaurant.cuisineTags,
