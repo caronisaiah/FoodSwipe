@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { isEmbedUrlAllowed } from "@/lib/video";
 import MaterialIcon from "@/components/MaterialIcon";
+import TagSuggestionsPanel from "@/components/TagSuggestionsPanel";
 
 /*
   Internal RESTAURANT PROFILE EDITOR — NOT a public feature.
@@ -795,6 +796,7 @@ function TagEditor({
   }
 
   return (
+    <>
     <section className="rounded-xl bg-surface p-3 ring-1 ring-inset ring-white/10">
       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-haze">Tags &amp; copy</p>
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
@@ -828,6 +830,19 @@ function TagEditor({
         {msg && <span className={`text-[11px] ${msg.type === "ok" ? "text-mint" : "text-chili-soft"}`}>{msg.text}</span>}
       </div>
     </section>
+    {/* B3: on-demand deterministic tag suggestions (read-only preview). */}
+    <TagSuggestionsPanel
+      endpoint={`/api/admin/restaurants/${published.slug}/suggest-tags`}
+      secret={secret}
+      present={{
+        cuisineTags: parseList(cuisine),
+        dietaryTags: parseList(dietary),
+        vibeTags: parseList(vibe),
+        bestFor: parseList(bestFor),
+        dishHighlights: parseList(dishes),
+      }}
+    />
+    </>
   );
 }
 

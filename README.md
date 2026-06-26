@@ -336,6 +336,46 @@ plus a **503** if `GOOGLE_MAPS_API_KEY` is unset and **400** on a blank `query`.
   recorded. Migration `0002_kind_ultron.sql` adds `dry_run`, `skipped_duplicates`,
   and `error` to the table (additive, with defaults).
 
+### Tag automation (B2 engine + B3 preview UI — on-demand tag suggestions)
+
+A shared, **pure, deterministic** suggestion engine that proposes review tags for
+**both** candidate and published restaurants on demand. It generalizes the
+import-time candidate tagger (which is unchanged) into
+[`lib/tagSuggester.ts`](lib/tagSuggester.ts), reusing the same controlled-vocab rule
+tables. It **writes nothing**, uses **no LLM**, does **no scraping/fetching**, and
+only suggests — humans approve. **No migration.**
+
+- **Engine** [`suggestTagsForRestaurant(ctx)`](lib/tagSuggester.ts): returns
+  per-field suggestions (`cuisineTags`/`dietaryTags`/`vibeTags`/`bestFor`/
+  `dishHighlights`/`reasonText`), each with `confidence`, a `reason`, an
+  `evidenceSource`, optional `evidenceText`, and **`reviewOnly` / `autoFillSafe`**
+  flags, plus `overallConfidence`, `reasons`, and `warnings`. Cuisine/dietary/vibe/
+  bestFor are emitted **only** from the controlled vocab ([lib/vocab.ts](lib/vocab.ts));
+  dishes are literally supported (type/name-implied or a known dish keyword in a
+  caption) — never free-form invented; **dietary requires explicit evidence**;
+  **`reasonText` is never generated** (it's shown publicly verbatim — the engine
+  only warns the admin to write it, never "best/#1/authentic" claims).
+- **Caption hints (review-only).** [`lib/db/tagSuggestionSources.ts`](lib/db/tagSuggestionSources.ts)
+  (server-only, read-only, bounded ≤20) collects EXISTING caption text — attached
+  `restaurant_videos`, curated seed videos, and proposed `video_candidates` — for a
+  restaurant. Every caption-derived hint is forced `reviewOnly: true`,
+  `autoFillSafe: false`, **low** confidence, vocab/dish-keyword-gated, and attributed
+  to the creator/caption. One caption can never silently define a restaurant.
+- **Routes (read-only, admin-secret, `no-store`, no writes):**
+  [`GET /api/admin/restaurants/candidates/[id]/suggest-tags`](app/api/admin/restaurants/candidates/[id]/suggest-tags/route.ts)
+  and [`GET /api/admin/restaurants/[slug]/suggest-tags`](app/api/admin/restaurants/[slug]/suggest-tags/route.ts).
+  They resolve the restaurant, collect existing fields/tags + caption hints, run the
+  engine, and return the result. **No apply endpoint** — the existing PATCH editors
+  remain the only write path, and nothing is auto-applied or auto-saved.
+- **B3 — admin preview UI.** A shared [`TagSuggestionsPanel`](components/TagSuggestionsPanel.tsx)
+  adds a **"Suggest tags"** button to the candidate editor ([AdminCandidates](components/AdminCandidates.tsx))
+  and the published profile editor ([AdminProfileEditor](components/AdminProfileEditor.tsx)).
+  It fetches the relevant route **only on click** (never per-row, never auto), shows
+  suggestions grouped by field with confidence, reason, evidence source/text,
+  **review-only** + **already-present** badges, and warnings. It is labeled
+  "Deterministic suggestions" (never "AI"/"auto-tag"), and **does not auto-fill,
+  mutate the draft, PATCH, or change status** — apply behavior is a later slice (B4).
+
 ### Promotion to the live feed (DB-published restaurants)
 
 Reviewed candidates can become **live feed restaurants** through a deliberate,

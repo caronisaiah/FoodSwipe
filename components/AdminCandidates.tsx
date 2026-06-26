@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { PlacePhoto } from "@/lib/types";
 import { listMarkets } from "@/lib/markets";
 import MaterialIcon from "@/components/MaterialIcon";
+import TagSuggestionsPanel from "@/components/TagSuggestionsPanel";
 
 /*
   Internal restaurant-candidate REVIEW CONSOLE — NOT a public feature.
@@ -854,6 +855,19 @@ function CandidateEditor({
           <Field label="Review notes" hint="provenance + curation notes">
             <Textarea value={reviewNotes} onChange={setReviewNotes} placeholder="Curation notes…" />
           </Field>
+
+          {/* B3: on-demand deterministic tag suggestions (read-only preview). */}
+          <TagSuggestionsPanel
+            endpoint={`/api/admin/restaurants/candidates/${candidate.id}/suggest-tags`}
+            secret={secret}
+            present={{
+              cuisineTags: parseList(cuisine),
+              dietaryTags: parseList(dietary),
+              vibeTags: parseList(vibe),
+              bestFor: parseList(bestFor),
+              dishHighlights: parseList(dishes),
+            }}
+          />
 
           {/* Quality controls */}
           <div className="flex flex-wrap items-center gap-1.5 border-t border-line pt-2.5">
