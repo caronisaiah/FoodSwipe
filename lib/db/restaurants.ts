@@ -1,9 +1,10 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { getDb, isDbConfigured } from "./index";
 import { restaurants, type RestaurantRow } from "./schema";
 import { getCandidateRestaurant, slugify } from "./candidates";
 import { RESTAURANTS, getRestaurantById } from "@/lib/seed/restaurants";
 import { filterCuisines, filterDietary, filterVibes } from "@/lib/vocab";
+import { getMarketOrigin, normalizeMarket, type Market } from "@/lib/markets";
 import type { Cuisine, Dietary, PriceLevel, Restaurant, Vibe, Video } from "@/lib/types";
 
 export { isDbConfigured };
@@ -22,15 +23,16 @@ export { isDbConfigured };
 export const PUBLISHED_STATUSES = ["published", "hidden"] as const;
 export type PublishedStatus = (typeof PUBLISHED_STATUSES)[number];
 
-// FoodSwipe's default DC location — distanceMiles is a real geographic estimate
-// from here (honest), not a fabricated metric.
-const DC_ORIGIN = { lat: 38.9072, lng: -77.0369 };
+// distanceMiles is a real geographic estimate from the row's MARKET origin
+// (honest), not a fabricated metric. The origin is resolved per-market via
+// lib/markets (getMarketOrigin), defaulting to DC — see Slice A1.
 
 /** Admin-facing normalized row (includes status + provenance + uuid). */
 export interface PublishedRestaurantAdmin {
   id: string;
   slug: string;
   name: string;
+  market: Market;
   neighborhood: string;
   address: string;
   googlePlaceId: string | null;
@@ -123,6 +125,7 @@ function rowToAdmin(row: RestaurantRow): PublishedRestaurantAdmin {
     id: row.id,
     slug: row.slug,
     name: row.name,
+    market: normalizeMarket(row.market),
     neighborhood: row.neighborhood ?? "",
     address: row.address ?? "",
     googlePlaceId: row.googlePlaceId ?? null,
@@ -147,15 +150,23 @@ function rowToAdmin(row: RestaurantRow): PublishedRestaurantAdmin {
   };
 }
 
-/** Published (visible) restaurants for the feed. Empty on no-DB/error (seed-safe). */
-export async function getPublishedRestaurants(): Promise<Restaurant[]> {
+/**
+ * Published (visible) restaurants for the feed. Empty on no-DB/error (seed-safe).
+ * An optional `market` filter narrows to one market; omitted = all markets
+ * (current behavior). A1 keeps this backward-compatible — callers that pass
+ * nothing are unchanged.
+ */
+export async function getPublishedRestaurants(market?: Market): Promise<Restaurant[]> {
   const db = getDb();
   if (!db) return [];
   try {
+    const where = market
+      ? and(eq(restaurants.status, "published"), eq(restaurants.market, market))
+      : eq(restaurants.status, "published");
     const rows = await db
       .select()
       .from(restaurants)
-      .where(eq(restaurants.status, "published"))
+      .where(where)
       .orderBy(desc(restaurants.createdAt));
     return rows.map(rowToRestaurant);
   } catch {
@@ -292,16 +303,20 @@ export async function promoteCandidateToRestaurant(candidateId: string): Promise
   const now = new Date();
   const lat = candidate.lat as number;
   const lng = candidate.lng as number;
+  // Distance from the CANDIDATE'S market origin (not always DC) — the core A1 fix.
+  const market = normalizeMarket(candidate.market);
+  const origin = getMarketOrigin(market);
   // Everything except the slug (recomputed per attempt to survive a slug race).
   const baseValues = {
     name: candidate.name,
+    market,
     neighborhood: str(candidate.neighborhood) ?? "",
     address: str(candidate.address) ?? "",
     googlePlaceId: candidate.googlePlaceId,
     websiteDomain: candidate.websiteDomain,
     lat,
     lng,
-    distanceMiles: haversineMiles(DC_ORIGIN.lat, DC_ORIGIN.lng, lat, lng),
+    distanceMiles: haversineMiles(origin.lat, origin.lng, lat, lng),
     priceLevel: clampPrice(candidate.priceLevel),
     // Copy ONLY reviewed/curated fields, re-validated against the vocab.
     cuisineTags: filterCuisines(candidate.cuisineTags),
@@ -421,7 +436,15 @@ export async function updatePublishedRestaurant(
     nextLng = b.lng;
   }
   if (nextLat !== undefined && nextLng !== undefined) {
-    set.distanceMiles = haversineMiles(DC_ORIGIN.lat, DC_ORIGIN.lng, nextLat, nextLng);
+    // Recompute from the row's OWN market origin (not always DC). market is set at
+    // promotion and not editable here, so a quick lookup keeps distance honest.
+    const cur = await db
+      .select({ market: restaurants.market })
+      .from(restaurants)
+      .where(eq(restaurants.id, id))
+      .limit(1);
+    const origin = getMarketOrigin(cur[0]?.market);
+    set.distanceMiles = haversineMiles(origin.lat, origin.lng, nextLat, nextLng);
   }
   if ("priceLevel" in b && typeof b.priceLevel === "number") set.priceLevel = clampPrice(b.priceLevel);
   if ("dietaryTags" in b) set.dietaryTags = filterDietary(b.dietaryTags);
@@ -449,8 +472,17 @@ export async function getAppRestaurantById(id: string): Promise<Restaurant | nul
   return getPublishedRestaurantBySlug(id);
 }
 
-/** Merged feed dataset: code-managed seed + published DB restaurants. */
-export async function getAllRestaurants(): Promise<Restaurant[]> {
-  const published = await getPublishedRestaurants();
-  return [...RESTAURANTS, ...published];
+/**
+ * Merged feed dataset: code-managed seed + published DB restaurants.
+ *
+ * Backward-compatible by default (no `market` → seed + all published). The seed
+ * is the DC market, so an explicit non-DC filter returns ONLY that market's
+ * published rows (seed excluded) — honest, possibly empty if none exist yet. A
+ * "dc" filter still includes the seed. Public feed filtering/selector is A2;
+ * this just makes `?market=` usable without changing default behavior.
+ */
+export async function getAllRestaurants(market?: Market): Promise<Restaurant[]> {
+  const published = await getPublishedRestaurants(market);
+  const includeSeed = !market || market === "dc";
+  return includeSeed ? [...RESTAURANTS, ...published] : published;
 }

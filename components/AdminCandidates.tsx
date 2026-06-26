@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { PlacePhoto } from "@/lib/types";
+import { listMarkets } from "@/lib/markets";
 import MaterialIcon from "@/components/MaterialIcon";
 
 /*
@@ -192,6 +193,7 @@ export default function AdminCandidates() {
   const [query, setQuery] = useState("");
   const [maxResults, setMaxResults] = useState("10");
   const [dryRun, setDryRun] = useState(true);
+  const [market, setMarket] = useState("dc");
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState<Msg>(null);
   const [preview, setPreview] = useState<PreviewRow[] | null>(null);
@@ -258,7 +260,7 @@ export default function AdminCandidates() {
       const res = await fetch("/api/admin/restaurants/candidates/import/google", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-foodswipe-admin-secret": secret },
-        body: JSON.stringify({ query: query.trim(), maxResults: max, dryRun: dry }),
+        body: JSON.stringify({ query: query.trim(), maxResults: max, dryRun: dry, market }),
       });
       const data = (await res.json()) as {
         dryRun?: boolean;
@@ -374,6 +376,19 @@ export default function AdminCandidates() {
           >
             <Field label="Search query" hint="cuisine + neighborhood">
               <TextInput value={query} onChange={setQuery} placeholder="brunch in Shaw, Washington DC" />
+            </Field>
+            <Field label="Market" hint="where these restaurants are">
+              <select
+                value={market}
+                onChange={(e) => setMarket(e.target.value)}
+                className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 focus:ring-saffron/60"
+              >
+                {listMarkets().map((mkt) => (
+                  <option key={mkt.id} value={mkt.id}>
+                    {mkt.displayName}
+                  </option>
+                ))}
+              </select>
             </Field>
             <div className="grid grid-cols-2 items-end gap-3">
               <Field label="Max results" hint="1–20">

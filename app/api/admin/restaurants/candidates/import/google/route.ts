@@ -14,6 +14,7 @@ import {
 import { scoreReviewLikelihood, type ReviewLikelihood } from "@/lib/reviewLikelihood";
 import { suggestCandidateTags } from "@/lib/candidateTagger";
 import { RESTAURANTS } from "@/lib/seed/restaurants";
+import { DEFAULT_MARKET, isAllowedMarket, type Market } from "@/lib/markets";
 
 /*
   POST /api/admin/restaurants/candidates/import/google  (INTERNAL, admin-secret)
@@ -97,6 +98,7 @@ function toCandidateInput(
   fetchedAt: Date,
   expiresAt: Date,
   likelihood: ReviewLikelihood,
+  market: Market,
 ) {
   const warning = seedWarning(r);
   const priceLevel = mapPrice(r.googlePriceLevel);
@@ -136,6 +138,7 @@ function toCandidateInput(
     slug,
     status: "needs_review",
     source: "google_places",
+    market,
     googlePlaceId: r.placeId,
     websiteDomain: hostFrom(r.websiteUri),
     address: r.formattedAddress,
@@ -231,6 +234,17 @@ export async function POST(req: Request): Promise<Response> {
   // Safe default: only an explicit `false` performs writes.
   const dryRun = b.dryRun !== false;
 
+  // Optional market (allow-list). Omitted → DC (DC-first, unchanged behavior);
+  // present-but-invalid is rejected rather than silently coerced.
+  let market: Market = DEFAULT_MARKET;
+  if (b.market !== undefined && b.market !== null) {
+    const m = typeof b.market === "string" ? b.market.trim().toLowerCase() : "";
+    if (!isAllowedMarket(m)) {
+      return Response.json({ error: "Invalid market (allowed: dc, nyc)." }, { status: 400 });
+    }
+    market = m;
+  }
+
   const search = await searchPlacesText(query, maxResults);
   if (search.status !== "ok") {
     if (!dryRun) {
@@ -277,7 +291,7 @@ export async function POST(req: Request): Promise<Response> {
     const candidates = ranked.map(({ r, likelihood }) => {
       const dupStatus = r.placeId ? (existingByPlaceId.get(r.placeId) ?? null) : null;
       return {
-        ...toCandidateInput(r, query, slugify(r.displayName ?? ""), fetchedAt, expiresAt, likelihood),
+        ...toCandidateInput(r, query, slugify(r.displayName ?? ""), fetchedAt, expiresAt, likelihood, market),
         isDuplicate: dupStatus !== null,
         duplicateOfStatus: dupStatus,
       };
@@ -338,7 +352,7 @@ export async function POST(req: Request): Promise<Response> {
 
       const slug = uniqueSlug(slugify(r.displayName ?? ""), usedSlugs);
       usedSlugs.add(slug);
-      const input = toCandidateInput(r, query, slug, fetchedAt, expiresAt, likelihood);
+      const input = toCandidateInput(r, query, slug, fetchedAt, expiresAt, likelihood, market);
 
       // (c) Insert. The partial unique index on google_place_id (migration 0006)
       // makes a concurrent duplicate insert THROW, closing the TOCTOU window

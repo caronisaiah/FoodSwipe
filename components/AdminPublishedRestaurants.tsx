@@ -31,6 +31,7 @@ interface Published {
   id: string;
   slug: string;
   name: string;
+  market: string;
   neighborhood: string;
   address: string;
   googlePlaceId: string | null;
@@ -227,6 +228,9 @@ function PublishedRow({
             {row.neighborhood ? `${row.neighborhood} · ` : ""}/{row.slug} · {priceLabel(row.priceLevel)}
           </p>
         </div>
+        <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-tan ring-1 ring-inset ring-white/15">
+          {row.market}
+        </span>
         <span
           className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${
             row.status === "published"

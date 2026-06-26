@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   doublePrecision,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -82,6 +83,9 @@ export const candidateRestaurants = pgTable("candidate_restaurants", {
   status: text("status").notNull().default("candidate"),
   // "manual" | "google_places"
   source: text("source").notNull().default("manual"),
+  // Market id (multi-market A1) — allow-list validated in lib/markets.ts; carried
+  // into restaurants.market on promotion. Backfilled "dc" for existing rows.
+  market: text("market").notNull().default("dc"),
   googlePlaceId: text("google_place_id"),
   websiteDomain: text("website_domain"),
   address: text("address"),
@@ -130,6 +134,8 @@ export const candidateRestaurants = pgTable("candidate_restaurants", {
   uniqueIndex("candidate_restaurants_google_place_id_key")
     .on(t.googlePlaceId)
     .where(sql`${t.googlePlaceId} is not null`),
+  // Supports admin review filtered by status + market, newest first (A1+).
+  index("candidate_restaurants_status_market_created_idx").on(t.status, t.market, t.createdAt),
 ]);
 
 export type CandidateRestaurantRow = typeof candidateRestaurants.$inferSelect;
@@ -198,6 +204,9 @@ export const restaurants = pgTable("restaurants", {
   // published set; chosen at promotion to also avoid colliding with seed ids.
   slug: text("slug").notNull(),
   name: text("name").notNull(),
+  // Market id (multi-market A1) — set from the source candidate at promotion;
+  // selects the origin used for distanceMiles. Backfilled "dc" for existing rows.
+  market: text("market").notNull().default("dc"),
   neighborhood: text("neighborhood").notNull().default(""),
   address: text("address").notNull().default(""),
   googlePlaceId: text("google_place_id"),
@@ -236,6 +245,10 @@ export const restaurants = pgTable("restaurants", {
   uniqueIndex("restaurants_google_place_id_key")
     .on(t.googlePlaceId)
     .where(sql`${t.googlePlaceId} is not null`),
+  // Supports the feed/admin query: published rows for a market, newest first (A1+).
+  // NOTE: slug stays GLOBALLY unique (restaurants_slug_key above) — cross-market
+  // duplicate slugs are deferred to A2/A3 until all slug-based lookups are market-aware.
+  index("restaurants_status_market_created_idx").on(t.status, t.market, t.createdAt),
 ]);
 
 export type RestaurantRow = typeof restaurants.$inferSelect;

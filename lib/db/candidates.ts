@@ -1,4 +1,5 @@
 import { desc, eq } from "drizzle-orm";
+import { normalizeMarket, type Market } from "@/lib/markets";
 import { getDb, isDbConfigured } from "./index";
 import {
   candidateRestaurants,
@@ -39,6 +40,7 @@ export interface CandidateRestaurant {
   name: string;
   status: CandidateStatus;
   source: CandidateSource;
+  market: Market;
   googlePlaceId: string | null;
   websiteDomain: string | null;
   address: string | null;
@@ -134,6 +136,7 @@ function rowToCandidate(row: CandidateRestaurantRow): CandidateRestaurant {
     name: row.name,
     status: inSet(CANDIDATE_STATUSES, row.status) ? row.status : "needs_review",
     source: inSet(CANDIDATE_SOURCES, row.source) ? row.source : "manual",
+    market: normalizeMarket(row.market),
     googlePlaceId: row.googlePlaceId ?? null,
     websiteDomain: row.websiteDomain ?? null,
     address: row.address ?? null,
@@ -260,6 +263,8 @@ export async function insertCandidateRestaurant(
       name,
       status: inSet(CANDIDATE_STATUSES, b.status) ? b.status : "candidate",
       source: inSet(CANDIDATE_SOURCES, b.source) ? b.source : "manual",
+      // Allow-list validated; unknown/omitted → DC default (DC-first).
+      market: normalizeMarket(b.market),
       googlePlaceId: optStr(b.googlePlaceId),
       websiteDomain: optStr(b.websiteDomain),
       address: optStr(b.address),

@@ -353,9 +353,9 @@ seed **plus** DB-published restaurants.
   non-empty in-vocab `cuisineTags`, a `vibeTags`-or-`bestFor`, and `reasonText`
   (else `422` with `missingFields`). It copies only reviewed/curated fields
   (re-validated against the controlled vocab), computes a real `distanceMiles`
-  from a DC origin, and is idempotent — a second promote returns the existing
-  restaurant (`409`), never a duplicate. It never publishes videos or touches
-  Google photo data.
+  from the candidate's **market origin** (see [Markets](#markets-multi-market-a1)),
+  and is idempotent — a second promote returns the existing restaurant (`409`),
+  never a duplicate. It never publishes videos or touches Google photo data.
 - **No fabricated social proof.** Published restaurants get **neutral-zero**
   `trendScore`/`vibeScore`/`videoCount`/`recentVideoCount`/`saveCount` —
   documented internal placeholders, not real metrics. So they never earn a
@@ -380,6 +380,50 @@ seed **plus** DB-published restaurants.
   `sourceCandidateId`, `slug`, or the metric fields. The candidates console gains
   a **Promote to feed** action on approved candidates (showing `missingFields` on
   failure and the resulting `/restaurants/[slug]` link on success).
+
+### Markets (multi-market — A1)
+
+FoodSwipe is DC-first but is being prepared for additional markets (e.g. NYC).
+**Slice A1 is the write-path foundation only** — it makes new data carry a market
+and compute the right distance, without changing the public app's DC-first
+behavior.
+
+- **Config.** [`lib/markets.ts`](lib/markets.ts) is the allow-list source of truth:
+  markets `dc` and `nyc`, each with a display name and a geographic **origin**
+  (DC `38.9072,-77.0369`; NYC `40.7128,-74.0060`). Helpers `isAllowedMarket`,
+  `normalizeMarket` (coerce untrusted input → default `dc`), `getMarketOrigin`,
+  `getMarketDisplayName`, `listMarkets`. The default everywhere is **`dc`**.
+- **Schema.** Migration `0009_tidy_speed.sql` adds a `market text NOT NULL DEFAULT
+  'dc'` column to `candidate_restaurants` and `restaurants` (the `DEFAULT` backfills
+  all existing rows to `dc`), plus `(status, market, created_at)` indexes for
+  market-scoped admin/feed queries. `video_candidates` and `restaurant_videos` do
+  **not** get a market column in A1 (see below).
+- **Import.** [`…/candidates/import/google`](app/api/admin/restaurants/candidates/import/google/route.ts)
+  accepts an optional `market` (default `dc`; an invalid value is **rejected**,
+  not coerced) and stores it on the imported candidate. The candidates console has
+  a **Market** dropdown for the import. Dry-run behavior is unchanged.
+- **Promotion → distance.** Promotion copies `candidate.market` into
+  `restaurants.market` and computes `distanceMiles` from **that market's origin**
+  (not a hardcoded DC origin). Editing a published row's lat/lng recomputes from
+  the row's own market.
+- **Reads.** `/api/restaurants` gains an **optional, backward-compatible**
+  `?market=dc|nyc`: omitted → today's behavior (seed + all published); an explicit
+  market returns only that market's rows (the seed is the `dc` market), and is
+  honest about an empty result (no seed fallback). The public app remains
+  **DC-first** — there is no market selector and the feed is not filtered by
+  market yet.
+- **Deferred (A2/A3):** public market selector + feed filtering, market-aware
+  discovery query generation/scoring, UI market labels, and any change to slug
+  uniqueness. **Restaurant slugs stay globally unique** in A1, so every existing
+  slug-based lookup (`/restaurants/[id]`, the videos/photo routes, `restaurant_videos`,
+  saved/swipe storage, discovery candidate creation) stays unambiguous; cross-market
+  duplicate slugs are deferred until those lookups are made market-aware.
+- **Why no market on `video_candidates`/`restaurant_videos` yet.** Videos are keyed
+  by the **globally-unique** restaurant id/slug, so a video row resolves
+  unambiguously and inherits its restaurant's market transitively — no own column
+  needed. `video_candidates` has no distance and discovery isn't market-aware until
+  A2, so its market column lands in A2 alongside the code that populates and filters
+  it (a trivial additive migration), rather than shipping an unpopulated column now.
 
 ### Social video intake (Phase 1)
 
