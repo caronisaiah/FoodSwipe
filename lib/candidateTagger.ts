@@ -47,14 +47,16 @@ export interface CandidateSuggestion {
 const REASON_TEXT =
   "Imported candidate; suggested tags are based on Google type/name/query and need human review.";
 
-interface TypeRule {
+export interface TypeRule {
   cuisines: Cuisine[];
   /** Dish only when the type unambiguously implies one. */
   dish?: string;
 }
 
 // Google Places (New) type → controlled-vocab cuisines (conservative).
-const TYPE_RULES: Record<string, TypeRule> = {
+// Exported so the shared engine (lib/tagSuggester.ts) reuses the SAME rule data
+// without changing this module's behavior.
+export const TYPE_RULES: Record<string, TypeRule> = {
   mexican_restaurant: { cuisines: ["mexican", "tacos", "street food"] },
   taco_restaurant: { cuisines: ["mexican", "tacos", "street food"], dish: "Tacos" },
   ramen_restaurant: { cuisines: ["ramen", "japanese", "noodles"], dish: "Ramen" },
@@ -83,7 +85,7 @@ const TYPE_RULES: Record<string, TypeRule> = {
   bagel_shop: { cuisines: ["bagels"] },
 };
 
-interface NameRule {
+export interface NameRule {
   kw: string[];
   cuisines: Cuisine[];
   dish?: string;
@@ -91,7 +93,7 @@ interface NameRule {
 
 // Name keywords → cuisines (used when the type is generic/absent, or to reinforce
 // and to attach a directly-implied dish like a taqueria's "Tacos").
-const NAME_RULES: NameRule[] = [
+export const NAME_RULES: NameRule[] = [
   { kw: ["taqueria", "taquería", "taco"], cuisines: ["mexican", "tacos", "street food"], dish: "Tacos" },
   { kw: ["ramen"], cuisines: ["ramen", "japanese", "noodles"], dish: "Ramen" },
   { kw: ["sushi"], cuisines: ["sushi", "japanese"] },
@@ -111,7 +113,7 @@ const NAME_RULES: NameRule[] = [
 ];
 
 // Dietary is added ONLY when explicit. Each entry: keyword → dietary tag.
-const DIETARY_RULES: { kw: string[]; tag: Dietary }[] = [
+export const DIETARY_RULES: { kw: string[]; tag: Dietary }[] = [
   { kw: ["vegan"], tag: "vegan" },
   { kw: ["vegetarian", "veggie"], tag: "vegetarian" },
   { kw: ["halal"], tag: "halal" },
@@ -120,7 +122,7 @@ const DIETARY_RULES: { kw: string[]; tag: Dietary }[] = [
 ];
 
 // Quick-service signals (paired with price 1–2) → "quick bite" / "casual".
-const QUICK_TYPES = new Set([
+export const QUICK_TYPES = new Set([
   "fast_food_restaurant",
   "cafe",
   "coffee_shop",
@@ -136,7 +138,7 @@ const QUICK_TYPES = new Set([
 ]);
 
 // Sit-down dinner signals (paired with price 3–4) → "date night" / "group dinner".
-const DINNER_TYPES = new Set([
+export const DINNER_TYPES = new Set([
   "italian_restaurant",
   "french_restaurant",
   "steak_house",
@@ -162,7 +164,7 @@ function escapeRe(s: string): string {
  * Boundaries are any non-[a-z0-9] char (so "vegan_restaurant" still matches
  * "vegan", and multi-word phrases like "ice cream"/"no pork" still match).
  */
-function matchesAny(haystack: string, needles: string[]): string | null {
+export function matchesAny(haystack: string, needles: string[]): string | null {
   for (const n of needles) {
     if (!n) continue;
     const re = new RegExp(`(?:^|[^a-z0-9])${escapeRe(n)}(?:[^a-z0-9]|$)`, "i");
