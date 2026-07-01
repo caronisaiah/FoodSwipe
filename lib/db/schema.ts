@@ -316,3 +316,43 @@ export const videoCandidates = pgTable("video_candidates", {
 
 export type VideoCandidateRow = typeof videoCandidates.$inferSelect;
 export type NewVideoCandidateRow = typeof videoCandidates.$inferInsert;
+
+/**
+ * Tag Automation B4 — bounded OFFICIAL-WEBSITE evidence for tag suggestions.
+ *
+ * Stores CLEANED TEXT (never raw HTML, never media) fetched on-demand by an admin
+ * from a restaurant's OWN official website/domain — used only as a private,
+ * review-first evidence source for tag suggestions. NOT public, never shown on a
+ * profile. Collection is bounded (same-domain only, <=3 pages, short timeouts,
+ * capped text); see lib/websiteEvidence.ts. No social/review/search content here.
+ */
+export const restaurantEvidenceDocuments = pgTable("restaurant_evidence_documents", {
+  id: text("id").primaryKey(),
+  // "candidate" | "restaurant"
+  subjectType: text("subject_type").notNull(),
+  candidateRestaurantId: text("candidate_restaurant_id"),
+  restaurantSlug: text("restaurant_slug"),
+  market: text("market"),
+  sourceUrl: text("source_url").notNull(),
+  sourceDomain: text("source_domain"),
+  // "homepage" | "menu" | "about" | "events" | "unknown"
+  sourceType: text("source_type").notNull(),
+  title: text("title"),
+  // Cleaned, readable text only (scripts/styles/boilerplate stripped) — bounded.
+  cleanedText: text("cleaned_text").notNull(),
+  extractedSnippets: jsonb("extracted_snippets"),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  // "ok" | "empty" | "error" | "blocked"
+  fetchStatus: text("fetch_status").notNull(),
+  error: text("error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  // Read evidence back by subject (candidate id or published/seed slug).
+  index("restaurant_evidence_candidate_idx").on(t.candidateRestaurantId),
+  index("restaurant_evidence_slug_idx").on(t.restaurantSlug),
+]);
+
+export type RestaurantEvidenceRow = typeof restaurantEvidenceDocuments.$inferSelect;
+export type NewRestaurantEvidenceRow = typeof restaurantEvidenceDocuments.$inferInsert;

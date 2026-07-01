@@ -71,6 +71,13 @@
       "when": 1782479602616,
       "tag": "0009_tidy_speed",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1782504073352,
+      "tag": "0010_past_major_mapleleaf",
+      "breakpoints": true
     }
   ]
 }
