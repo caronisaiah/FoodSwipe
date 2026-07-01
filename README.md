@@ -368,13 +368,45 @@ only suggests — humans approve. **No migration.**
   engine, and return the result. **No apply endpoint** — the existing PATCH editors
   remain the only write path, and nothing is auto-applied or auto-saved.
 - **B3 — admin preview UI.** A shared [`TagSuggestionsPanel`](components/TagSuggestionsPanel.tsx)
-  adds a **"Suggest tags"** button to the candidate editor ([AdminCandidates](components/AdminCandidates.tsx))
-  and the published profile editor ([AdminProfileEditor](components/AdminProfileEditor.tsx)).
+  adds an on-click deterministic suggestion action to the candidate editor
+  ([AdminCandidates](components/AdminCandidates.tsx)) and the published profile
+  editor ([AdminProfileEditor](components/AdminProfileEditor.tsx)).
   It fetches the relevant route **only on click** (never per-row, never auto), shows
   suggestions grouped by field with confidence, reason, evidence source/text,
-  **review-only** + **already-present** badges, and warnings. It is labeled
-  "Deterministic suggestions" (never "AI"/"auto-tag"), and **does not auto-fill,
-  mutate the draft, PATCH, or change status** — apply behavior is a later slice (B4).
+  **review-only** + **already-present** badges, and warnings. It **does not
+  auto-fill, mutate the draft, PATCH, or change status**. B4 extends this same
+  panel with website evidence collection and a clearly-labeled AI-assisted mode.
+- **B4 — official-website evidence + AI-assisted suggestions (review-only).** An
+  admin can collect bounded evidence from a restaurant's **own official website**
+  and request **AI-assisted** suggestions grounded in it. Still suggestions only —
+  nothing is applied.
+  - **Evidence collector** [`lib/websiteEvidence.ts`](lib/websiteEvidence.ts):
+    SAME-DOMAIN only (the stored `websiteDomain`, or an admin-supplied same-domain
+    URL), **https-only**, social/review/search domains blocked, **SSRF-reduced**
+    (IP-literal + private/reserved IPs rejected via DNS; manual, re-validated
+    redirects; residual DNS rebinding risk documented because Node fetch is not
+    IP-pinned here), **≤3 pages**, short per-page timeout, capped body + cleaned text.
+    No JS/browser, no login/cookies, no media/PDF, no crawler, no scheduled job.
+    Stores **cleaned text only** in `restaurant_evidence_documents` (migration
+    `0010`, additive) — private review evidence, never shown publicly.
+  - **Collect routes (write only the evidence table):**
+    [`POST …/candidates/[id]/collect-website-evidence`](app/api/admin/restaurants/candidates/[id]/collect-website-evidence/route.ts)
+    and [`POST …/[slug]/collect-website-evidence`](app/api/admin/restaurants/[slug]/collect-website-evidence/route.ts).
+  - **AI mode:** the suggest-tags routes accept `?mode=ai`. The AI adapter
+    ([`lib/aiClient.ts`](lib/aiClient.ts)) calls Anthropic **server-side** behind
+    `ANTHROPIC_API_KEY` (clean `503` if unset; never called from the client). The
+    model returns strict JSON, then [`lib/aiTagSuggester.ts`](lib/aiTagSuggester.ts)
+    **validates hard**: cuisine/dietary/vibe/bestFor must be in-vocab; every
+    suggestion's cited `evidenceText` must match a real input substring
+    case-insensitively (the source is **derived**, not trusted from the model); dishes/dietary
+    must literally appear; `reasonText` is dropped if it contains banned hype claims
+    (best/top/most-popular/authentic/viral/trending/…); **all AI suggestions are
+    review-only and never auto-fillable**.
+  - **UI:** `TagSuggestionsPanel` adds "Collect website evidence" + "AI-assisted"
+    actions, shows evidence sources used + freshness, and marks AI output
+    "AI-assisted · review required". Default remains deterministic.
+- **Future (not built):** approved tags + their evidence can later seed training
+  examples — there is **no** training/eval/fine-tune/crawler infrastructure yet.
 
 ### Promotion to the live feed (DB-published restaurants)
 
@@ -672,6 +704,8 @@ YOUTUBE_API_KEY="..."                                              # optional �
 GOOGLE_MAPS_API_KEY="..."                                          # optional — Google Place Photos on profiles
 LOGODEV_TOKEN="pk_..."                                             # optional — brand-logo hero fallback (publishable token)
 BRAVE_SEARCH_API_KEY="..."                                         # optional — admin "Run dry search" video discovery (server-only)
+ANTHROPIC_API_KEY="sk-ant-..."                                     # optional — admin AI-assisted tag suggestions (server-only)
+FOODSWIPE_AI_MODEL="claude-sonnet-4-6"                              # optional — overrides the default AI model
 ```
 
 `DATABASE_URL` and `FOODSWIPE_ADMIN_SECRET` enable shared persistence (the app
@@ -707,6 +741,16 @@ Brave via the `X-Subscription-Token` header, never prefixed with `NEXT_PUBLIC_`,
 never exposed to the client, and never logged. Without it the discovery route
 returns a clean `503` and the rest of the app is unaffected. The dry-run search
 reads only — it creates no candidates and attaches nothing.
+
+`ANTHROPIC_API_KEY` is optional: it powers the admin **AI-assisted tag suggestions**
+(see [Tag automation](#tag-automation-b2-engine--b3-preview-ui--on-demand-tag-suggestions)).
+It is **server-only** — read just inside `lib/aiClient.ts`, sent to the Anthropic
+API via the `x-api-key` header, never prefixed with `NEXT_PUBLIC_`, never exposed to
+the client (the AI is never called from the browser), and never logged. Without it
+the AI suggestion mode returns a clean `503` and deterministic suggestions still
+work. `FOODSWIPE_AI_MODEL` optionally overrides the default model
+(`claude-sonnet-4-6`). AI output is validated server-side against the controlled
+vocab + evidence before it is returned, and is review-only (never auto-applied).
 
 Create the table once. The simplest path:
 

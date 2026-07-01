@@ -656,10 +656,10 @@ function CandidateDetail({
 }) {
   return (
     <div className="border-t border-line bg-ink-2/40 p-3">
-      <div className="grid gap-3 sm:grid-cols-[180px_1fr]">
+      <div className="grid min-w-0 gap-3 sm:grid-cols-[180px_minmax(0,1fr)]">
         {/* Left: photo (lazy — loads on expand) + provenance. Stable across saves
             (NOT keyed by updatedAt) so a save never refetches the Google photo. */}
-        <div>
+        <div className="min-w-0">
           <CandidatePhoto candidateId={candidate.id} secret={secret} name={candidate.name} />
           <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px]">
             <Meta label="Source" value={LABEL[candidate.source] ?? candidate.source} />
@@ -801,7 +801,7 @@ function CandidateEditor({
   }
 
   return (
-    <div className="space-y-2.5">
+    <div className="min-w-0 max-w-full space-y-2.5">
           {candidate.suggestionConfidence && (
             <div className="rounded-lg bg-ink-2 p-2 ring-1 ring-inset ring-white/5">
               <p className="flex items-center gap-1.5 text-[11px] font-semibold text-cream">
@@ -856,9 +856,11 @@ function CandidateEditor({
             <Textarea value={reviewNotes} onChange={setReviewNotes} placeholder="Curation notes…" />
           </Field>
 
-          {/* B3: on-demand deterministic tag suggestions (read-only preview). */}
+          {/* B3 + B4: on-demand tag suggestions (read-only preview) + website evidence. */}
           <TagSuggestionsPanel
-            endpoint={`/api/admin/restaurants/candidates/${candidate.id}/suggest-tags`}
+            suggestEndpoint={`/api/admin/restaurants/candidates/${candidate.id}/suggest-tags`}
+            collectEndpoint={`/api/admin/restaurants/candidates/${candidate.id}/collect-website-evidence`}
+            websiteDomain={candidate.websiteDomain}
             secret={secret}
             present={{
               cuisineTags: parseList(cuisine),

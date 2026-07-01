@@ -50,7 +50,13 @@ export type TagSuggestionEvidenceSource =
   | "video_candidate_caption"
   | "attached_video_caption"
   | "admin_text"
-  | "neutral_template";
+  | "neutral_template"
+  // Official-website evidence (B4) — the doc's section type.
+  | "website_homepage"
+  | "website_menu"
+  | "website_about"
+  | "website_events"
+  | "website_unknown";
 
 export interface TagSuggestion {
   field: TagSuggestionField;

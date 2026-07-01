@@ -44,6 +44,7 @@ interface PublishedAdmin {
   id: string; // uuid (PATCH addressing)
   slug: string;
   status: string;
+  websiteDomain: string | null;
   cuisineTags: string[];
   dietaryTags: string[];
   vibeTags: string[];
@@ -329,7 +330,7 @@ function ProfilePanel({
   const editable = published !== null;
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 max-w-full space-y-4">
       <div className="flex items-center gap-2 rounded-xl bg-surface p-3 ring-1 ring-inset ring-white/10">
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-cream">{restaurant.name}</p>
@@ -830,9 +831,11 @@ function TagEditor({
         {msg && <span className={`text-[11px] ${msg.type === "ok" ? "text-mint" : "text-chili-soft"}`}>{msg.text}</span>}
       </div>
     </section>
-    {/* B3: on-demand deterministic tag suggestions (read-only preview). */}
+    {/* B3 + B4: on-demand tag suggestions (read-only preview) + website evidence. */}
     <TagSuggestionsPanel
-      endpoint={`/api/admin/restaurants/${published.slug}/suggest-tags`}
+      suggestEndpoint={`/api/admin/restaurants/${published.slug}/suggest-tags`}
+      collectEndpoint={`/api/admin/restaurants/${published.slug}/collect-website-evidence`}
+      websiteDomain={published.websiteDomain}
       secret={secret}
       present={{
         cuisineTags: parseList(cuisine),
