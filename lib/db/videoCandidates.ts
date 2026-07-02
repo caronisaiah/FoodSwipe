@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
 import type { LegalDisplayStatus, MatchConfidence, Platform, Video } from "@/lib/types";
 import { LEGAL_STATUSES, normalizeVideo } from "@/lib/video";
 import { getDb, isDbConfigured } from "./index";
@@ -51,6 +51,11 @@ export interface VideoCandidate {
   attachedVideoId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface CandidateVideoMeta {
+  total: number;
+  approvedOrAttached: number;
 }
 
 // ---- coercion (untrusted body + untrusted DB rows) ----
@@ -245,6 +250,63 @@ export async function listVideoCandidates(filters: ListVideoCandidateFilters = {
     .where(conds.length ? and(...conds) : undefined)
     .orderBy(desc(videoCandidates.createdAt));
   return rows.map(rowToCandidate);
+}
+
+/** Batch review-video signal for candidate readiness; read-only, no resolving/attach. */
+export async function getCandidateVideoMetaMap(
+  candidates: { id: string; slug?: string | null }[],
+): Promise<Record<string, CandidateVideoMeta>> {
+  const db = getDb();
+  if (!db || candidates.length === 0) return {};
+  const out: Record<string, CandidateVideoMeta> = {};
+  const ids = candidates.map((c) => c.id);
+  const slugToIds = new Map<string, string[]>();
+  for (const candidate of candidates) {
+    out[candidate.id] = { total: 0, approvedOrAttached: 0 };
+    if (candidate.slug) {
+      const list = slugToIds.get(candidate.slug) ?? [];
+      list.push(candidate.id);
+      slugToIds.set(candidate.slug, list);
+    }
+  }
+  const slugs = Array.from(slugToIds.keys());
+  const conds = [];
+  if (ids.length > 0) conds.push(inArray(videoCandidates.candidateRestaurantId, ids));
+  if (slugs.length > 0) conds.push(inArray(videoCandidates.restaurantSlug, slugs));
+  if (conds.length === 0) return out;
+
+  try {
+    const rows = await db
+      .select({
+        id: videoCandidates.id,
+        status: videoCandidates.status,
+        candidateRestaurantId: videoCandidates.candidateRestaurantId,
+        restaurantSlug: videoCandidates.restaurantSlug,
+      })
+      .from(videoCandidates)
+      .where(conds.length === 1 ? conds[0] : or(...conds));
+
+    const seen = new Set<string>();
+    for (const row of rows) {
+      const matchedIds = new Set<string>();
+      if (row.candidateRestaurantId && out[row.candidateRestaurantId]) matchedIds.add(row.candidateRestaurantId);
+      if (row.restaurantSlug) {
+        for (const id of slugToIds.get(row.restaurantSlug) ?? []) matchedIds.add(id);
+      }
+      for (const candidateId of matchedIds) {
+        const key = `${candidateId}:${row.id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out[candidateId].total += 1;
+        if (row.status === "approved" || row.status === "attached") {
+          out[candidateId].approvedOrAttached += 1;
+        }
+      }
+    }
+    return out;
+  } catch {
+    return out;
+  }
 }
 
 export async function getVideoCandidate(id: string): Promise<VideoCandidate | null> {

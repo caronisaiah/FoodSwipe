@@ -7,6 +7,10 @@ import {
   listCandidateRestaurants,
   type CandidateStatus,
 } from "@/lib/db/candidates";
+import { getCandidateEvidenceMetaMap } from "@/lib/db/restaurantEvidence";
+import { getCandidatePromotionConflictMap } from "@/lib/db/restaurants";
+import { getCandidateVideoMetaMap } from "@/lib/db/videoCandidates";
+import { computeCandidateReadiness } from "@/lib/candidateReadiness";
 
 /*
   Restaurant candidate ingestion (Phase 1) — INTERNAL, admin-secret protected.
@@ -52,7 +56,30 @@ export async function GET(req: Request): Promise<Response> {
 
   try {
     const candidates = await listCandidateRestaurants(status);
-    return Response.json({ candidates });
+    const [evidenceMeta, videoMeta, promotionConflicts] = await Promise.all([
+      getCandidateEvidenceMetaMap(candidates.map((c) => c.id)),
+      getCandidateVideoMetaMap(candidates.map((c) => ({ id: c.id, slug: c.slug }))),
+      getCandidatePromotionConflictMap(candidates.map((c) => ({ id: c.id, googlePlaceId: c.googlePlaceId }))),
+    ]);
+    const enriched = candidates.map((candidate) => {
+      const websiteEvidenceMeta = evidenceMeta[candidate.id] ?? { total: 0, okDocs: 0, latestFetchedAt: null, stale: false };
+      const video = videoMeta[candidate.id] ?? { total: 0, approvedOrAttached: 0 };
+      const promotionConflict = promotionConflicts[candidate.id] ?? null;
+      return {
+        ...candidate,
+        websiteEvidenceMeta,
+        videoMeta: video,
+        promotionConflict,
+        readiness: computeCandidateReadiness({
+          ...candidate,
+          websiteEvidenceOkDocs: websiteEvidenceMeta.okDocs,
+          videoCandidateCount: video.total,
+          approvedOrAttachedVideoCount: video.approvedOrAttached,
+          promotionConflict: promotionConflict?.conflict ?? null,
+        }),
+      };
+    });
+    return Response.json({ candidates: enriched });
   } catch {
     return Response.json({ error: "Failed to list candidates." }, { status: 500 });
   }

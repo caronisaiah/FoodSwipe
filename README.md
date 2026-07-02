@@ -330,6 +330,14 @@ plus a **503** if `GOOGLE_MAPS_API_KEY` is unset and **400** on a blank `query`.
   controlled-vocab tags (with auto-vs-edited markers), `reasonText`, and notes, and
   to Save / Mark needs-review / Approve / Reject / Reset-to-suggestions. **Approve
   marks a candidate reviewed only — it never publishes to `/feed`.**
+- **Candidate readiness dashboard (B6).** The same console adds a compact,
+  read-only readiness summary and filters for ready-to-promote, missing price,
+  missing required tags, missing website evidence, needs media/video, status,
+  source, and market. Readiness is computed by [`lib/candidateReadiness.ts`](lib/candidateReadiness.ts),
+  sharing the required-field helper used by promotion, and the list API enriches
+  candidates with batch-read website-evidence/video-lead summaries plus known
+  publish conflicts. It does **not** collect evidence, resolve/attach videos,
+  bulk-promote, weaken validation, or change public feed behavior.
 - **`ingestion_jobs`** records each **real** import run (`source: google_places`,
   `query`, `dryRun: false`, `status: success|failed`, `candidatesCreated`,
   `skippedDuplicates`, `error`) for audit. Dry runs are intentionally not

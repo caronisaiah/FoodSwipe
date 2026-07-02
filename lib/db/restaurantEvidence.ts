@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { normalizeMarket } from "@/lib/markets";
 import type { EvidenceDocument } from "@/lib/websiteEvidence";
 import { getDb } from "./index";
@@ -36,6 +36,8 @@ export interface EvidenceMeta {
   latestFetchedAt: string | null;
   stale: boolean;
 }
+
+export type EvidenceMetaMap = Record<string, EvidenceMeta>;
 
 function subjectWhere(subject: EvidenceSubject) {
   return subject.type === "candidate"
@@ -157,5 +159,48 @@ export async function getEvidenceMeta(subject: EvidenceSubject): Promise<Evidenc
     };
   } catch {
     return { total: 0, okDocs: 0, latestFetchedAt: null, stale: false };
+  }
+}
+
+/** Batch candidate evidence summaries for admin dashboards; read-only, no fetches. */
+export async function getCandidateEvidenceMetaMap(candidateIds: string[]): Promise<EvidenceMetaMap> {
+  const db = getDb();
+  if (!db || candidateIds.length === 0) return {};
+  const out: EvidenceMetaMap = {};
+  for (const id of candidateIds) {
+    out[id] = { total: 0, okDocs: 0, latestFetchedAt: null, stale: false };
+  }
+  try {
+    const rows = await db
+      .select({
+        candidateRestaurantId: restaurantEvidenceDocuments.candidateRestaurantId,
+        cleanedText: restaurantEvidenceDocuments.cleanedText,
+        fetchStatus: restaurantEvidenceDocuments.fetchStatus,
+        fetchedAt: restaurantEvidenceDocuments.fetchedAt,
+        expiresAt: restaurantEvidenceDocuments.expiresAt,
+      })
+      .from(restaurantEvidenceDocuments)
+      .where(
+        and(
+          eq(restaurantEvidenceDocuments.subjectType, "candidate"),
+          inArray(restaurantEvidenceDocuments.candidateRestaurantId, candidateIds),
+        ),
+      );
+    for (const row of rows) {
+      const id = row.candidateRestaurantId;
+      if (!id || !out[id]) continue;
+      const meta = out[id];
+      meta.total += 1;
+      if (row.fetchStatus === "ok" && row.cleanedText.trim().length > 0) meta.okDocs += 1;
+      const prevLatest = meta.latestFetchedAt ? new Date(meta.latestFetchedAt).getTime() : 0;
+      const rowFetched = row.fetchedAt.getTime();
+      if (rowFetched >= prevLatest) {
+        meta.latestFetchedAt = row.fetchedAt.toISOString();
+        meta.stale = row.expiresAt ? row.expiresAt.getTime() < Date.now() : false;
+      }
+    }
+    return out;
+  } catch {
+    return out;
   }
 }

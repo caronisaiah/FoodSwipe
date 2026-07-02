@@ -1,10 +1,11 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { getDb, isDbConfigured } from "./index";
 import { restaurants, type RestaurantRow } from "./schema";
 import { getCandidateRestaurant, slugify } from "./candidates";
 import { RESTAURANTS, getRestaurantById } from "@/lib/seed/restaurants";
 import { filterCuisines, filterDietary, filterVibes } from "@/lib/vocab";
 import { getMarketOrigin, normalizeMarket, type Market } from "@/lib/markets";
+import { missingPromotionRequiredFields, type PromotionConflict } from "@/lib/candidateReadiness";
 import type { Cuisine, Dietary, PriceLevel, Restaurant, Vibe, Video } from "@/lib/types";
 
 export { isDbConfigured };
@@ -236,30 +237,56 @@ export type PromoteResult =
   | { ok: false; code: "place-already-published"; restaurant: PublishedRestaurantAdmin }
   | { ok: false; code: "error" };
 
-/** Required fields a candidate must have before it can become a feed restaurant. */
-function missingFeedFields(c: {
-  name: string | null;
-  address: string | null;
-  priceLevel: number | null;
-  lat: number | null;
-  lng: number | null;
-  cuisineTags: string[];
-  vibeTags: string[];
-  bestFor: string[];
-  reasonText: string | null;
-}): string[] {
-  const missing: string[] = [];
-  if (!str(c.name)) missing.push("name");
-  if (!str(c.address)) missing.push("address");
-  if (!(typeof c.priceLevel === "number" && c.priceLevel >= 1 && c.priceLevel <= 4)) missing.push("priceLevel");
-  if (typeof c.lat !== "number" || !Number.isFinite(c.lat)) missing.push("lat");
-  if (typeof c.lng !== "number" || !Number.isFinite(c.lng)) missing.push("lng");
-  if (filterCuisines(c.cuisineTags).length === 0) missing.push("cuisineTags");
-  if (filterVibes(c.vibeTags).length === 0 && filterVibes(c.bestFor).length === 0) {
-    missing.push("vibeTags|bestFor");
+export interface CandidatePromotionConflict {
+  conflict: PromotionConflict;
+  restaurantSlug: string;
+}
+
+/** Known publish conflicts for a batch of candidates, without per-row queries. */
+export async function getCandidatePromotionConflictMap(
+  candidates: { id: string; googlePlaceId?: string | null }[],
+): Promise<Record<string, CandidatePromotionConflict>> {
+  const db = getDb();
+  if (!db || candidates.length === 0) return {};
+  const ids = candidates.map((c) => c.id);
+  const placeIds = candidates
+    .map((c) => c.googlePlaceId)
+    .filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+  const conds = [];
+  if (ids.length > 0) conds.push(inArray(restaurants.sourceCandidateId, ids));
+  if (placeIds.length > 0) conds.push(inArray(restaurants.googlePlaceId, placeIds));
+  if (conds.length === 0) return {};
+
+  const rows = await db
+    .select({
+      slug: restaurants.slug,
+      sourceCandidateId: restaurants.sourceCandidateId,
+      googlePlaceId: restaurants.googlePlaceId,
+    })
+    .from(restaurants)
+    .where(conds.length === 1 ? conds[0] : or(...conds))
+    .catch(() => []);
+
+  const bySource = new Map<string, string>();
+  const byPlace = new Map<string, string>();
+  for (const row of rows) {
+    if (row.sourceCandidateId) bySource.set(row.sourceCandidateId, row.slug);
+    if (row.googlePlaceId) byPlace.set(row.googlePlaceId, row.slug);
   }
-  if (!str(c.reasonText)) missing.push("reasonText");
-  return missing;
+
+  const out: Record<string, CandidatePromotionConflict> = {};
+  for (const candidate of candidates) {
+    const sourceSlug = bySource.get(candidate.id);
+    if (sourceSlug) {
+      out[candidate.id] = { conflict: "already-promoted", restaurantSlug: sourceSlug };
+      continue;
+    }
+    const placeSlug = candidate.googlePlaceId ? byPlace.get(candidate.googlePlaceId) : undefined;
+    if (placeSlug) {
+      out[candidate.id] = { conflict: "place-already-published", restaurantSlug: placeSlug };
+    }
+  }
+  return out;
 }
 
 /**
@@ -278,7 +305,7 @@ export async function promoteCandidateToRestaurant(candidateId: string): Promise
     return { ok: false, code: "not-approved", status: candidate.status };
   }
 
-  const missingFields = missingFeedFields(candidate);
+  const missingFields = missingPromotionRequiredFields(candidate);
   if (missingFields.length > 0) return { ok: false, code: "incomplete", missingFields };
 
   // Dedupe: one published restaurant per candidate, and per Google Place ID.

@@ -4,6 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { PlacePhoto } from "@/lib/types";
 import { listMarkets } from "@/lib/markets";
+import {
+  computeCandidateReadiness,
+  formatMissingRequiredFields,
+  type CandidateReadinessResult,
+  type PromotionConflict,
+} from "@/lib/candidateReadiness";
 import MaterialIcon from "@/components/MaterialIcon";
 import TagSuggestionsPanel, { type AppliedTagSuggestions } from "@/components/TagSuggestionsPanel";
 
@@ -27,6 +33,11 @@ const STATUS_FILTERS: StatusFilter[] = ["needs_review", "candidate", "approved",
 type SourceFilter = "all" | "manual" | "google_places";
 const SOURCE_FILTERS: SourceFilter[] = ["all", "google_places", "manual"];
 
+type ReadinessFilter = "all" | "ready" | "missing_price" | "missing_tags" | "missing_evidence" | "needs_media";
+const READINESS_FILTERS: ReadinessFilter[] = ["all", "ready", "missing_price", "missing_tags", "missing_evidence", "needs_media"];
+
+type MarketFilter = "all" | string;
+
 const LABEL: Record<string, string> = {
   all: "All",
   needs_review: "Needs review",
@@ -35,6 +46,11 @@ const LABEL: Record<string, string> = {
   rejected: "Rejected",
   manual: "Manual",
   google_places: "Google",
+  ready: "Ready",
+  missing_price: "Missing price",
+  missing_tags: "Missing tags",
+  missing_evidence: "Missing evidence",
+  needs_media: "Needs media",
 };
 
 const STATUS_TONE: Record<string, string> = {
@@ -76,6 +92,23 @@ interface SuggestedTags {
   reasonText: string;
 }
 
+interface EvidenceMeta {
+  total: number;
+  okDocs: number;
+  latestFetchedAt: string | null;
+  stale: boolean;
+}
+
+interface CandidateVideoMeta {
+  total: number;
+  approvedOrAttached: number;
+}
+
+interface CandidatePromotionConflict {
+  conflict: PromotionConflict;
+  restaurantSlug: string;
+}
+
 /** Mirrors the CandidateRestaurant shape returned by the admin API. */
 interface Candidate {
   id: string;
@@ -83,6 +116,7 @@ interface Candidate {
   name: string;
   status: string;
   source: string;
+  market: string;
   googlePlaceId: string | null;
   websiteDomain: string | null;
   address: string | null;
@@ -101,6 +135,10 @@ interface Candidate {
   suggestionConfidence: string | null;
   suggestionReasons: string[];
   suggestedTags: SuggestedTags | null;
+  websiteEvidenceMeta?: EvidenceMeta;
+  videoMeta?: CandidateVideoMeta;
+  promotionConflict?: CandidatePromotionConflict | null;
+  readiness?: CandidateReadinessResult;
   createdAt: string;
   updatedAt: string;
 }
@@ -195,6 +233,58 @@ function warningFrom(c: { reviewNotes: string | null; seedMatchWarning?: string 
   return m ? m[1].trim() : null;
 }
 
+function computeReadinessFor(candidate: Candidate): CandidateReadinessResult {
+  const evidence = candidate.websiteEvidenceMeta;
+  const video = candidate.videoMeta;
+  return computeCandidateReadiness({
+    ...candidate,
+    websiteEvidenceOkDocs: evidence?.okDocs ?? 0,
+    videoCandidateCount: video?.total ?? 0,
+    approvedOrAttachedVideoCount: video?.approvedOrAttached ?? 0,
+    promotionConflict: candidate.promotionConflict?.conflict ?? null,
+  });
+}
+
+function normalizeCandidate(candidate: Candidate): Candidate {
+  return { ...candidate, readiness: computeReadinessFor(candidate) };
+}
+
+function readinessFor(candidate: Candidate): CandidateReadinessResult {
+  return candidate.readiness ?? computeReadinessFor(candidate);
+}
+
+function matchesReadinessFilter(candidate: Candidate, filter: ReadinessFilter): boolean {
+  if (filter === "all") return true;
+  const readiness = readinessFor(candidate);
+  if (filter === "ready") return readiness.isReadyToPromote;
+  if (filter === "missing_price") return !readiness.signals.hasPriceLevel;
+  if (filter === "missing_tags") return !readiness.signals.hasCuisine || !readiness.signals.hasVibeOrBestFor;
+  if (filter === "missing_evidence") return readiness.signals.hasWebsite && !readiness.signals.hasWebsiteEvidence;
+  if (filter === "needs_media") return !readiness.signals.hasVideoCandidates && !readiness.signals.hasApprovedVideos;
+  return true;
+}
+
+function promotionConflictLabel(conflict: CandidatePromotionConflict | null | undefined): string | null {
+  if (!conflict) return null;
+  if (conflict.conflict === "already-promoted") return `Already promoted as /${conflict.restaurantSlug}`;
+  return `Place ID already live at /${conflict.restaurantSlug}`;
+}
+
+function websiteEvidenceLabel(candidate: Candidate): string {
+  if (!candidate.websiteDomain) return "no website";
+  const meta = candidate.websiteEvidenceMeta;
+  if (meta && meta.okDocs > 0) return `${meta.okDocs} doc${meta.okDocs === 1 ? "" : "s"}${meta.stale ? " · stale" : ""}`;
+  return "none yet";
+}
+
+function videoSignalLabel(candidate: Candidate): string {
+  const meta = candidate.videoMeta;
+  if (!meta || meta.total === 0) return "no leads";
+  return meta.approvedOrAttached > 0
+    ? `${meta.approvedOrAttached}/${meta.total} approved`
+    : `${meta.total} lead${meta.total === 1 ? "" : "s"}`;
+}
+
 /** Sort highest review-likelihood first; null scores (e.g. manual) last. */
 function byLikelihood(a: Candidate, b: Candidate): number {
   const sa = a.reviewLikelihoodScore;
@@ -206,12 +296,16 @@ function byLikelihood(a: Candidate, b: Candidate): number {
 }
 
 export default function AdminCandidates() {
+  const markets = listMarkets();
+
   // Session-only admin secret (NOT persisted) — sent as a header to the API.
   const [secret, setSecret] = useState("");
 
   // Queue
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("needs_review");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [readinessFilter, setReadinessFilter] = useState<ReadinessFilter>("all");
+  const [marketFilter, setMarketFilter] = useState<MarketFilter>("all");
   const [search, setSearch] = useState("");
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(false);
@@ -230,7 +324,7 @@ export default function AdminCandidates() {
   const [importMsg, setImportMsg] = useState<Msg>(null);
   const [preview, setPreview] = useState<PreviewRow[] | null>(null);
 
-  async function load(status: StatusFilter) {
+  async function load() {
     if (!secret.trim()) {
       setListError("Enter the admin secret first.");
       return;
@@ -239,8 +333,7 @@ export default function AdminCandidates() {
     setLoading(true);
     setListError(null);
     try {
-      const qs = status === "all" ? "" : `?status=${status}`;
-      const res = await fetch(`/api/admin/restaurants/candidates${qs}`, {
+      const res = await fetch("/api/admin/restaurants/candidates", {
         headers: { "x-foodswipe-admin-secret": secret },
       });
       const data = (await res.json()) as { candidates?: Candidate[]; error?: string };
@@ -250,7 +343,7 @@ export default function AdminCandidates() {
         setListError(data.error ?? `Load failed (${res.status}).`);
         return;
       }
-      setCandidates(Array.isArray(data.candidates) ? data.candidates : []);
+      setCandidates(Array.isArray(data.candidates) ? data.candidates.map(normalizeCandidate) : []);
       setLoadedOnce(true);
     } catch {
       if (seq === loadSeq.current) setListError("Network error — could not reach the admin API.");
@@ -261,16 +354,21 @@ export default function AdminCandidates() {
 
   function selectStatus(s: StatusFilter) {
     setStatusFilter(s);
-    if (loadedOnce && secret.trim()) void load(s);
   }
 
   function onSaved(updated: Candidate) {
     setActionMsg({ type: "ok", text: `Saved “${updated.name}” → ${updated.status}.` });
     setCandidates((list) => {
-      if (statusFilter !== "all" && updated.status !== statusFilter) {
-        return list.filter((c) => c.id !== updated.id);
-      }
-      return list.map((c) => (c.id === updated.id ? updated : c));
+      return list.map((c) =>
+        c.id === updated.id
+          ? normalizeCandidate({
+              ...updated,
+              websiteEvidenceMeta: c.websiteEvidenceMeta,
+              videoMeta: c.videoMeta,
+              promotionConflict: c.promotionConflict,
+            })
+          : c,
+      );
     });
   }
 
@@ -318,7 +416,7 @@ export default function AdminCandidates() {
           type: "ok",
           text: `Imported ${data.imported ?? 0}; skipped ${data.skippedDuplicates ?? 0} duplicate(s). Review below.`,
         });
-        if (loadedOnce) await load(statusFilter);
+        if (loadedOnce) await load();
       }
     } catch {
       setImportMsg({ type: "err", text: "Network error — could not reach the import route." });
@@ -327,10 +425,13 @@ export default function AdminCandidates() {
     }
   }
 
-  // Client-side source + search filtering; status is server-filtered via load().
+  // Client-side filtering over the loaded admin queue; pagination is a later slice.
   const q = search.trim().toLowerCase();
   const visible = candidates
+    .filter((c) => statusFilter === "all" || c.status === statusFilter)
     .filter((c) => sourceFilter === "all" || c.source === sourceFilter)
+    .filter((c) => marketFilter === "all" || c.market === marketFilter)
+    .filter((c) => matchesReadinessFilter(c, readinessFilter))
     .filter((c) => {
       if (!q) return true;
       return (
@@ -419,7 +520,7 @@ export default function AdminCandidates() {
                 onChange={(e) => setMarket(e.target.value)}
                 className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 focus:ring-saffron/60"
               >
-                {listMarkets().map((mkt) => (
+                {markets.map((mkt) => (
                   <option key={mkt.id} value={mkt.id}>
                     {mkt.displayName}
                   </option>
@@ -515,6 +616,8 @@ export default function AdminCandidates() {
         </div>
       </details>
 
+      {loadedOnce && <ReadinessDashboard candidates={candidates} />}
+
       {/* Filters */}
       <div className="mb-2 space-y-2">
         <FilterRow label="Status">
@@ -524,10 +627,27 @@ export default function AdminCandidates() {
             </Tab>
           ))}
         </FilterRow>
+        <FilterRow label="Ready">
+          {READINESS_FILTERS.map((f) => (
+            <Tab key={f} active={readinessFilter === f} onClick={() => setReadinessFilter(f)}>
+              {LABEL[f]}
+            </Tab>
+          ))}
+        </FilterRow>
         <FilterRow label="Source">
           {SOURCE_FILTERS.map((f) => (
             <Tab key={f} active={sourceFilter === f} onClick={() => setSourceFilter(f)}>
               {LABEL[f]}
+            </Tab>
+          ))}
+        </FilterRow>
+        <FilterRow label="Market">
+          <Tab active={marketFilter === "all"} onClick={() => setMarketFilter("all")}>
+            All
+          </Tab>
+          {markets.map((mkt) => (
+            <Tab key={mkt.id} active={marketFilter === mkt.id} onClick={() => setMarketFilter(mkt.id)}>
+              {mkt.shortName}
             </Tab>
           ))}
         </FilterRow>
@@ -547,7 +667,7 @@ export default function AdminCandidates() {
           </div>
           <button
             type="button"
-            onClick={() => void load(statusFilter)}
+            onClick={() => void load()}
             disabled={loading}
             className="flex items-center gap-1 rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-cream ring-1 ring-inset ring-white/15 hover:bg-white/20 disabled:opacity-40"
           >
@@ -571,15 +691,15 @@ export default function AdminCandidates() {
         <p className="text-sm text-haze">
           No candidates match {LABEL[statusFilter]}
           {sourceFilter !== "all" ? ` · ${LABEL[sourceFilter]}` : ""}
+          {readinessFilter !== "all" ? ` · ${LABEL[readinessFilter]}` : ""}
+          {marketFilter !== "all" ? ` · ${markets.find((m) => m.id === marketFilter)?.shortName ?? marketFilter}` : ""}
           {q ? ` · “${search}”` : ""}.
         </p>
       ) : (
         <>
           <p className="mb-1.5 text-[11px] text-haze">
             {visible.length} candidate{visible.length === 1 ? "" : "s"} · ranked by review likelihood
-            {statusFilter !== "all" && (
-              <span className="text-haze/70"> · “dup ID” detection is scoped to this status — use All for cross-status dupes</span>
-            )}
+            <span className="text-haze/70"> · filters are client-side on the loaded queue</span>
           </p>
           <ul className="divide-y divide-line overflow-hidden rounded-xl ring-1 ring-inset ring-white/10">
             {visible.map((c) => (
@@ -603,6 +723,141 @@ export default function AdminCandidates() {
   );
 }
 
+function ReadinessDashboard({ candidates }: { candidates: Candidate[] }) {
+  const summary = candidates.reduce(
+    (acc, candidate) => {
+      const readiness = readinessFor(candidate);
+      acc.total += 1;
+      if (readiness.isReadyToPromote) acc.ready += 1;
+      if (!readiness.signals.hasPriceLevel) acc.missingPrice += 1;
+      if (!readiness.signals.hasCuisine || !readiness.signals.hasVibeOrBestFor) acc.missingTags += 1;
+      if (readiness.signals.hasWebsite && !readiness.signals.hasWebsiteEvidence) acc.missingEvidence += 1;
+      if (!readiness.signals.hasVideoCandidates && !readiness.signals.hasApprovedVideos) acc.needsMedia += 1;
+      if (candidate.status === "approved") acc.approved += 1;
+      else if (candidate.status === "rejected") acc.rejected += 1;
+      else if (candidate.status === "needs_review") acc.needsReview += 1;
+      return acc;
+    },
+    {
+      total: 0,
+      ready: 0,
+      missingPrice: 0,
+      missingTags: 0,
+      missingEvidence: 0,
+      needsMedia: 0,
+      approved: 0,
+      rejected: 0,
+      needsReview: 0,
+    },
+  );
+
+  return (
+    <section className="mb-3 min-w-0 overflow-hidden rounded-xl bg-surface p-3 ring-1 ring-inset ring-white/10">
+      <div className="mb-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-haze">
+          <MaterialIcon name="fact_check" className="text-sm" />
+          Candidate readiness
+        </p>
+        <p className="text-[10px] text-haze">{summary.total} loaded</p>
+      </div>
+      <div className="grid min-w-0 grid-cols-2 gap-1.5 sm:grid-cols-3">
+        <SummaryMetric label="Ready" value={summary.ready} tone="mint" />
+        <SummaryMetric label="Missing price" value={summary.missingPrice} tone="saffron" />
+        <SummaryMetric label="Missing tags" value={summary.missingTags} tone="saffron" />
+        <SummaryMetric label="Missing evidence" value={summary.missingEvidence} tone="haze" />
+        <SummaryMetric label="Needs media" value={summary.needsMedia} tone="haze" />
+        <SummaryMetric label="Needs review" value={summary.needsReview} tone="haze" />
+      </div>
+      <p className="mt-2 break-words text-[10px] text-haze [overflow-wrap:anywhere]">
+        Status: {summary.approved} approved · {summary.rejected} rejected. Readiness is read-only and promotion still uses the existing validation route.
+      </p>
+    </section>
+  );
+}
+
+function SummaryMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "mint" | "saffron" | "haze";
+}) {
+  const cls =
+    tone === "mint"
+      ? "text-mint"
+      : tone === "saffron"
+        ? "text-saffron"
+        : "text-haze";
+  return (
+    <div className="min-w-0 rounded-lg bg-ink-2 p-2 ring-1 ring-inset ring-white/5">
+      <p className={`font-display text-lg font-bold leading-none ${cls}`}>{value}</p>
+      <p className="mt-0.5 truncate text-[10px] text-haze">{label}</p>
+    </div>
+  );
+}
+
+function ReadinessStrip({
+  candidate,
+  readiness,
+}: {
+  candidate: Candidate;
+  readiness: CandidateReadinessResult;
+}) {
+  const conflict = promotionConflictLabel(candidate.promotionConflict);
+  return (
+    <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1">
+      <ReadinessBadge tone={readiness.isReadyToPromote ? "mint" : "haze"}>
+        {readiness.isReadyToPromote ? "Ready to promote" : `Completeness ${readiness.completenessScore}%`}
+      </ReadinessBadge>
+      {!readiness.signals.hasPriceLevel && <ReadinessBadge tone="saffron">Missing price</ReadinessBadge>}
+      {(!readiness.signals.hasCuisine || !readiness.signals.hasVibeOrBestFor) && (
+        <ReadinessBadge tone="saffron">Missing tags</ReadinessBadge>
+      )}
+      {readiness.signals.hasWebsite ? (
+        readiness.signals.hasWebsiteEvidence ? (
+          <ReadinessBadge tone="mint">Website evidence</ReadinessBadge>
+        ) : (
+          <ReadinessBadge tone="haze">No website evidence</ReadinessBadge>
+        )
+      ) : (
+        <ReadinessBadge tone="haze">No website</ReadinessBadge>
+      )}
+      {readiness.signals.hasVideoCandidates || readiness.signals.hasApprovedVideos ? (
+        <ReadinessBadge tone={readiness.signals.hasApprovedVideos ? "mint" : "haze"}>
+          {readiness.signals.hasApprovedVideos ? "Approved video lead" : "Video leads"}
+        </ReadinessBadge>
+      ) : (
+        <ReadinessBadge tone="haze">Needs media</ReadinessBadge>
+      )}
+      {conflict && <ReadinessBadge tone="chili">{conflict}</ReadinessBadge>}
+    </div>
+  );
+}
+
+function ReadinessBadge({
+  tone,
+  children,
+}: {
+  tone: "mint" | "saffron" | "chili" | "haze";
+  children: React.ReactNode;
+}) {
+  const cls =
+    tone === "mint"
+      ? "bg-mint/15 text-mint ring-mint/30"
+      : tone === "saffron"
+        ? "bg-saffron/15 text-saffron ring-saffron/30"
+        : tone === "chili"
+          ? "bg-chili/15 text-chili-soft ring-chili/30"
+          : "bg-white/10 text-haze ring-white/15";
+  return (
+    <span className={`max-w-full break-words rounded-full px-1.5 py-0.5 text-[9px] font-semibold ring-1 ring-inset [overflow-wrap:anywhere] ${cls}`}>
+      {children}
+    </span>
+  );
+}
+
 /* ----- queue row (collapsed summary + expandable editor) ----- */
 
 function CandidateRow({
@@ -622,6 +877,7 @@ function CandidateRow({
 }) {
   const warn = warningFrom(candidate);
   const expiry = expiryState(candidate.sourceExpiresAt);
+  const readiness = readinessFor(candidate);
 
   return (
     <li className="bg-surface">
@@ -649,6 +905,7 @@ function CandidateRow({
             {candidate.neighborhood ? `${candidate.neighborhood} · ` : ""}
             {candidate.address ?? "no address"}
           </p>
+          <ReadinessStrip candidate={candidate} readiness={readiness} />
         </div>
         <div className="hidden shrink-0 items-center gap-1 sm:flex">
           {duplicatePlaceId && <Flag tone="chili" icon="content_copy">dup ID</Flag>}
@@ -694,8 +951,11 @@ function CandidateDetail({
           <CandidatePhoto candidateId={candidate.id} secret={secret} name={candidate.name} />
           <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px]">
             <Meta label="Source" value={LABEL[candidate.source] ?? candidate.source} />
+            <Meta label="Market" value={candidate.market.toUpperCase()} />
             <Meta label="Place ID" value={candidate.googlePlaceId ?? "—"} mono />
             <Meta label="Website" value={candidate.websiteDomain ?? "—"} />
+            <Meta label="Evidence" value={websiteEvidenceLabel(candidate)} />
+            <Meta label="Video" value={videoSignalLabel(candidate)} />
             <Meta label="Price" value={priceLabel(candidate.priceLevel)} />
             <Meta label="Expires" value={shortDate(candidate.sourceExpiresAt)} />
             <Meta label="Score" value={candidate.reviewLikelihoodScore === null ? "—" : `${candidate.reviewLikelihoodScore}/100`} />
@@ -773,7 +1033,10 @@ function CandidateEditor({
         return;
       }
       if (res.status === 422 && data.missingFields?.length) {
-        setPromoteMsg({ type: "err", text: `Missing required fields: ${data.missingFields.join(", ")}.` });
+        setPromoteMsg({
+          type: "err",
+          text: `Missing: ${formatMissingRequiredFields(data.missingFields)} (${data.missingFields.join(", ")}).`,
+        });
         return;
       }
       setPromoteMsg({ type: "err", text: data.error ?? `Promotion failed (${res.status}).` });
@@ -856,9 +1119,33 @@ function CandidateEditor({
   }
 
   const priceChanged = priceLevel !== priceDraftValue(candidate.priceLevel);
+  const readiness = readinessFor(candidate);
+  const conflict = promotionConflictLabel(candidate.promotionConflict);
 
   return (
     <div className="min-w-0 max-w-full space-y-2.5">
+          <div className="rounded-lg bg-ink-2 p-2 ring-1 ring-inset ring-white/5">
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+              <p className="flex items-center gap-1.5 text-[11px] font-semibold text-cream">
+                <MaterialIcon name="fact_check" className="text-sm" />
+                Promotion readiness
+              </p>
+              <span className={`font-display text-xs font-bold ${readiness.isReadyToPromote ? "text-mint" : "text-saffron"}`}>
+                {readiness.completenessScore}%
+              </span>
+            </div>
+            <ReadinessStrip candidate={candidate} readiness={readiness} />
+            {readiness.missingRequired.length > 0 && (
+              <p className="mt-1 break-words text-[10px] text-saffron [overflow-wrap:anywhere]">
+                Missing: {formatMissingRequiredFields(readiness.missingRequired)}
+                <span className="text-haze"> ({readiness.missingRequired.join(", ")})</span>
+              </p>
+            )}
+            {conflict && (
+              <p className="mt-1 break-words text-[10px] text-chili-soft [overflow-wrap:anywhere]">{conflict}</p>
+            )}
+          </div>
+
           <Field label="Price level" hint="Save required before promotion">
             <PriceLevelSelect value={priceLevel} onChange={changePriceLevel} />
           </Field>
