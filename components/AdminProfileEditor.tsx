@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { isEmbedUrlAllowed } from "@/lib/video";
 import MaterialIcon from "@/components/MaterialIcon";
-import TagSuggestionsPanel from "@/components/TagSuggestionsPanel";
+import TagSuggestionsPanel, { type AppliedTagSuggestions } from "@/components/TagSuggestionsPanel";
 
 /*
   Internal RESTAURANT PROFILE EDITOR — NOT a public feature.
@@ -126,6 +126,19 @@ type Msg = { type: "ok" | "err"; text: string } | null;
 
 function parseList(s: string): string[] {
   return s.split(",").map((t) => t.trim()).filter((t) => t.length > 0);
+}
+function mergeDraftList(current: string, incoming?: string[]): string {
+  if (!incoming || incoming.length === 0) return current;
+  const next = parseList(current);
+  const seen = new Set(next.map((t) => t.toLowerCase()));
+  for (const raw of incoming) {
+    const value = raw.trim();
+    const key = value.toLowerCase();
+    if (!value || seen.has(key)) continue;
+    seen.add(key);
+    next.push(value);
+  }
+  return next.join(", ");
 }
 function priceLabel(level: number): string {
   return level >= 1 && level <= 4 ? "$".repeat(level) : "—";
@@ -761,6 +774,18 @@ function TagEditor({
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<Msg>(null);
 
+  function applySelectedSuggestions(suggestions: AppliedTagSuggestions) {
+    setCuisine((prev) => mergeDraftList(prev, suggestions.cuisineTags));
+    setDietary((prev) => mergeDraftList(prev, suggestions.dietaryTags));
+    setVibe((prev) => mergeDraftList(prev, suggestions.vibeTags));
+    setBestFor((prev) => mergeDraftList(prev, suggestions.bestFor));
+    setDishes((prev) => mergeDraftList(prev, suggestions.dishHighlights));
+    if (suggestions.reasonText) {
+      setReasonText((prev) => (prev.trim() ? prev : suggestions.reasonText ?? prev));
+    }
+    setMsg({ type: "ok", text: "Applied selected suggestions to the form draft — review and Save to persist." });
+  }
+
   async function save() {
     if (saving) return;
     if (!secret.trim()) {
@@ -837,13 +862,15 @@ function TagEditor({
       collectEndpoint={`/api/admin/restaurants/${published.slug}/collect-website-evidence`}
       websiteDomain={published.websiteDomain}
       secret={secret}
-      present={{
+      currentValues={{
         cuisineTags: parseList(cuisine),
         dietaryTags: parseList(dietary),
         vibeTags: parseList(vibe),
         bestFor: parseList(bestFor),
         dishHighlights: parseList(dishes),
+        reasonText,
       }}
+      onApplySelected={applySelectedSuggestions}
     />
     </>
   );

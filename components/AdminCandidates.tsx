@@ -5,7 +5,7 @@ import Link from "next/link";
 import type { PlacePhoto } from "@/lib/types";
 import { listMarkets } from "@/lib/markets";
 import MaterialIcon from "@/components/MaterialIcon";
-import TagSuggestionsPanel from "@/components/TagSuggestionsPanel";
+import TagSuggestionsPanel, { type AppliedTagSuggestions } from "@/components/TagSuggestionsPanel";
 
 /*
   Internal restaurant-candidate REVIEW CONSOLE — NOT a public feature.
@@ -128,6 +128,20 @@ function parseList(s: string): string[] {
     .split(",")
     .map((t) => t.trim())
     .filter((t) => t.length > 0);
+}
+
+function mergeDraftList(current: string, incoming?: string[]): string {
+  if (!incoming || incoming.length === 0) return current;
+  const next = parseList(current);
+  const seen = new Set(next.map((t) => t.toLowerCase()));
+  for (const raw of incoming) {
+    const value = raw.trim();
+    const key = value.toLowerCase();
+    if (!value || seen.has(key)) continue;
+    seen.add(key);
+    next.push(value);
+  }
+  return next.join(", ");
 }
 
 function sameSet(a: string[], b: string[]): boolean {
@@ -763,6 +777,18 @@ function CandidateEditor({
     setMsg({ type: "ok", text: "Reset to suggestions — review and Save to persist." });
   }
 
+  function applySelectedSuggestions(suggestions: AppliedTagSuggestions) {
+    setCuisine((prev) => mergeDraftList(prev, suggestions.cuisineTags));
+    setDietary((prev) => mergeDraftList(prev, suggestions.dietaryTags));
+    setVibe((prev) => mergeDraftList(prev, suggestions.vibeTags));
+    setBestFor((prev) => mergeDraftList(prev, suggestions.bestFor));
+    setDishes((prev) => mergeDraftList(prev, suggestions.dishHighlights));
+    if (suggestions.reasonText) {
+      setReasonText((prev) => (prev.trim() ? prev : suggestions.reasonText ?? prev));
+    }
+    setMsg({ type: "ok", text: "Applied selected suggestions to the form draft — review and Save to persist." });
+  }
+
   async function save(overrideStatus?: string) {
     if (saving) return;
     if (!secret.trim()) {
@@ -862,13 +888,15 @@ function CandidateEditor({
             collectEndpoint={`/api/admin/restaurants/candidates/${candidate.id}/collect-website-evidence`}
             websiteDomain={candidate.websiteDomain}
             secret={secret}
-            present={{
+            currentValues={{
               cuisineTags: parseList(cuisine),
               dietaryTags: parseList(dietary),
               vibeTags: parseList(vibe),
               bestFor: parseList(bestFor),
               dishHighlights: parseList(dishes),
+              reasonText,
             }}
+            onApplySelected={applySelectedSuggestions}
           />
 
           {/* Quality controls */}

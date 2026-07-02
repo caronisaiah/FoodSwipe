@@ -336,7 +336,7 @@ plus a **503** if `GOOGLE_MAPS_API_KEY` is unset and **400** on a blank `query`.
   recorded. Migration `0002_kind_ultron.sql` adds `dry_run`, `skipped_duplicates`,
   and `error` to the table (additive, with defaults).
 
-### Tag automation (B2 engine + B3 preview UI — on-demand tag suggestions)
+### Tag automation (B2 engine + B3/B4/B5 admin UI — on-demand tag suggestions)
 
 A shared, **pure, deterministic** suggestion engine that proposes review tags for
 **both** candidate and published restaurants on demand. It generalizes the
@@ -373,13 +373,13 @@ only suggests — humans approve. **No migration.**
   editor ([AdminProfileEditor](components/AdminProfileEditor.tsx)).
   It fetches the relevant route **only on click** (never per-row, never auto), shows
   suggestions grouped by field with confidence, reason, evidence source/text,
-  **review-only** + **already-present** badges, and warnings. It **does not
-  auto-fill, mutate the draft, PATCH, or change status**. B4 extends this same
-  panel with website evidence collection and a clearly-labeled AI-assisted mode.
+  **review-only** + **already-present** badges, and warnings. B4 extends this same
+  panel with website evidence collection and a clearly-labeled AI-assisted mode;
+  B5 adds an explicit selected-apply step for admin drafts only.
 - **B4 — official-website evidence + AI-assisted suggestions (review-only).** An
   admin can collect bounded evidence from a restaurant's **own official website**
-  and request **AI-assisted** suggestions grounded in it. Still suggestions only —
-  nothing is applied.
+  and request **AI-assisted** suggestions grounded in it. The B4 backend still
+  writes only evidence and returns suggestions; it never writes tags.
   - **Evidence collector** [`lib/websiteEvidence.ts`](lib/websiteEvidence.ts):
     SAME-DOMAIN only (the stored `websiteDomain`, or an admin-supplied same-domain
     URL), **https-only**, social/review/search domains blocked, **SSRF-reduced**
@@ -405,6 +405,19 @@ only suggests — humans approve. **No migration.**
   - **UI:** `TagSuggestionsPanel` adds "Collect website evidence" + "AI-assisted"
     actions, shows evidence sources used + freshness, and marks AI output
     "AI-assisted · review required". Default remains deterministic.
+- **B5 — apply selected suggestions to the form draft only.** In editors that pass
+  `currentValues` + `onApplySelected`, `TagSuggestionsPanel` lets admins explicitly
+  select/deselect individual suggestions, optionally "Select high-confidence safe
+  suggestions", and click **Apply selected to form**. The button only updates local
+  React form state in [`AdminCandidates`](components/AdminCandidates.tsx) or
+  [`AdminProfileEditor`](components/AdminProfileEditor.tsx); it never calls PATCH,
+  changes candidate status, approves, publishes, promotes, or writes to the DB.
+  Array fields merge into the existing draft with case-insensitive de-dupe and
+  append-only order. Cuisine/dietary/vibe/best-for are client-gated against
+  [`lib/vocab.ts`](lib/vocab.ts); dishes are cleaned/capped; `reasonText` can fill
+  only an empty draft and is skipped rather than overwritten. The existing Save
+  buttons and backend validation remain the only persistence path. **No migration
+  and no new write route.**
 - **Future (not built):** approved tags + their evidence can later seed training
   examples — there is **no** training/eval/fine-tune/crawler infrastructure yet.
 
@@ -750,7 +763,8 @@ the client (the AI is never called from the browser), and never logged. Without 
 the AI suggestion mode returns a clean `503` and deterministic suggestions still
 work. `FOODSWIPE_AI_MODEL` optionally overrides the default model
 (`claude-sonnet-4-6`). AI output is validated server-side against the controlled
-vocab + evidence before it is returned, and is review-only (never auto-applied).
+vocab + evidence before it is returned, and is review-only (never auto-applied or
+saved; B5 can only copy selected suggestions into an admin form draft).
 
 Create the table once. The simplest path:
 
