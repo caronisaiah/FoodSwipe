@@ -27,6 +27,13 @@ const VOCAB_HINT = {
   dish: 'short dishes, e.g. "Tacos", "Ramen"',
 };
 
+const PRICE_OPTIONS = [
+  { value: "1", label: "$ — budget" },
+  { value: "2", label: "$$ — moderate" },
+  { value: "3", label: "$$$ — expensive" },
+  { value: "4", label: "$$$$ — premium" },
+] as const;
+
 interface RestaurantLite {
   id: string; // public slug
   name: string;
@@ -45,6 +52,7 @@ interface PublishedAdmin {
   slug: string;
   status: string;
   websiteDomain: string | null;
+  priceLevel: number;
   cuisineTags: string[];
   dietaryTags: string[];
   vibeTags: string[];
@@ -142,6 +150,13 @@ function mergeDraftList(current: string, incoming?: string[]): string {
 }
 function priceLabel(level: number): string {
   return level >= 1 && level <= 4 ? "$".repeat(level) : "—";
+}
+function priceDraftValue(level: number): string {
+  return level >= 1 && level <= 4 ? String(Math.round(level)) : "2";
+}
+function pricePayload(value: string): number | null {
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 1 && n <= 4 ? n : null;
 }
 
 export default function AdminProfileEditor() {
@@ -349,7 +364,7 @@ function ProfilePanel({
           <p className="truncate text-sm font-semibold text-cream">{restaurant.name}</p>
           <p className="truncate text-[11px] text-haze">
             {restaurant.neighborhood ? `${restaurant.neighborhood} · ` : ""}/{restaurant.id} ·{" "}
-            {priceLabelFn(restaurant.priceLevel)}
+            {priceLabelFn(published?.priceLevel ?? restaurant.priceLevel)}
           </p>
         </div>
         <span
@@ -770,6 +785,7 @@ function TagEditor({
   const [vibe, setVibe] = useState(published.vibeTags.join(", "));
   const [bestFor, setBestFor] = useState(published.bestFor.join(", "));
   const [dishes, setDishes] = useState(published.dishHighlights.join(", "));
+  const [priceLevel, setPriceLevel] = useState(priceDraftValue(published.priceLevel));
   const [reasonText, setReasonText] = useState(published.reasonText);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<Msg>(null);
@@ -804,6 +820,7 @@ function TagEditor({
           vibeTags: parseList(vibe),
           bestFor: parseList(bestFor),
           dishHighlights: parseList(dishes),
+          priceLevel: pricePayload(priceLevel) ?? published.priceLevel,
           reasonText,
         }),
       });
@@ -825,6 +842,13 @@ function TagEditor({
     <>
     <section className="rounded-xl bg-surface p-3 ring-1 ring-inset ring-white/10">
       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-haze">Tags &amp; copy</p>
+      <label className="mb-2.5 block">
+        <span className="mb-1 flex items-baseline justify-between gap-2">
+          <span className="text-xs font-semibold text-cream">Price level</span>
+          <span className="truncate text-[9px] text-haze">Save required</span>
+        </span>
+        <PriceLevelSelect value={priceLevel} onChange={setPriceLevel} />
+      </label>
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
         <TagField label="Cuisine" hint={VOCAB_HINT.cuisine} value={cuisine} onChange={setCuisine} />
         <TagField label="Dietary" hint={VOCAB_HINT.dietary} value={dietary} onChange={setDietary} />
@@ -1147,5 +1171,27 @@ function TagField({
         className="w-full rounded-lg bg-surface-2 px-2.5 py-1.5 text-xs text-cream outline-none ring-1 ring-inset ring-white/10 focus:ring-saffron/60"
       />
     </label>
+  );
+}
+
+function PriceLevelSelect({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full rounded-lg bg-surface-2 px-2.5 py-1.5 text-xs text-cream outline-none ring-1 ring-inset ring-white/10 focus:ring-saffron/60"
+    >
+      {PRICE_OPTIONS.map((option) => (
+        <option key={option.value} value={option.value} className="bg-surface">
+          {option.label}
+        </option>
+      ))}
+    </select>
   );
 }

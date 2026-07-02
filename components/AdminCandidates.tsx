@@ -59,6 +59,14 @@ const VOCAB_HINT = {
   dish: 'short dishes, e.g. "Tacos", "Ramen"',
 };
 
+const PRICE_OPTIONS = [
+  { value: "", label: "Unknown / not set" },
+  { value: "1", label: "$ — budget" },
+  { value: "2", label: "$$ — moderate" },
+  { value: "3", label: "$$$ — expensive" },
+  { value: "4", label: "$$$$ — premium" },
+] as const;
+
 interface SuggestedTags {
   cuisineTags: string[];
   dietaryTags: string[];
@@ -169,6 +177,15 @@ function shortDate(iso: string | null): string {
 
 function priceLabel(level: number | null): string {
   return level && level >= 1 && level <= 4 ? "$".repeat(level) : "—";
+}
+
+function priceDraftValue(level: number | null): string {
+  return typeof level === "number" && level >= 1 && level <= 4 ? String(Math.round(level)) : "";
+}
+
+function pricePayload(value: string): number | null {
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 1 && n <= 4 ? n : null;
 }
 
 /** Surface a seed-overlap warning, whether it's a top-level field or in notes. */
@@ -716,6 +733,7 @@ function CandidateEditor({
   const [vibe, setVibe] = useState(candidate.vibeTags.join(", "));
   const [bestFor, setBestFor] = useState(candidate.bestFor.join(", "));
   const [dishes, setDishes] = useState(candidate.dishHighlights.join(", "));
+  const [priceLevel, setPriceLevel] = useState(priceDraftValue(candidate.priceLevel));
   const [reasonText, setReasonText] = useState(candidate.reasonText ?? "");
   const [reviewNotes, setReviewNotes] = useState(candidate.reviewNotes ?? "");
   const [saving, setSaving] = useState(false);
@@ -789,6 +807,14 @@ function CandidateEditor({
     setMsg({ type: "ok", text: "Applied selected suggestions to the form draft — review and Save to persist." });
   }
 
+  function changePriceLevel(value: string) {
+    setPriceLevel(value);
+    setPromotedSlug(null);
+    if (promoteMsg?.text.includes("priceLevel")) {
+      setPromoteMsg({ type: "err", text: "Price changed in draft — Save before promoting." });
+    }
+  }
+
   async function save(overrideStatus?: string) {
     if (saving) return;
     if (!secret.trim()) {
@@ -804,6 +830,7 @@ function CandidateEditor({
         headers: { "Content-Type": "application/json", "x-foodswipe-admin-secret": secret },
         body: JSON.stringify({
           status: nextStatus,
+          priceLevel: pricePayload(priceLevel),
           cuisineTags: parseList(cuisine),
           dietaryTags: parseList(dietary),
           vibeTags: parseList(vibe),
@@ -818,6 +845,8 @@ function CandidateEditor({
         setMsg({ type: "err", text: data.error ?? `Save failed (${res.status}).` });
         return;
       }
+      setPromoteMsg(null);
+      setPromotedSlug(null);
       onSaved(data.candidate);
     } catch {
       setMsg({ type: "err", text: "Network error saving changes." });
@@ -826,8 +855,23 @@ function CandidateEditor({
     }
   }
 
+  const priceChanged = priceLevel !== priceDraftValue(candidate.priceLevel);
+
   return (
     <div className="min-w-0 max-w-full space-y-2.5">
+          <Field label="Price level" hint="Save required before promotion">
+            <PriceLevelSelect value={priceLevel} onChange={changePriceLevel} />
+          </Field>
+          {priceChanged ? (
+            <p className="text-[10px] text-saffron">
+              Price changed in draft — Save before promotion.
+            </p>
+          ) : !priceLevel && (
+            <p className="text-[10px] text-saffron">
+              Unknown price still blocks promotion. Set $–$$$$, then Save.
+            </p>
+          )}
+
           {candidate.suggestionConfidence && (
             <div className="rounded-lg bg-ink-2 p-2 ring-1 ring-inset ring-white/5">
               <p className="flex items-center gap-1.5 text-[11px] font-semibold text-cream">
@@ -1229,6 +1273,28 @@ function TextInput({
       placeholder={placeholder}
       className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze/60 focus:ring-saffron/60"
     />
+  );
+}
+
+function PriceLevelSelect({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full rounded-lg bg-surface-2 px-2.5 py-1.5 text-xs text-cream outline-none ring-1 ring-inset ring-white/10 focus:ring-saffron/60"
+    >
+      {PRICE_OPTIONS.map((option) => (
+        <option key={option.value || "unknown"} value={option.value} className="bg-surface">
+          {option.label}
+        </option>
+      ))}
+    </select>
   );
 }
 

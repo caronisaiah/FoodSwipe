@@ -441,6 +441,13 @@ seed **plus** DB-published restaurants.
   from the candidate's **market origin** (see [Markets](#markets-multi-market-a1)),
   and is idempotent — a second promote returns the existing restaurant (`409`),
   never a duplicate. It never publishes videos or touches Google photo data.
+- **Manual price readiness (B5.1).** The candidate editor exposes a controlled
+  `priceLevel` dropdown (`Unknown`, `$`, `$$`, `$$$`, `$$$$`) because Google does
+  not always return price data. It updates the local draft only until the existing
+  candidate Save action PATCHes the row; `Unknown` remains `null` and still blocks
+  promotion. The published profile editor exposes the same numeric 1–4 price
+  choice for DB-published rows through its existing Save action. No migration, no
+  price guessing, and no promotion validation bypass.
 - **No fabricated social proof.** Published restaurants get **neutral-zero**
   `trendScore`/`vibeScore`/`videoCount`/`recentVideoCount`/`saveCount` —
   documented internal placeholders, not real metrics. So they never earn a
