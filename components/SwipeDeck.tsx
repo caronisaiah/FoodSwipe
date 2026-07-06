@@ -102,17 +102,21 @@ export default function SwipeDeck({
         role="group"
         aria-label="Restaurant swipe deck"
         aria-describedby="swipe-hint"
-        className="relative min-h-0 flex-1"
+        className="isolate relative min-h-0 flex-1 overflow-hidden rounded-[28px] bg-ink-2"
       >
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-0 rounded-[28px] bg-ink-2"
+        />
         {next && (
           // Lightweight peek behind the top card (no profile body / no video fetch).
-          // Rendered before the top card so it paints underneath.
+          // Explicit z-index keeps the stack to: backplate -> one peek -> active.
           <motion.div
             aria-hidden
             inert
-            className="pointer-events-none absolute inset-0"
+            className="pointer-events-none absolute inset-0 z-10"
             initial={false}
-            animate={{ scale: 0.96, y: 10, opacity: 0.72 }}
+            animate={{ scale: 0.955, y: 10, opacity: 1 }}
             transition={{ type: "spring", stiffness: 260, damping: 30 }}
           >
             <RestaurantCard scored={next} />
@@ -186,7 +190,6 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
           x: direction === "right" ? 720 : -720,
           y: -18,
           scale: 0.96,
-          opacity: 0,
           transition: { duration: 0.34, ease: [0.22, 1, 0.36, 1] },
         });
         onDecide(direction);
@@ -218,9 +221,9 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
 
     return (
       <motion.div
-        className="absolute inset-0 cursor-grab touch-pan-y overflow-hidden rounded-[28px] bg-ink-2 ring-1 ring-white/10 shadow-2xl shadow-black/60 will-change-transform active:cursor-grabbing"
+        className="absolute inset-0 z-20 cursor-grab touch-pan-y overflow-hidden rounded-[28px] bg-ink-2 ring-1 ring-white/10 shadow-2xl shadow-black/60 will-change-transform active:cursor-grabbing"
         style={{ x, rotate }}
-        initial={{ scale: 0.96, y: 14, opacity: 0 }}
+        initial={{ scale: 0.98, y: 10, opacity: 1 }}
         animate={controls}
         drag="x"
         dragElastic={0.42}
