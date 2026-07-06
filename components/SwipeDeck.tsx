@@ -107,13 +107,16 @@ export default function SwipeDeck({
         {next && (
           // Lightweight peek behind the top card (no profile body / no video fetch).
           // Rendered before the top card so it paints underneath.
-          <div
+          <motion.div
             aria-hidden
             inert
-            className="pointer-events-none absolute inset-0 scale-[0.94] translate-y-3 opacity-50"
+            className="pointer-events-none absolute inset-0"
+            initial={false}
+            animate={{ scale: 0.96, y: 10, opacity: 0.72 }}
+            transition={{ type: "spring", stiffness: 260, damping: 30 }}
           >
             <RestaurantCard scored={next} />
-          </div>
+          </motion.div>
         )}
         <SwipeCard
           ref={cardRef}
@@ -149,8 +152,6 @@ interface SwipeCardProps {
 const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
   function SwipeCard({ scored, onDecide }, ref) {
     const r = scored.restaurant;
-    const trending = r.trendScore >= 75;
-    const topChoice = r.vibeScore >= 90;
 
     const x = useMotionValue(0);
     const controls = useAnimationControls();
@@ -158,9 +159,9 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
     const scrollRef = useRef<HTMLDivElement>(null);
     const [copied, setCopied] = useState(false);
 
-    const rotate = useTransform(x, [-720, -300, 0, 300, 720], [-22, -14, 0, 14, 22]);
-    const saveOpacity = useTransform(x, [40, 140], [0, 1]);
-    const skipOpacity = useTransform(x, [-140, -40], [1, 0]);
+    const rotate = useTransform(x, [-720, -300, 0, 300, 720], [-18, -10, 0, 10, 18]);
+    const saveOpacity = useTransform(x, [32, 132], [0, 1]);
+    const skipOpacity = useTransform(x, [-132, -32], [1, 0]);
 
     // Scroll-linked hero fade — tracks this card's own scroll container.
     const { scrollY } = useScroll({ container: scrollRef });
@@ -173,7 +174,7 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
         scale: 1,
         y: 0,
         opacity: 1,
-        transition: { type: "spring", stiffness: 300, damping: 26 },
+        transition: { type: "spring", stiffness: 330, damping: 28, mass: 0.9 },
       });
     }, [controls]);
 
@@ -183,8 +184,10 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
         decided.current = true;
         await controls.start({
           x: direction === "right" ? 720 : -720,
+          y: -18,
+          scale: 0.96,
           opacity: 0,
-          transition: { duration: 0.32, ease: [0.4, 0, 1, 1] },
+          transition: { duration: 0.34, ease: [0.22, 1, 0.36, 1] },
         });
         onDecide(direction);
       },
@@ -220,7 +223,8 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
         initial={{ scale: 0.96, y: 14, opacity: 0 }}
         animate={controls}
         drag="x"
-        dragElastic={0.55}
+        dragElastic={0.42}
+        dragMomentum={false}
         dragSnapToOrigin={false}
         whileTap={{ scale: 0.995 }}
         onDragEnd={(_, info) => {
@@ -232,7 +236,9 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
           else
             controls.start({
               x: 0,
-              transition: { type: "spring", stiffness: 380, damping: 30 },
+              y: 0,
+              scale: 1,
+              transition: { type: "spring", stiffness: 420, damping: 34, mass: 0.85 },
             });
         }}
       >
@@ -252,23 +258,6 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
 
         {/* Top scrim for control legibility over the hero */}
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-black/45 to-transparent" />
-
-        {/* Identity badges — fade out with the hero as you scroll */}
-        <motion.div
-          style={{ opacity: heroOpacity }}
-          className="pointer-events-none absolute left-4 top-4 z-20 flex flex-col items-start gap-2"
-        >
-          {trending && (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-chili/90 px-3 py-1.5 text-[11px] font-bold uppercase tracking-widest text-cream shadow-lg backdrop-blur-md">
-              <MaterialIcon name="trending_up" className="text-[16px]" /> Trending in {getMarketShortName(r.market)}
-            </span>
-          )}
-          {topChoice && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-black/40 px-2.5 py-1 text-xs font-semibold text-saffron ring-1 ring-saffron/30 backdrop-blur-md">
-              <MaterialIcon name="stars" filled className="text-[16px]" /> Top Choice
-            </span>
-          )}
-        </motion.div>
 
         {/* Persistent action — Share. (Save is the right-swipe; no redundant heart.)
             Sits below the feed top app bar so it never overlaps the notifications icon. */}

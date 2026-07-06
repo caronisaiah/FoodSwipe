@@ -25,6 +25,8 @@ export default function HeroMedia({
   name,
   posterIcon,
   compact = false,
+  fallbackMode = "icon",
+  eager = false,
 }: {
   restaurantId: string;
   name: string;
@@ -32,6 +34,10 @@ export default function HeroMedia({
   posterIcon: string;
   /** Smaller logo tile + placeholder glyph, for thumbnail-sized uses (e.g. Saved). */
   compact?: boolean;
+  /** Feed cards use a calm neutral fallback so real-photo loads never flash an icon. */
+  fallbackMode?: "icon" | "neutral";
+  /** Hint the browser to start loading visible/next-card imagery promptly. */
+  eager?: boolean;
 }) {
   const [photo, setPhoto] = useState<PlacePhoto | null>(null);
   const [logoSrc, setLogoSrc] = useState<string | null>(null);
@@ -78,6 +84,7 @@ export default function HeroMedia({
   if (photo) {
     return (
       <>
+        {fallbackMode === "neutral" && <NeutralMediaBackdrop />}
         {/* eslint-disable-next-line @next/next/no-img-element -- Google's ephemeral
             Place Photo URL must load directly from Google (never downloaded/rehosted);
             next/image would proxy it through /_next/image, which the policy forbids. */}
@@ -85,7 +92,9 @@ export default function HeroMedia({
           src={photo.photoUri}
           alt={`${name} — photo via Google`}
           className="absolute inset-0 h-full w-full object-cover"
-          loading="lazy"
+          loading={eager ? "eager" : "lazy"}
+          fetchPriority={eager ? "low" : "auto"}
+          decoding="async"
           referrerPolicy="no-referrer"
         />
         <PhotoAttribution attributions={photo.attributions} />
@@ -133,21 +142,37 @@ export default function HeroMedia({
         className="absolute inset-0 bg-[radial-gradient(120%_80%_at_30%_18%,#6b431a_0%,transparent_55%),radial-gradient(110%_90%_at_82%_88%,#5a1633_0%,transparent_55%),linear-gradient(160deg,#2a2012_0%,#1a1622_55%,#0e0e12_100%)]"
         aria-hidden
       />
-      <div className="absolute inset-0 flex items-center justify-center">
-        <MaterialIcon
-          name={posterIcon}
-          className={`text-white/30 drop-shadow-[0_10px_30px_rgba(0,0,0,0.55)] ${
-            compact ? "text-[40px]" : "text-[128px]"
-          }`}
+      {fallbackMode === "icon" ? (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <MaterialIcon
+            name={posterIcon}
+            className={`text-white/30 drop-shadow-[0_10px_30px_rgba(0,0,0,0.55)] ${
+              compact ? "text-[40px]" : "text-[128px]"
+            }`}
+          />
+        </div>
+      ) : (
+        <div
+          className="absolute inset-0 bg-[linear-gradient(110deg,transparent_0%,rgba(255,255,255,0.05)_45%,transparent_70%)] opacity-70"
+          aria-hidden
         />
-      </div>
+      )}
     </div>
+  );
+}
+
+function NeutralMediaBackdrop() {
+  return (
+    <div
+      className="absolute inset-0 bg-[radial-gradient(120%_80%_at_22%_12%,rgba(255,192,130,0.2)_0%,transparent_52%),radial-gradient(105%_85%_at_82%_86%,rgba(214,4,47,0.14)_0%,transparent_50%),linear-gradient(155deg,#171515_0%,#101014_58%,#0b0b0d_100%)]"
+      aria-hidden
+    />
   );
 }
 
 /**
  * Required Google Place Photo attribution (shown wherever the photo appears).
- * Top-right, clear of the top-left "Trending" badge and the centered action rail.
+ * Kept compact for small preview cards; omitted when Google returns no author.
  */
 function PhotoAttribution({
   attributions,
@@ -155,35 +180,31 @@ function PhotoAttribution({
   attributions: PlacePhoto["attributions"];
 }) {
   const items = attributions.filter((a) => a.displayName.trim().length > 0);
+  if (items.length === 0) return null;
+
   return (
     <span className="absolute right-3 top-3 z-20 inline-flex max-w-[60%] items-center gap-1 rounded-full bg-black/55 px-2.5 py-1 text-[11px] font-medium text-white/90 backdrop-blur-md ring-1 ring-white/15">
       <MaterialIcon name="photo_camera" className="text-[13px]" />
       <span className="truncate">
-        {items.length > 0 ? (
-          <>
-            Photo:{" "}
-            {items.map((a, i) => (
-              <span key={`${a.displayName}-${i}`}>
-                {i > 0 && ", "}
-                {a.uri ? (
-                  <a
-                    href={a.uri}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline decoration-white/40 underline-offset-2"
-                  >
-                    {a.displayName}
-                  </a>
-                ) : (
-                  a.displayName
-                )}
-              </span>
-            ))}{" "}
-            via Google
-          </>
-        ) : (
-          "Photo via Google"
-        )}
+        Photo:{" "}
+        {items.map((a, i) => (
+          <span key={`${a.displayName}-${i}`}>
+            {i > 0 && ", "}
+            {a.uri ? (
+              <a
+                href={a.uri}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline decoration-white/40 underline-offset-2"
+              >
+                {a.displayName}
+              </a>
+            ) : (
+              a.displayName
+            )}
+          </span>
+        ))}{" "}
+        via Google
       </span>
     </span>
   );

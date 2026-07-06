@@ -138,7 +138,8 @@ or interior — not a video thumbnail. The hero resolves in three honest tiers:
    `GOOGLE_MAPS_API_KEY` is set);
 2. otherwise the restaurant's **brand logo** on a premium centered card (when it
    has a known `websiteDomain` and `LOGODEV_TOKEN` is set);
-3. otherwise the FoodSwipe **placeholder** (cuisine emoji + on-brand gradient).
+3. otherwise the FoodSwipe **placeholder** (standalone profiles) or a neutral
+   feed fallback (feed cards) on an on-brand gradient.
 
 A YouTube thumbnail is never promoted to a hero.
 
@@ -166,8 +167,9 @@ way the rules are the same:
   googleusercontent URL with no API key) **directly**. We never download, store,
   crop, proxy, or rehost the bytes — `next/image` is intentionally *not* used
   here because it would proxy the image through `/_next/image`.
-- **Always attribute.** Any `authorAttributions` Google returns are displayed on
-  the photo, as the policy requires.
+- **Always attribute.** Any `authorAttributions` Google returns are displayed:
+  standalone profiles keep the credit on the hero, while feed cards move it into
+  a subtle profile-body credit row so the first viewport stays clean.
 - **Logo fallback (no rehosting either).** When there's no Place Photo but the
   restaurant has an official `websiteDomain`, the hero shows its brand logo via
   [Logo.dev](https://logo.dev) on a clean centered card (`object-contain`, never
@@ -858,7 +860,7 @@ components/
   SwipeDeck.tsx              Active deck queue, nested SwipeCard drag/scroll, controls, empty state
   RestaurantCard.tsx         Lightweight next-card peek behind the active card
   RestaurantProfile.tsx      Full standalone profile page wrapper
-  RestaurantHero.tsx         Profile/feed hero: Google Place Photo or placeholder
+  RestaurantHero.tsx         Profile/feed hero: Google Place Photo, logo, or neutral fallback
   RestaurantVideos.tsx       Review carousel: seed + shared + local
   GoThere.tsx                Profile "Go there" links
   SavedClient.tsx            Saved list
@@ -914,10 +916,10 @@ Architecture seams kept stable so the product can grow:
 - **Profile heroes can be real Google Place Photos**, currently proven on 3
   restaurants with a `googlePlaceId` (see [Restaurant photos](#restaurant-photos-google-places)).
   Only the Place ID is stored; photos are fetched fresh, attributed, never
-  rehosted, and absent a key/photo the hero falls back to the placeholder. The
-  active feed hero uses the same image ladder; lightweight peek cards avoid
-  loading profile details or videos. Google ratings, reviews, and maps are out of
-  scope.
+  rehosted, and absent a key/photo the hero falls back gracefully. The active feed
+  hero uses the same image ladder with a neutral loading/missing-image fallback;
+  lightweight peek cards avoid loading profile details or videos. Google ratings,
+  reviews, and maps are out of scope.
 - Video attachments are shared across devices via Postgres; legacy `localStorage`
   clips remain as a labeled fallback. Both appear on profiles, not in the feed
   deck (which keeps a stable hero).

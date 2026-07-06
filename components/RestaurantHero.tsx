@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { motion, type MotionStyle } from "framer-motion";
 import type { PlacePhoto, PriceLevel, Video } from "@/lib/types";
@@ -38,6 +39,8 @@ export default function RestaurantHero({
   heroStyle,
   variant = "page",
   feedHeroFullscreen = false,
+  badges,
+  onPhotoAttributions,
 }: {
   restaurantId: string;
   fallbackVideo: Video;
@@ -54,6 +57,10 @@ export default function RestaurantHero({
   variant?: "page" | "feed";
   /** Feed-only: make the hero occupy the card's first scroll viewport. */
   feedHeroFullscreen?: boolean;
+  /** Compact status/ranking badges shown above the restaurant name. */
+  badges?: ReactNode;
+  /** Feed cards move required Google author credit below the first viewport. */
+  onPhotoAttributions?: (attributions: PlacePhoto["attributions"]) => void;
 }) {
   const [photo, setPhoto] = useState<PlacePhoto | null>(null);
   const [logoSrc, setLogoSrc] = useState<string | null>(null);
@@ -96,9 +103,14 @@ export default function RestaurantHero({
     };
   }, [restaurantId]);
 
+  useEffect(() => {
+    onPhotoAttributions?.(photo?.attributions ?? []);
+  }, [onPhotoAttributions, photo]);
+
   // Logo tier: only once the fetch resolved with no photo, a logo URL exists, and
   // the logo image hasn't errored out.
   const showLogo = !photo && resolved && Boolean(logoSrc) && !logoFailed;
+  const isFeed = variant === "feed";
 
   return (
     <motion.div
@@ -111,6 +123,7 @@ export default function RestaurantHero({
           : "relative mx-4 mt-1 aspect-[4/5] overflow-hidden rounded-[28px] ring-1 ring-white/10"
       }
     >
+      {isFeed && <FeedHeroBackdrop />}
       {photo ? (
         <>
           {/* eslint-disable-next-line @next/next/no-img-element -- Google's Place
@@ -122,18 +135,23 @@ export default function RestaurantHero({
             src={photo.photoUri}
             alt={`${name} — photo via Google`}
             className="absolute inset-0 h-full w-full object-cover"
-            loading="lazy"
+            loading={isFeed ? "eager" : "lazy"}
+            fetchPriority={isFeed ? "high" : "auto"}
+            decoding="async"
             referrerPolicy="no-referrer"
           />
-          <PhotoAttribution attributions={photo.attributions} />
+          {!isFeed && <PhotoAttribution attributions={photo.attributions} />}
         </>
       ) : showLogo && logoSrc ? (
         <LogoCard src={logoSrc} name={name} onError={() => setLogoFailed(true)} />
+      ) : isFeed ? (
+        <FeedHeroFallback label={resolved ? `${name} image unavailable` : `Loading ${name} photo`} />
       ) : (
         <VideoEmbed video={fallbackVideo} posterEmoji={posterEmoji} fill />
       )}
 
       <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-4 pt-16">
+        {badges && <div className="mb-2 flex max-w-full flex-wrap gap-1.5">{badges}</div>}
         <h1 className="font-display text-3xl font-bold leading-tight text-white drop-shadow">
           {name}
         </h1>
@@ -148,6 +166,27 @@ export default function RestaurantHero({
         </p>
       </div>
     </motion.div>
+  );
+}
+
+function FeedHeroFallback({ label }: { label: string }) {
+  return (
+    <div className="absolute inset-0" aria-label={label} role="img">
+      <FeedHeroBackdrop />
+      <div
+        className="absolute inset-0 bg-[linear-gradient(110deg,transparent_0%,rgba(255,255,255,0.06)_45%,transparent_70%)] opacity-70"
+        aria-hidden
+      />
+    </div>
+  );
+}
+
+function FeedHeroBackdrop() {
+  return (
+    <div
+      className="absolute inset-0 bg-[radial-gradient(130%_90%_at_18%_8%,rgba(255,192,130,0.22)_0%,transparent_48%),radial-gradient(100%_80%_at_82%_82%,rgba(214,4,47,0.16)_0%,transparent_48%),linear-gradient(155deg,#181616_0%,#101014_55%,#0a0a0c_100%)]"
+      aria-hidden
+    />
   );
 }
 
@@ -203,36 +242,32 @@ function PhotoAttribution({
   attributions: PlacePhoto["attributions"];
 }) {
   const items = attributions.filter((a) => a.displayName.trim().length > 0);
+  if (items.length === 0) return null;
+
   return (
     <span className="absolute left-3 top-3 z-10 inline-flex max-w-[80%] items-center gap-1 rounded-full bg-black/55 px-2.5 py-1 text-[11px] font-medium text-white/90 backdrop-blur-md ring-1 ring-white/15">
       <MaterialIcon name="photo_camera" className="text-[13px]" />
       <span className="truncate">
-        {items.length > 0 ? (
-          <>
-            Photo:{" "}
-            {items.map((a, i) => (
-              <span key={`${a.displayName}-${i}`}>
-                {i > 0 && ", "}
-                {a.uri ? (
-                  <a
-                    href={a.uri}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onPointerDown={(e) => e.stopPropagation()}
-                    className="underline decoration-white/40 underline-offset-2 hover:decoration-white"
-                  >
-                    {a.displayName}
-                  </a>
-                ) : (
-                  a.displayName
-                )}
-              </span>
-            ))}{" "}
-            via Google
-          </>
-        ) : (
-          "Photo via Google"
-        )}
+        Photo:{" "}
+        {items.map((a, i) => (
+          <span key={`${a.displayName}-${i}`}>
+            {i > 0 && ", "}
+            {a.uri ? (
+              <a
+                href={a.uri}
+                target="_blank"
+                rel="noopener noreferrer"
+                onPointerDown={(e) => e.stopPropagation()}
+                className="underline decoration-white/40 underline-offset-2 hover:decoration-white"
+              >
+                {a.displayName}
+              </a>
+            ) : (
+              a.displayName
+            )}
+          </span>
+        ))}{" "}
+        via Google
       </span>
     </span>
   );

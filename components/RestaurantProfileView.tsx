@@ -1,8 +1,10 @@
 "use client";
 
+import { useCallback, useState } from "react";
 import type { MotionStyle } from "framer-motion";
-import type { Restaurant } from "@/lib/types";
+import type { PlacePhoto, Restaurant } from "@/lib/types";
 import { cuisineEmoji } from "@/lib/emoji";
+import { getMarketShortName } from "@/lib/markets";
 import TagPill from "@/components/TagPill";
 import RestaurantHero from "@/components/RestaurantHero";
 import RestaurantVideos from "@/components/RestaurantVideos";
@@ -32,7 +34,13 @@ export default function RestaurantProfileView({
   /** Feed-only: hero fills the first card viewport before profile content begins. */
   feedHeroFullscreen?: boolean;
 }) {
+  const isFeed = variant === "feed";
   const poster = cuisineEmoji(r.cuisineTags);
+  const [photoAttributions, setPhotoAttributions] = useState<PlacePhoto["attributions"]>([]);
+  const updatePhotoAttributions = useCallback(
+    (items: PlacePhoto["attributions"]) => setPhotoAttributions(items),
+    [],
+  );
   // Distinct emojis from the cuisine tags so carousel clips don't all look alike.
   const clipPosters = [...new Set(r.cuisineTags.map((t) => cuisineEmoji([t])))];
   // DB-published restaurants carry neutral-zero metrics (no fabricated social
@@ -57,6 +65,8 @@ export default function RestaurantProfileView({
         heroStyle={heroStyle}
         variant={variant}
         feedHeroFullscreen={feedHeroFullscreen}
+        badges={isFeed ? <HeroStatusBadges restaurant={r} /> : null}
+        onPhotoAttributions={isFeed ? updatePhotoAttributions : undefined}
       />
 
       <div className="space-y-7 px-4 pt-6">
@@ -150,8 +160,74 @@ export default function RestaurantProfileView({
           seedVideos={r.videos}
           directionsUrl={directionsUrl}
         />
+
+        {isFeed && <PhotoCreditRow attributions={photoAttributions} />}
       </div>
     </>
+  );
+}
+
+function HeroStatusBadges({ restaurant: r }: { restaurant: Restaurant }) {
+  const badges: { key: string; icon: string; label: string; tone: "hot" | "soft" }[] = [];
+  if (r.trendScore >= 75) {
+    badges.push({
+      key: "trending",
+      icon: "trending_up",
+      label: `Trending in ${getMarketShortName(r.market)}`,
+      tone: "hot",
+    });
+  }
+  if (r.vibeScore >= 90) {
+    badges.push({ key: "top-choice", icon: "stars", label: "Top choice", tone: "soft" });
+  }
+  if (badges.length === 0) return null;
+
+  return (
+    <>
+      {badges.map((badge) => (
+        <span
+          key={badge.key}
+          className={`inline-flex max-w-full items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase text-cream shadow-lg backdrop-blur-md ring-1 ring-white/15 ${
+            badge.tone === "hot"
+              ? "bg-chili/85 tracking-wider"
+              : "bg-black/45 text-saffron"
+          }`}
+        >
+          <MaterialIcon name={badge.icon} filled={badge.key === "top-choice"} className="text-[14px]" />
+          <span className="truncate">{badge.label}</span>
+        </span>
+      ))}
+    </>
+  );
+}
+
+function PhotoCreditRow({ attributions }: { attributions: PlacePhoto["attributions"] }) {
+  const items = attributions.filter((a) => a.displayName.trim().length > 0);
+  if (items.length === 0) return null;
+
+  return (
+    <p className="border-t border-white/10 pt-3 text-[11px] leading-relaxed text-haze">
+      Photo:{" "}
+      {items.map((a, i) => (
+        <span key={`${a.displayName}-${i}`}>
+          {i > 0 && ", "}
+          {a.uri ? (
+            <a
+              href={a.uri}
+              target="_blank"
+              rel="noopener noreferrer"
+              onPointerDown={(e) => e.stopPropagation()}
+              className="underline decoration-haze/40 underline-offset-2 hover:text-tan hover:decoration-tan"
+            >
+              {a.displayName}
+            </a>
+          ) : (
+            a.displayName
+          )}
+        </span>
+      ))}{" "}
+      via Google
+    </p>
   );
 }
 
