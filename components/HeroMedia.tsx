@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { PlacePhoto } from "@/lib/types";
+import type { ClientHeroMedia } from "@/lib/clientHeroMedia";
 import MaterialIcon from "@/components/MaterialIcon";
 
 /**
@@ -27,6 +28,7 @@ export default function HeroMedia({
   compact = false,
   fallbackMode = "icon",
   eager = false,
+  heroMedia,
 }: {
   restaurantId: string;
   name: string;
@@ -38,13 +40,17 @@ export default function HeroMedia({
   fallbackMode?: "icon" | "neutral";
   /** Hint the browser to start loading visible/next-card imagery promptly. */
   eager?: boolean;
+  /** Feed deck can provide in-memory media so preview/active use the same URL. */
+  heroMedia?: ClientHeroMedia | null;
 }) {
-  const [photo, setPhoto] = useState<PlacePhoto | null>(null);
-  const [logoSrc, setLogoSrc] = useState<string | null>(null);
+  const [fetchedPhoto, setFetchedPhoto] = useState<PlacePhoto | null>(null);
+  const [fetchedLogoSrc, setFetchedLogoSrc] = useState<string | null>(null);
   const [resolved, setResolved] = useState(false);
-  const [logoFailed, setLogoFailed] = useState(false);
+  const [failedPhotoUrl, setFailedPhotoUrl] = useState<string | null>(null);
+  const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null);
 
   useEffect(() => {
+    if (heroMedia !== undefined) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -63,14 +69,14 @@ export default function HeroMedia({
             ? data.logoUrl
             : null;
         if (!cancelled) {
-          setPhoto(nextPhoto);
-          setLogoSrc(nextLogo);
+          setFetchedPhoto(nextPhoto);
+          setFetchedLogoSrc(nextLogo);
           setResolved(true);
         }
       } catch {
         if (!cancelled) {
-          setPhoto(null);
-          setLogoSrc(null);
+          setFetchedPhoto(null);
+          setFetchedLogoSrc(null);
           setResolved(true);
         }
       }
@@ -78,7 +84,16 @@ export default function HeroMedia({
     return () => {
       cancelled = true;
     };
-  }, [restaurantId]);
+  }, [restaurantId, heroMedia]);
+
+  const controlledMedia =
+    heroMedia !== undefined && heroMedia?.restaurantId === restaurantId ? heroMedia : null;
+  const rawPhoto = heroMedia !== undefined ? controlledMedia?.photo ?? null : fetchedPhoto;
+  const rawLogoSrc =
+    heroMedia !== undefined ? controlledMedia?.logoUrl ?? null : fetchedLogoSrc;
+  const mediaResolved = heroMedia !== undefined ? controlledMedia !== null : resolved;
+  const photo = rawPhoto?.photoUri === failedPhotoUrl ? null : rawPhoto;
+  const logoSrc = rawLogoSrc && rawLogoSrc !== failedLogoUrl ? rawLogoSrc : null;
 
   // Tier 1 — Google Place Photo.
   if (photo) {
@@ -93,9 +108,10 @@ export default function HeroMedia({
           alt={`${name} — photo via Google`}
           className="absolute inset-0 h-full w-full object-cover"
           loading={eager ? "eager" : "lazy"}
-          fetchPriority={eager ? "low" : "auto"}
+          fetchPriority={eager ? "high" : "auto"}
           decoding="async"
           referrerPolicy="no-referrer"
+          onError={() => setFailedPhotoUrl(photo.photoUri)}
         />
         <PhotoAttribution attributions={photo.attributions} />
       </>
@@ -103,7 +119,7 @@ export default function HeroMedia({
   }
 
   // Tier 2 — brand logo on a clean centered card.
-  if (resolved && logoSrc && !logoFailed) {
+  if (mediaResolved && logoSrc) {
     return (
       <div className="absolute inset-0">
         <div
@@ -123,9 +139,11 @@ export default function HeroMedia({
               src={logoSrc}
               alt={`${name} logo`}
               className="h-full w-full object-contain"
-              loading="lazy"
+              loading={eager ? "eager" : "lazy"}
+              fetchPriority={eager ? "high" : "auto"}
+              decoding="async"
               referrerPolicy="no-referrer"
-              onError={() => setLogoFailed(true)}
+              onError={() => setFailedLogoUrl(logoSrc)}
             />
           </div>
         </div>

@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { motion, type MotionStyle } from "framer-motion";
 import type { PlacePhoto, PriceLevel, Video } from "@/lib/types";
+import type { ClientHeroMedia } from "@/lib/clientHeroMedia";
 import { priceLabel } from "@/lib/options";
 import VideoEmbed from "@/components/VideoEmbed";
 import MaterialIcon from "@/components/MaterialIcon";
@@ -41,6 +42,7 @@ export default function RestaurantHero({
   feedHeroFullscreen = false,
   badges,
   onPhotoAttributions,
+  heroMedia,
 }: {
   restaurantId: string;
   fallbackVideo: Video;
@@ -61,13 +63,17 @@ export default function RestaurantHero({
   badges?: ReactNode;
   /** Feed cards move required Google author credit below the first viewport. */
   onPhotoAttributions?: (attributions: PlacePhoto["attributions"]) => void;
+  /** Feed deck can provide in-memory media so preview/active use the same URL. */
+  heroMedia?: ClientHeroMedia | null;
 }) {
-  const [photo, setPhoto] = useState<PlacePhoto | null>(null);
-  const [logoSrc, setLogoSrc] = useState<string | null>(null);
+  const [fetchedPhoto, setFetchedPhoto] = useState<PlacePhoto | null>(null);
+  const [fetchedLogoSrc, setFetchedLogoSrc] = useState<string | null>(null);
   const [resolved, setResolved] = useState(false);
-  const [logoFailed, setLogoFailed] = useState(false);
+  const [failedPhotoUrl, setFailedPhotoUrl] = useState<string | null>(null);
+  const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null);
 
   useEffect(() => {
+    if (heroMedia !== undefined) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -86,14 +92,14 @@ export default function RestaurantHero({
             ? data.logoUrl
             : null;
         if (!cancelled) {
-          setPhoto(nextPhoto);
-          setLogoSrc(nextLogo);
+          setFetchedPhoto(nextPhoto);
+          setFetchedLogoSrc(nextLogo);
           setResolved(true);
         }
       } catch {
         if (!cancelled) {
-          setPhoto(null);
-          setLogoSrc(null);
+          setFetchedPhoto(null);
+          setFetchedLogoSrc(null);
           setResolved(true);
         }
       }
@@ -101,7 +107,16 @@ export default function RestaurantHero({
     return () => {
       cancelled = true;
     };
-  }, [restaurantId]);
+  }, [restaurantId, heroMedia]);
+
+  const controlledMedia =
+    heroMedia !== undefined && heroMedia?.restaurantId === restaurantId ? heroMedia : null;
+  const rawPhoto = heroMedia !== undefined ? controlledMedia?.photo ?? null : fetchedPhoto;
+  const rawLogoSrc =
+    heroMedia !== undefined ? controlledMedia?.logoUrl ?? null : fetchedLogoSrc;
+  const mediaResolved = heroMedia !== undefined ? controlledMedia !== null : resolved;
+  const photo = rawPhoto?.photoUri === failedPhotoUrl ? null : rawPhoto;
+  const logoSrc = rawLogoSrc && rawLogoSrc !== failedLogoUrl ? rawLogoSrc : null;
 
   useEffect(() => {
     onPhotoAttributions?.(photo?.attributions ?? []);
@@ -109,7 +124,7 @@ export default function RestaurantHero({
 
   // Logo tier: only once the fetch resolved with no photo, a logo URL exists, and
   // the logo image hasn't errored out.
-  const showLogo = !photo && resolved && Boolean(logoSrc) && !logoFailed;
+  const showLogo = !photo && mediaResolved && Boolean(logoSrc);
   const isFeed = variant === "feed";
 
   return (
@@ -139,13 +154,19 @@ export default function RestaurantHero({
             fetchPriority={isFeed ? "high" : "auto"}
             decoding="async"
             referrerPolicy="no-referrer"
+            onError={() => setFailedPhotoUrl(photo.photoUri)}
           />
           {!isFeed && <PhotoAttribution attributions={photo.attributions} />}
         </>
       ) : showLogo && logoSrc ? (
-        <LogoCard src={logoSrc} name={name} onError={() => setLogoFailed(true)} />
+        <LogoCard
+          src={logoSrc}
+          name={name}
+          eager={isFeed}
+          onError={() => setFailedLogoUrl(logoSrc)}
+        />
       ) : isFeed ? (
-        <FeedHeroFallback label={resolved ? `${name} image unavailable` : `Loading ${name} photo`} />
+        <FeedHeroFallback label={mediaResolved ? `${name} image unavailable` : `Loading ${name} photo`} />
       ) : (
         <VideoEmbed video={fallbackVideo} posterEmoji={posterEmoji} fill />
       )}
@@ -201,9 +222,11 @@ function LogoCard({
   src,
   name,
   onError,
+  eager = false,
 }: {
   src: string;
   name: string;
+  eager?: boolean;
   onError: () => void;
 }) {
   return (
@@ -222,7 +245,9 @@ function LogoCard({
             src={src}
             alt={`${name} logo`}
             className="h-full w-full object-contain"
-            loading="lazy"
+            loading={eager ? "eager" : "lazy"}
+            fetchPriority={eager ? "high" : "auto"}
+            decoding="async"
             referrerPolicy="no-referrer"
             onError={onError}
           />

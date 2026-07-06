@@ -1,4 +1,5 @@
 import type { ScoredRestaurant } from "@/lib/types";
+import type { ClientHeroMedia } from "@/lib/clientHeroMedia";
 import { priceLabel } from "@/lib/options";
 import { cuisineIcon } from "@/lib/emoji";
 import { getMarketShortName } from "@/lib/markets";
@@ -13,7 +14,13 @@ import MaterialIcon from "@/components/MaterialIcon";
  * lives inside SwipeDeck's nested SwipeCard; this component is only the next-card
  * preview behind it.
  */
-export default function RestaurantCard({ scored }: { scored: ScoredRestaurant }) {
+export default function RestaurantCard({
+  scored,
+  heroMedia,
+}: {
+  scored: ScoredRestaurant;
+  heroMedia?: ClientHeroMedia | null;
+}) {
   const r = scored.restaurant;
   const poster = cuisineIcon(r.cuisineTags);
   const trending = r.trendScore >= 75;
@@ -22,7 +29,14 @@ export default function RestaurantCard({ scored }: { scored: ScoredRestaurant })
   return (
     <article className="absolute inset-0 overflow-hidden rounded-[28px] bg-ink-2 ring-1 ring-white/10">
       {/* Identity hero: Google Place Photo -> logo -> FoodSwipe placeholder */}
-      <HeroMedia restaurantId={r.id} name={r.name} posterIcon={poster} fallbackMode="neutral" eager />
+      <HeroMedia
+        restaurantId={r.id}
+        name={r.name}
+        posterIcon={poster}
+        fallbackMode="neutral"
+        eager
+        heroMedia={heroMedia}
+      />
 
       {/* Scrims for legibility */}
       <div className="crave-gradient pointer-events-none absolute inset-0 z-10" />

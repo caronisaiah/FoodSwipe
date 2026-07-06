@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import type { MotionStyle } from "framer-motion";
 import type { PlacePhoto, Restaurant } from "@/lib/types";
+import type { ClientHeroMedia } from "@/lib/clientHeroMedia";
 import { cuisineEmoji } from "@/lib/emoji";
 import { getMarketShortName } from "@/lib/markets";
 import TagPill from "@/components/TagPill";
@@ -25,6 +26,7 @@ export default function RestaurantProfileView({
   heroStyle,
   variant = "page",
   feedHeroFullscreen = false,
+  heroMedia,
 }: {
   restaurant: Restaurant;
   /** Scroll-linked motion style for the hero (in-feed card only). */
@@ -33,6 +35,8 @@ export default function RestaurantProfileView({
   variant?: "page" | "feed";
   /** Feed-only: hero fills the first card viewport before profile content begins. */
   feedHeroFullscreen?: boolean;
+  /** Feed deck can provide in-memory media so preview/active use the same URL. */
+  heroMedia?: ClientHeroMedia | null;
 }) {
   const isFeed = variant === "feed";
   const poster = cuisineEmoji(r.cuisineTags);
@@ -67,6 +71,7 @@ export default function RestaurantProfileView({
         feedHeroFullscreen={feedHeroFullscreen}
         badges={isFeed ? <HeroStatusBadges restaurant={r} /> : null}
         onPhotoAttributions={isFeed ? updatePhotoAttributions : undefined}
+        heroMedia={heroMedia}
       />
 
       <div className="space-y-7 px-4 pt-6">
