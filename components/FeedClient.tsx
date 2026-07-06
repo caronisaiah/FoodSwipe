@@ -49,7 +49,7 @@ export default function FeedClient() {
 
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden bg-ink">
-      {/* Full-bleed discovery canvas — each card IS the scrollable profile */}
+      {/* Full-bleed discovery canvas — hero first, profile details below on scroll */}
       {hydrated ? (
         <SwipeDeck
           deck={deck}

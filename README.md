@@ -46,7 +46,7 @@ in the repository. Mobile-first, dark, video-forward design.
 | Route | Purpose |
 | --- | --- |
 | `/` | Onboarding and landing — preference picker (location, distance, budget, cravings, vibe, dietary). Persists to `localStorage`, then continues to the feed. Doubles as the settings screen. |
-| `/feed` | The swipe deck. Drag or tap Skip/Save; cards are ranked by preferences. |
+| `/feed` | The swipe deck. First viewport is the restaurant hero card; vertical scroll reveals profile details below; cards are ranked by preferences. |
 | `/restaurants/[id]` | Restaurant profile: hero clip, metrics, what to order, best-for, review carousel, and external links. Statically generated per seeded id. |
 | `/saved` | Saved (right-swiped) restaurants, with quick removal and profile links. |
 | `/admin/videos` | Internal, non-public tool to resolve and attach review videos. `noindex`, admin-secret gated. |
@@ -855,10 +855,10 @@ app/
 components/
   PreferenceOnboarding.tsx   Landing and preference picker
   FeedClient.tsx             Ranks the deck and owns feed state
-  SwipeDeck.tsx              Gesture, animation, controls, empty state
-  RestaurantCard.tsx         The swipe card
-  RestaurantProfile.tsx      Full profile (server-rendered)
-  RestaurantHero.tsx         Profile hero: Google Place Photo or placeholder
+  SwipeDeck.tsx              Active deck queue, nested SwipeCard drag/scroll, controls, empty state
+  RestaurantCard.tsx         Lightweight next-card peek behind the active card
+  RestaurantProfile.tsx      Full standalone profile page wrapper
+  RestaurantHero.tsx         Profile/feed hero: Google Place Photo or placeholder
   RestaurantVideos.tsx       Review carousel: seed + shared + local
   GoThere.tsx                Profile "Go there" links
   SavedClient.tsx            Saved list
@@ -914,8 +914,9 @@ Architecture seams kept stable so the product can grow:
 - **Profile heroes can be real Google Place Photos**, currently proven on 3
   restaurants with a `googlePlaceId` (see [Restaurant photos](#restaurant-photos-google-places)).
   Only the Place ID is stored; photos are fetched fresh, attributed, never
-  rehosted, and absent a key/photo the hero falls back to the placeholder. Feed
-  cards do not use Google photos; Google ratings, reviews, and maps are out of
+  rehosted, and absent a key/photo the hero falls back to the placeholder. The
+  active feed hero uses the same image ladder; lightweight peek cards avoid
+  loading profile details or videos. Google ratings, reviews, and maps are out of
   scope.
 - Video attachments are shared across devices via Postgres; legacy `localStorage`
   clips remain as a labeled fallback. Both appear on profiles, not in the feed

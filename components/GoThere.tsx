@@ -80,16 +80,18 @@ function ExternalLink({
     "flex flex-col items-center gap-1 rounded-2xl py-3.5 text-xs font-semibold ring-1 ring-inset transition";
   if (disabled) {
     return (
-      <button
-        type="button"
-        disabled
-        aria-label={`${label} — coming soon`}
-        title="Coming soon"
-        className={`${base} cursor-not-allowed bg-surface text-haze/60 ring-white/10`}
-      >
-        <MaterialIcon name={icon} className="text-[22px]" />
-        {label}
-      </button>
+      <span className="block" onPointerDown={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          disabled
+          aria-label={`${label} — coming soon`}
+          title="Coming soon"
+          className={`${base} w-full cursor-not-allowed bg-surface text-haze/60 ring-white/10`}
+        >
+          <MaterialIcon name={icon} className="text-[22px]" />
+          {label}
+        </button>
+      </span>
     );
   }
   return (
@@ -97,6 +99,7 @@ function ExternalLink({
       href={href}
       target="_blank"
       rel="noopener noreferrer"
+      onPointerDown={(e) => e.stopPropagation()}
       className={
         primary
           ? `${base} bg-brand-gradient text-saffron-ink ring-transparent shadow-lg shadow-saffron/20 active:scale-[0.98]`

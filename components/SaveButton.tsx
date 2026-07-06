@@ -10,6 +10,7 @@ export default function SaveButton({ restaurantId }: { restaurantId: string }) {
   return (
     <button
       type="button"
+      onPointerDown={(e) => e.stopPropagation()}
       onClick={() =>
         saved ? removeSwipe(restaurantId) : recordSwipe(restaurantId, "right")
       }

@@ -22,12 +22,15 @@ export default function RestaurantProfileView({
   restaurant: r,
   heroStyle,
   variant = "page",
+  feedHeroFullscreen = false,
 }: {
   restaurant: Restaurant;
   /** Scroll-linked motion style for the hero (in-feed card only). */
   heroStyle?: MotionStyle;
   /** "page" = standalone route; "feed" = full-bleed hero for the scrollable feed card. */
   variant?: "page" | "feed";
+  /** Feed-only: hero fills the first card viewport before profile content begins. */
+  feedHeroFullscreen?: boolean;
 }) {
   const poster = cuisineEmoji(r.cuisineTags);
   // Distinct emojis from the cuisine tags so carousel clips don't all look alike.
@@ -53,6 +56,7 @@ export default function RestaurantProfileView({
         priceLevel={r.priceLevel}
         heroStyle={heroStyle}
         variant={variant}
+        feedHeroFullscreen={feedHeroFullscreen}
       />
 
       <div className="space-y-7 px-4 pt-6">

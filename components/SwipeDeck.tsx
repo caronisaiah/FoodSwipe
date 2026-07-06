@@ -143,7 +143,8 @@ interface SwipeCardProps {
  * owns VERTICAL scroll (the profile body). `touch-action: pan-y` on both lets the
  * browser route vertical pans to native scroll and horizontal pans to framer, so
  * they coexist without fighting. The hero fades on scroll via `useScroll` on the
- * card's own scroll container. No "open" step — the card IS the profile.
+ * card's own scroll container. The first scroll viewport is the hero card; the
+ * profile body begins below it and appears only after a vertical scroll.
  */
 const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
   function SwipeCard({ scored, onDecide }, ref) {
@@ -244,6 +245,7 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
           <RestaurantProfileView
             restaurant={r}
             variant="feed"
+            feedHeroFullscreen
             heroStyle={{ opacity: heroOpacity, scale: heroScale }}
           />
         </div>

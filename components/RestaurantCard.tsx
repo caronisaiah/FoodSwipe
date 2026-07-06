@@ -10,7 +10,8 @@ import MaterialIcon from "@/components/MaterialIcon";
  * hero (Place Photo -> logo -> placeholder) + name/neighborhood/cuisine/price and
  * an optional Trending badge. Deliberately does NOT render the profile body or
  * review videos, so background cards never trigger video fetches. The active card
- * is the scrollable profile (see SwipeDeck → RestaurantProfileView).
+ * lives inside SwipeDeck's nested SwipeCard; this component is only the next-card
+ * preview behind it.
  */
 export default function RestaurantCard({ scored }: { scored: ScoredRestaurant }) {
   const r = scored.restaurant;

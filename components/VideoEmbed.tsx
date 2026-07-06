@@ -227,6 +227,7 @@ function SourceLink({
       target="_blank"
       rel="noopener noreferrer"
       aria-label={`${label} — ${attribution}`}
+      onPointerDown={(e) => e.stopPropagation()}
       className="pointer-events-auto shrink-0 rounded-full bg-white/15 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur-md ring-1 ring-white/25 transition hover:bg-white/25"
     >
       {label} ↗

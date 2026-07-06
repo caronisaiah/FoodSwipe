@@ -37,6 +37,7 @@ export default function RestaurantHero({
   priceLevel,
   heroStyle,
   variant = "page",
+  feedHeroFullscreen = false,
 }: {
   restaurantId: string;
   fallbackVideo: Video;
@@ -48,9 +49,11 @@ export default function RestaurantHero({
   /** Optional motion style (opacity/scale) for the scroll-linked fade. Omitted on
    *  the standalone route -> hero is static. */
   heroStyle?: MotionStyle;
-  /** "page" = inset rounded hero (standalone route); "feed" = full-bleed hero that
-   *  fills the top of the scrollable feed card (the card frame supplies rounding). */
+  /** "page" = inset rounded hero (standalone route); "feed" = full-bleed hero.
+   *  `feedHeroFullscreen` makes the feed hero fill the first card viewport. */
   variant?: "page" | "feed";
+  /** Feed-only: make the hero occupy the card's first scroll viewport. */
+  feedHeroFullscreen?: boolean;
 }) {
   const [photo, setPhoto] = useState<PlacePhoto | null>(null);
   const [logoSrc, setLogoSrc] = useState<string | null>(null);
@@ -102,7 +105,9 @@ export default function RestaurantHero({
       style={heroStyle}
       className={
         variant === "feed"
-          ? "relative aspect-[4/5] w-full overflow-hidden"
+          ? feedHeroFullscreen
+            ? "relative h-full min-h-full w-full overflow-hidden"
+            : "relative aspect-[4/5] w-full overflow-hidden"
           : "relative mx-4 mt-1 aspect-[4/5] overflow-hidden rounded-[28px] ring-1 ring-white/10"
       }
     >
@@ -213,6 +218,7 @@ function PhotoAttribution({
                     href={a.uri}
                     target="_blank"
                     rel="noopener noreferrer"
+                    onPointerDown={(e) => e.stopPropagation()}
                     className="underline decoration-white/40 underline-offset-2 hover:decoration-white"
                   >
                     {a.displayName}
