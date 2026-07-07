@@ -1,11 +1,13 @@
 import { getAppRestaurantById } from "@/lib/db/restaurants";
+import { shouldIncludeSeedRestaurants } from "@/lib/contentMode";
 import { getActiveVideos } from "@/lib/db/videos";
 
 /*
   GET /api/restaurants/[id]/videos  (public read, v1.2)
-  Returns active persisted videos for a seed OR published DB restaurant,
-  normalized through lib/video. Published restaurants have no attached videos
-  yet (promotion never auto-publishes videos), so this returns []. Degrades
+  Returns active persisted videos for a visible public restaurant, normalized
+  through lib/video. In production content mode, seed-only restaurant ids do not
+  resolve. Published restaurants have no attached videos yet (promotion never
+  auto-publishes videos), so this returns []. Degrades
   gracefully: if the DB is down/unset it returns an empty list rather than
   failing the profile.
 */
@@ -14,7 +16,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const { id } = await params;
-  if (!(await getAppRestaurantById(id))) {
+  if (!(await getAppRestaurantById(id, { includeSeeds: shouldIncludeSeedRestaurants() }))) {
     return Response.json({ error: "Unknown restaurant." }, { status: 404 });
   }
   try {

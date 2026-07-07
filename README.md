@@ -18,9 +18,10 @@ to public sources with full platform and creator attribution.
 > using `YOUTUBE_API_KEY`, prefilled title/channel/thumbnail/publishedAt, attached
 > it to a restaurant profile, and displayed the enriched video in production.
 
-**Current status:** working prototype on seeded Washington, DC data. Video
-attachments persist to a shared Postgres table (Neon); restaurants remain seeded
-in the repository. Mobile-first, dark, video-forward design.
+**Current status:** working prototype with explicit content modes. Local/demo can
+show seeded Washington, DC data; production can run DB-published-only via
+`FOODSWIPE_CONTENT_MODE=production`. Video attachments persist to a shared
+Postgres table (Neon). Mobile-first, dark, video-forward design.
 
 ---
 
@@ -47,7 +48,7 @@ in the repository. Mobile-first, dark, video-forward design.
 | --- | --- |
 | `/` | Onboarding and landing — preference picker (location, distance, budget, cravings, vibe, dietary). Persists to `localStorage`, then continues to the feed. Doubles as the settings screen. |
 | `/feed` | The swipe deck. First viewport is the restaurant hero card; vertical scroll reveals profile details below; cards are ranked by preferences. |
-| `/restaurants/[id]` | Restaurant profile: hero media, polished module stack, interleaved review clips, what to order, best-for, and external links. Statically generated per seeded id. |
+| `/restaurants/[id]` | Restaurant profile: hero media, polished module stack, interleaved review clips, what to order, best-for, and external links. Seed pages are generated only when content mode allows seeds; DB-published pages render on demand. |
 | `/saved` | Saved (right-swiped) restaurants, with quick removal and profile links. |
 | `/admin/videos` | Internal, non-public tool to resolve and attach review videos. `noindex`, admin-secret gated. |
 
@@ -467,14 +468,16 @@ seed **plus** DB-published restaurants.
   "hype" metric strip when it's all zero (showing just the reason). Each gets one
   clearly-labelled placeholder video so the non-empty `videos` tuple holds without
   inventing content.
-- **Feed merge.** [`lib/db/restaurants.ts`](lib/db/restaurants.ts) exposes
-  `getAllRestaurants()` (seed + published) behind the public
-  [`GET /api/restaurants`](app/api/restaurants/route.ts) (`no-store`). The feed
-  and saved screens start from seed (instant + offline-safe) and merge in the DB
-  list once fetched; a DB outage degrades to seed-only and never empties the feed.
-  `/restaurants/[id]` keeps seed pages static (via `generateStaticParams`) and
-  renders published pages on demand; the photo + videos routes resolve seed **or**
-  published ids. Tags are re-validated on read — DB arrays are never trusted blindly.
+- **Content mode / feed merge.** [`lib/contentMode.ts`](lib/contentMode.ts)
+  reads `FOODSWIPE_CONTENT_MODE` (`demo` / `mixed` / `production`, default
+  `mixed`). In `demo`/`mixed`, [`GET /api/restaurants`](app/api/restaurants/route.ts)
+  can return seed + DB-published restaurants for DC, preserving local/demo
+  behavior. In `production`, public reads are DB-published-only: no seed fallback,
+  no seed standalone pages, and no seed photo/video route resolution. The feed
+  and saved screens receive seed fallback from server components only when the
+  mode allows it, so production does not serialize seed data into those clients.
+  No deletion/reset happens here; tags are re-validated on read and DB arrays are
+  never trusted blindly.
 - **Editing after promotion.** [`GET /api/admin/restaurants/published`](app/api/admin/restaurants/published/route.ts),
   [`PATCH /api/admin/restaurants/published/[id]`](app/api/admin/restaurants/published/[id]/route.ts),
   and [`POST …/[id]/hide`](app/api/admin/restaurants/published/[id]/hide/route.ts)
@@ -513,12 +516,11 @@ public app DC-first. No new schema/migration was needed for A2.
 - **Promotion → distance.** Promotion copies `candidate.market` into
   `restaurants.market` and computes `distanceMiles` from **that market's origin**;
   editing a published row's lat/lng recomputes from the row's market.
-- **Public read (A2).** `/api/restaurants` is **DC by default**: no `?market` → DC
-  (seed + DC published, unchanged today); `?market=dc` → DC; `?market=nyc` → NYC
-  published rows **only** (seed is the DC market, never mixed in), honest-empty if
-  none. An invalid market **falls back to the DC default** (this public read route
-  is degrade-safe; it does not `400` like the admin write route). No market selector
-  UI yet — the public app stays DC-first.
+- **Public read (A2).** `/api/restaurants` is **DC by default**. In `demo`/`mixed`,
+  no `?market` or `?market=dc` returns seed + DC published rows. In `production`,
+  DC returns DB-published rows only. `?market=nyc` returns NYC published rows only
+  in every mode (seed is DC-only), honest-empty if none. An invalid market falls
+  back to the DC default. No market selector UI yet; the public app stays DC-first.
 - **Discovery (A2).** [`queryGenerator`](lib/discovery/queryGenerator.ts) derives the
   location qualifier from the restaurant's market (DC → `"Washington DC"`, NYC →
   `"New York"` + neighborhood/borough), and [`scoreDiscoveryLead`](lib/discovery/scoreDiscoveryLead.ts)
@@ -731,6 +733,7 @@ Environment variables go in `.env` (which is gitignored). Use `.env` rather than
 
 ```bash
 DATABASE_URL="postgresql://USER:PASSWORD@HOST/DB?sslmode=require"   # Neon connection string (shared persistence)
+FOODSWIPE_CONTENT_MODE="mixed"                                      # demo | mixed | production; production is DB-published only
 FOODSWIPE_ADMIN_SECRET="a-long-random-string"                       # gate for admin writes
 YOUTUBE_API_KEY="..."                                              # optional — YouTube metadata enrichment
 GOOGLE_MAPS_API_KEY="..."                                          # optional — Google Place Photos on profiles
@@ -739,6 +742,14 @@ BRAVE_SEARCH_API_KEY="..."                                         # optional �
 ANTHROPIC_API_KEY="sk-ant-..."                                     # optional — admin AI-assisted tag suggestions (server-only)
 FOODSWIPE_AI_MODEL="claude-sonnet-4-6"                              # optional — overrides the default AI model
 ```
+
+`FOODSWIPE_CONTENT_MODE` controls public seed visibility. Unset local/dev defaults
+to `mixed`; `demo`/`mixed` allow DC seed fallback, while `production` serves only
+DB-published restaurants and does not resolve seed-only profile/photo/video routes.
+Set `FOODSWIPE_CONTENT_MODE=production` in Vercel Production before launch. No
+`NEXT_PUBLIC_` content-mode variable is required; server components decide whether
+seed fallback is serialized into client props. An invalid explicit mode fails
+closed to `production`.
 
 `DATABASE_URL` and `FOODSWIPE_ADMIN_SECRET` enable shared persistence (the app
 still runs without them). `YOUTUBE_API_KEY` is optional: with it, resolving a
@@ -843,7 +854,7 @@ app/
   page.tsx                   "/" onboarding and landing
   feed/page.tsx              "/feed"
   saved/page.tsx             "/saved"
-  restaurants/[id]/page.tsx  "/restaurants/[id]" (static per seeded id)
+  restaurants/[id]/page.tsx  "/restaurants/[id]" (seed-static only outside production content mode)
   restaurants/[id]/not-found.tsx        404 for an unknown restaurant id
   admin/videos/page.tsx      "/admin/videos" (internal, noindex)
   api/resolve/youtube/route.ts          POST  resolve a YouTube URL
@@ -878,6 +889,7 @@ lib/
   youtube.ts                 YouTube URL resolver
   places.ts                  Server-only Google Place Photo resolver
   adminAuth.ts               Admin-secret check for write routes
+  contentMode.ts             Public seed visibility: demo/mixed/production
   options.ts                 Controlled vocab and labels for onboarding
   recommendations.ts         Ranking
   storage.ts                 localStorage hooks (prefs, saves, legacy clips)
@@ -906,6 +918,8 @@ Architecture seams kept stable so the product can grow:
 ## Scope and limitations
 
 - Restaurants are hand-authored seed data (18 spots), not ingested.
+- Production content mode hides those seed restaurants from public feed/profile
+  reads; real launch content must be DB-published rows.
 - Seed clips are honest placeholders or real discovery-search links; genuine
   embeds are added through the admin tool.
 - **A profile shows at most 3 usable videos**, as large vertical review cards interleaved through the profile body, ordered

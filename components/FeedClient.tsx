@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { Restaurant } from "@/lib/types";
-import { RESTAURANTS } from "@/lib/seed/restaurants";
 import { rankRestaurants } from "@/lib/recommendations";
 import { usePreferences, useSwipes, useHydrated } from "@/lib/storage";
 import SwipeDeck from "@/components/SwipeDeck";
@@ -16,25 +15,30 @@ import MaterialIcon from "@/components/MaterialIcon";
  * top app bar floats over the hero as a glassy overlay. We wait for hydration
  * before rendering the deck so returning users don't see already-swiped cards.
  */
-export default function FeedClient() {
+export default function FeedClient({
+  initialRestaurants,
+}: {
+  initialRestaurants: Restaurant[];
+}) {
   const hydrated = useHydrated();
   const { preferences } = usePreferences();
   const { recordSwipe, resetSwipes, savedIds, swipedIds } = useSwipes();
 
-  // Start from seed (instant + DB-outage-safe), then merge in published DB
-  // restaurants once fetched. setState only in the async continuation.
-  const [restaurants, setRestaurants] = useState<Restaurant[]>(RESTAURANTS);
+  // Server decides whether seed fallback is allowed for this deployment. In
+  // production mode this starts empty and the API must provide DB-published rows.
+  const [restaurants, setRestaurants] = useState<Restaurant[]>(initialRestaurants);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const res = await fetch("/api/restaurants");
         const data = (await res.json()) as { restaurants?: Restaurant[] };
-        if (!cancelled && Array.isArray(data.restaurants) && data.restaurants.length > 0) {
+        if (!cancelled && Array.isArray(data.restaurants)) {
           setRestaurants(data.restaurants);
         }
       } catch {
-        // keep seed-only deck on any failure
+        // Keep the server-provided initial list. In production content mode that
+        // is intentionally empty rather than a seed fallback.
       }
     })();
     return () => {

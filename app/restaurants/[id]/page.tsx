@@ -4,10 +4,12 @@ import AppShell from "@/components/AppShell";
 import RestaurantProfile from "@/components/RestaurantProfile";
 import { RESTAURANTS } from "@/lib/seed/restaurants";
 import { getAppRestaurantById } from "@/lib/db/restaurants";
+import { shouldIncludeSeedRestaurants } from "@/lib/contentMode";
 
-// Pre-render every seeded restaurant at build time. Published DB restaurants are
-// not listed here, so their pages render on demand (dynamicParams default = true).
+// Pre-render seed restaurants only when content mode allows seeds. Published DB
+// restaurants are not listed here, so their pages render on demand.
 export function generateStaticParams() {
+  if (!shouldIncludeSeedRestaurants()) return [];
   return RESTAURANTS.map((r) => ({ id: r.id }));
 }
 
@@ -17,7 +19,9 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await params;
-  const r = await getAppRestaurantById(id);
+  const r = await getAppRestaurantById(id, {
+    includeSeeds: shouldIncludeSeedRestaurants(),
+  });
   if (!r) return { title: "Restaurant not found · FoodSwipe" };
   return {
     title: `${r.name} · FoodSwipe`,
@@ -31,8 +35,10 @@ export default async function RestaurantPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  // Seed resolves synchronously; an unknown id falls through to the published DB.
-  const restaurant = await getAppRestaurantById(id);
+  // Seed resolution is gated by content mode; published DB rows still render on demand.
+  const restaurant = await getAppRestaurantById(id, {
+    includeSeeds: shouldIncludeSeedRestaurants(),
+  });
   if (!restaurant) notFound();
 
   return (

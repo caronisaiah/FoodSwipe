@@ -24,6 +24,10 @@ export { isDbConfigured };
 export const PUBLISHED_STATUSES = ["published", "hidden"] as const;
 export type PublishedStatus = (typeof PUBLISHED_STATUSES)[number];
 
+interface PublicRestaurantReadOptions {
+  includeSeeds?: boolean;
+}
+
 // distanceMiles is a real geographic estimate from the row's MARKET origin
 // (honest), not a fabricated metric. The origin is resolved per-market via
 // lib/markets (getMarketOrigin), defaulting to DC — see Slice A1.
@@ -493,24 +497,33 @@ export async function updatePublishedRestaurant(
   return row ? rowToAdmin(row) : null;
 }
 
-/** Resolve a restaurant for the public app by id (seed first, then published DB). */
-export async function getAppRestaurantById(id: string): Promise<Restaurant | null> {
-  const seed = getRestaurantById(id);
-  if (seed) return seed;
+/** Resolve a restaurant by public id. Seeds remain opt-out so admin tools that
+ * intentionally work with seed/demo profiles keep their existing behavior. */
+export async function getAppRestaurantById(
+  id: string,
+  options: PublicRestaurantReadOptions = {},
+): Promise<Restaurant | null> {
+  if (options.includeSeeds !== false) {
+    const seed = getRestaurantById(id);
+    if (seed) return seed;
+  }
   return getPublishedRestaurantBySlug(id);
 }
 
 /**
- * Merged feed dataset: code-managed seed + published DB restaurants.
+ * Public feed dataset: published DB restaurants plus optional code-managed seed.
  *
  * Backward-compatible by default (no `market` → seed + all published). The seed
  * is the DC market, so an explicit non-DC filter returns ONLY that market's
  * published rows (seed excluded) — honest, possibly empty if none exist yet. A
- * "dc" filter still includes the seed. Public feed filtering/selector is A2;
- * this just makes `?market=` usable without changing default behavior.
+ * "dc" filter can include the seed when the caller allows it. Production public
+ * reads pass includeSeeds=false so DB-published rows are the only source.
  */
-export async function getAllRestaurants(market?: Market): Promise<Restaurant[]> {
+export async function getAllRestaurants(
+  market?: Market,
+  options: PublicRestaurantReadOptions = {},
+): Promise<Restaurant[]> {
   const published = await getPublishedRestaurants(market);
-  const includeSeed = !market || market === "dc";
+  const includeSeed = options.includeSeeds !== false && (!market || market === "dc");
   return includeSeed ? [...RESTAURANTS, ...published] : published;
 }

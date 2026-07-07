@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { Restaurant } from "@/lib/types";
 import { useSwipes, useHydrated } from "@/lib/storage";
-import { RESTAURANTS, getRestaurantById } from "@/lib/seed/restaurants";
 import { priceLabel } from "@/lib/options";
 import { cuisineIcon } from "@/lib/emoji";
 import TagPill from "@/components/TagPill";
@@ -12,26 +11,32 @@ import HeroMedia from "@/components/HeroMedia";
 import MaterialIcon from "@/components/MaterialIcon";
 
 /** Saved restaurants (right swipes), newest first. */
-export default function SavedClient() {
+export default function SavedClient({
+  seedRestaurants,
+}: {
+  seedRestaurants: Restaurant[];
+}) {
   const isLoaded = useHydrated();
   const { savedIds, removeSwipe } = useSwipes();
-
-  // Resolve saved ids against seed + published DB restaurants. Seed resolves
-  // instantly; the merged list (incl. promoted DB restaurants) loads after.
-  const [byId, setById] = useState<Map<string, Restaurant>>(
-    () => new Map(RESTAURANTS.map((r) => [r.id, r])),
+  const seedById = useMemo(
+    () => new Map(seedRestaurants.map((r) => [r.id, r])),
+    [seedRestaurants],
   );
+
+  // Server decides whether seed saved IDs may resolve. In production content mode
+  // seedRestaurants is empty, so stale seed-only localStorage IDs stay hidden.
+  const [byId, setById] = useState<Map<string, Restaurant>>(seedById);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const res = await fetch("/api/restaurants");
         const data = (await res.json()) as { restaurants?: Restaurant[] };
-        if (!cancelled && Array.isArray(data.restaurants) && data.restaurants.length > 0) {
+        if (!cancelled && Array.isArray(data.restaurants)) {
           setById(new Map(data.restaurants.map((r) => [r.id, r])));
         }
       } catch {
-        // keep seed-only map
+        // Keep the server-provided fallback map; production mode provides none.
       }
     })();
     return () => {
@@ -40,7 +45,7 @@ export default function SavedClient() {
   }, []);
 
   const saved = savedIds
-    .map((id) => byId.get(id) ?? getRestaurantById(id))
+    .map((id) => byId.get(id) ?? seedById.get(id))
     .filter((r): r is Restaurant => Boolean(r));
 
   return (

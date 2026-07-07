@@ -1,11 +1,13 @@
 import { getAppRestaurantById } from "@/lib/db/restaurants";
+import { shouldIncludeSeedRestaurants } from "@/lib/contentMode";
 import { resolveHeroMedia } from "@/lib/heroMedia";
 
 /*
   GET /api/restaurants/[id]/photo  (public read, v1.5)
 
-  Returns a fresh Google Place Photo for a seeded restaurant that has a
-  `googlePlaceId`. The response always includes a safe diagnostic `status`
+  Returns fresh identity media for a public restaurant. In production content
+  mode, seed-only restaurant ids do not resolve. The response always includes a
+  safe diagnostic `status`
   (e.g. "ok" / "missing-api-key" / "place-details-failed" / "no-photos"), and
   `photo` is null on anything but "ok". The client hero reads `photo` to show a
   real identity image and falls back to the logo/placeholder on null; the
@@ -26,8 +28,10 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const { id } = await params;
-  // Resolve seed first, then published DB restaurants (same shape either way).
-  const restaurant = await getAppRestaurantById(id);
+  // Resolve seed only when content mode allows it; DB-published rows always work.
+  const restaurant = await getAppRestaurantById(id, {
+    includeSeeds: shouldIncludeSeedRestaurants(),
+  });
   if (!restaurant) {
     return Response.json({ error: "Unknown restaurant." }, { status: 404 });
   }
