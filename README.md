@@ -29,9 +29,9 @@ in the repository. Mobile-first, dark, video-forward design.
 - **Swipe discovery** — a full-screen, one-card-at-a-time deck with physics-based
   drag, Skip/Save controls, and arrow-key support. Cards are ordered by the
   preferences captured at onboarding.
-- **Video-first profiles** — each restaurant reads like a creator profile: a hero
-  clip, up to three same-size review videos, dish highlights, "best for"
-  occasions, and social-proof metrics.
+- **Video-first profiles** — each restaurant reads like a creator profile: a
+  full-screen hero, up to three usable review videos, dish highlights, "best
+  for" occasions, and social-proof metrics.
 - **Transparent ranking** — a readable weighted score (craving, vibe, budget,
   dietary, distance, freshness, and video coverage). Every card states why it
   matched. No black-box scoring and no invented precision.
@@ -47,7 +47,7 @@ in the repository. Mobile-first, dark, video-forward design.
 | --- | --- |
 | `/` | Onboarding and landing — preference picker (location, distance, budget, cravings, vibe, dietary). Persists to `localStorage`, then continues to the feed. Doubles as the settings screen. |
 | `/feed` | The swipe deck. First viewport is the restaurant hero card; vertical scroll reveals profile details below; cards are ranked by preferences. |
-| `/restaurants/[id]` | Restaurant profile: hero clip, metrics, what to order, best-for, review carousel, and external links. Statically generated per seeded id. |
+| `/restaurants/[id]` | Restaurant profile: hero media, polished module stack, interleaved review clips, what to order, best-for, and external links. Statically generated per seeded id. |
 | `/saved` | Saved (right-swiped) restaurants, with quick removal and profile links. |
 | `/admin/videos` | Internal, non-public tool to resolve and attach review videos. `noindex`, admin-secret gated. |
 
@@ -125,9 +125,11 @@ restaurants stay in [`lib/seed/restaurants.ts`](lib/seed/restaurants.ts).
   are gated by a single shared secret (`FOODSWIPE_ADMIN_SECRET`), sent as the
   `x-foodswipe-admin-secret` header and compared in constant time. This is
   deliberately minimal write protection, not an account system.
-- Profiles merge seed, shared (Postgres), and legacy local clips; the shared
-  fetch is best-effort. The database client is lazy, so the app builds and runs
-  without a database (the persisted list is simply empty and writes return `503`).
+- Profiles prefer usable attached clips from shared Postgres/local sources; if
+  none exist, they fall back to usable seed discovery links. Placeholder-only
+  tuple fillers are not rendered as profile video cards. The shared fetch is
+  best-effort. The database client is lazy, so the app builds and runs without a
+  database (the persisted list is simply empty and writes return `503`).
 
 ### Restaurant photos (Google Places)
 
@@ -861,13 +863,13 @@ components/
   RestaurantCard.tsx         Lightweight next-card peek behind the active card
   RestaurantProfile.tsx      Full standalone profile page wrapper
   RestaurantHero.tsx         Profile/feed hero: Google Place Photo, logo, or neutral fallback
-  RestaurantVideos.tsx       Review carousel: seed + shared + local
+  RestaurantVideos.tsx       Interleaved review clip cards: attached clips + seed fallback
   GoThere.tsx                Profile "Go there" links
   SavedClient.tsx            Saved list
   AdminVideos.tsx            Internal intake: resolve and attach to backend
   VideoEmbed.tsx             Status-driven, legal-safe video display
   SaveButton.tsx             Save toggle on profiles
-  TagPill.tsx / MetricBadge.tsx   Presentational primitives
+  TagPill.tsx                Presentational tag primitive
   AppShell.tsx / BottomNav.tsx    Mobile frame and navigation
 
 lib/
@@ -906,7 +908,7 @@ Architecture seams kept stable so the product can grow:
 - Restaurants are hand-authored seed data (18 spots), not ingested.
 - Seed clips are honest placeholders or real discovery-search links; genuine
   embeds are added through the admin tool.
-- **A profile shows at most 3 videos**, in a vertical same-size stack, ordered
+- **A profile shows at most 3 usable videos**, as large vertical review cards interleaved through the profile body, ordered
   deterministically (real-post → embeddable → enriched → newer → original). This
   is a **display rule, not a database/admin limit** — the backend may store more
   active videos per restaurant (for future ranking/moderation/replacement); the

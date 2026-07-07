@@ -1,99 +1,72 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { Video } from "@/lib/types";
-import { useManualVideos } from "@/lib/storage";
-import { videoSourceHref } from "@/lib/video";
 import MaterialIcon from "@/components/MaterialIcon";
 
 /**
- * The profile's "Go there" actions. Client-side so the "Reviews" link reflects
- * the SAME merged set the carousel shows — seed + shared (persisted backend) +
- * local (localStorage) — using `videoSourceHref` so it never disagrees about
- * what's linkable. The shared fetch is best-effort (falls back to seed/local).
+ * Polished public "Go there" module. It receives already-resolved URLs from the
+ * profile body, so it does not refetch video sources or invent unavailable links.
  */
 export default function GoThere({
-  restaurantId,
-  seedVideos,
   directionsUrl,
+  websiteDomain,
+  reviewsHref,
 }: {
-  restaurantId: string;
-  seedVideos: Video[];
   directionsUrl: string;
+  websiteDomain?: string | null;
+  reviewsHref?: string;
 }) {
-  const { videos: manualVideos } = useManualVideos(restaurantId);
-  const [shared, setShared] = useState<Video[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch(`/api/restaurants/${restaurantId}/videos`);
-        const data = (await res.json()) as { videos?: Video[] };
-        if (!cancelled) setShared(Array.isArray(data.videos) ? data.videos : []);
-      } catch {
-        if (!cancelled) setShared([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [restaurantId]);
-
-  const reviewsHref = [...seedVideos, ...shared, ...manualVideos]
-    .map(videoSourceHref)
-    .find((h): h is string => !!h);
+  const websiteHref = websiteUrl(websiteDomain);
 
   return (
-    <section>
-      <div className="mb-2.5">
-        <h2 className="font-display text-lg font-semibold text-cream">Go there</h2>
-      </div>
+    <section className="rounded-[24px] bg-surface px-4 py-[18px] pb-5 ring-1 ring-inset ring-white/5">
+      <h3 className="mb-3 text-[11px] font-bold uppercase tracking-[0.25em] text-haze">
+        Go there
+      </h3>
       <div className="grid grid-cols-3 gap-2">
-        <ExternalLink href={directionsUrl} icon="near_me" label="Directions" primary />
-        <ExternalLink href="#" icon="language" label="Website" disabled />
-        {reviewsHref ? (
-          <ExternalLink href={reviewsHref} icon="play_circle" label="Reviews" />
-        ) : (
-          <ExternalLink href="#" icon="play_circle" label="Reviews" disabled />
-        )}
+        <ExternalTile href={directionsUrl} icon="near_me" label="Directions" primary />
+        <ExternalTile href={websiteHref} icon="language" label="Website" />
+        <ExternalTile href={reviewsHref} icon="play_circle" label="Reviews" />
       </div>
     </section>
   );
 }
 
-function ExternalLink({
+function websiteUrl(domain?: string | null): string | undefined {
+  const trimmed = domain?.trim();
+  if (!trimmed || /\s/.test(trimmed)) return undefined;
+  if (trimmed.startsWith("https://")) return trimmed;
+  if (trimmed.startsWith("http://")) return undefined;
+  return `https://${trimmed}`;
+}
+
+function ExternalTile({
   href,
   icon,
   label,
-  disabled = false,
   primary = false,
 }: {
-  href: string;
+  href?: string;
   icon: string;
   label: string;
-  disabled?: boolean;
-  /** Saffron-filled "go there" CTA (Directions). */
   primary?: boolean;
 }) {
   const base =
-    "flex flex-col items-center gap-1 rounded-2xl py-3.5 text-xs font-semibold ring-1 ring-inset transition";
-  if (disabled) {
+    "flex min-h-[74px] flex-col items-center justify-center gap-1.5 rounded-2xl px-1.5 py-3 text-center text-xs font-semibold ring-1 ring-inset transition";
+
+  if (!href) {
     return (
-      <span className="block" onPointerDown={(e) => e.stopPropagation()}>
-        <button
-          type="button"
-          disabled
-          aria-label={`${label} — coming soon`}
-          title="Coming soon"
-          className={`${base} w-full cursor-not-allowed bg-surface text-haze/60 ring-white/10`}
-        >
-          <MaterialIcon name={icon} className="text-[22px]" />
-          {label}
-        </button>
+      <span
+        aria-disabled="true"
+        title="Coming soon"
+        onPointerDown={(e) => e.stopPropagation()}
+        className={`${base} cursor-not-allowed bg-black/25 text-haze/55 ring-white/5`}
+      >
+        <MaterialIcon name={icon} className="text-[22px]" />
+        <span>{label}</span>
       </span>
     );
   }
+
   return (
     <a
       href={href}
@@ -103,11 +76,11 @@ function ExternalLink({
       className={
         primary
           ? `${base} bg-brand-gradient text-saffron-ink ring-transparent shadow-lg shadow-saffron/20 active:scale-[0.98]`
-          : `${base} bg-surface text-cream ring-white/10 hover:bg-surface-2`
+          : `${base} bg-black/30 text-cream ring-white/10 hover:bg-surface-2 active:scale-[0.98]`
       }
     >
       <MaterialIcon name={icon} className="text-[22px]" />
-      {label}
+      <span>{label}</span>
     </a>
   );
 }

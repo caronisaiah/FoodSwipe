@@ -43,6 +43,7 @@ export default function RestaurantHero({
   badges,
   onPhotoAttributions,
   heroMedia,
+  onScrollToProfile,
 }: {
   restaurantId: string;
   fallbackVideo: Video;
@@ -65,6 +66,8 @@ export default function RestaurantHero({
   onPhotoAttributions?: (attributions: PlacePhoto["attributions"]) => void;
   /** Feed deck can provide in-memory media so preview/active use the same URL. */
   heroMedia?: ClientHeroMedia | null;
+  /** Feed-only affordance: scroll the card below the hero. */
+  onScrollToProfile?: () => void;
 }) {
   const [fetchedPhoto, setFetchedPhoto] = useState<PlacePhoto | null>(null);
   const [fetchedLogoSrc, setFetchedLogoSrc] = useState<string | null>(null);
@@ -133,7 +136,7 @@ export default function RestaurantHero({
       className={
         variant === "feed"
           ? feedHeroFullscreen
-            ? "relative h-full min-h-full w-full overflow-hidden"
+            ? "relative h-full min-h-full max-h-full w-full overflow-hidden"
             : "relative aspect-[4/5] w-full overflow-hidden"
           : "relative mx-4 mt-1 aspect-[4/5] overflow-hidden rounded-[28px] ring-1 ring-white/10"
       }
@@ -171,7 +174,11 @@ export default function RestaurantHero({
         <VideoEmbed video={fallbackVideo} posterEmoji={posterEmoji} fill />
       )}
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-4 pt-16">
+      <div
+        className={`pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-4 pt-16 ${
+          isFeed ? "pb-20" : ""
+        }`}
+      >
         {badges && <div className="mb-2 flex max-w-full flex-wrap gap-1.5">{badges}</div>}
         <h1 className="font-display text-3xl font-bold leading-tight text-white drop-shadow">
           {name}
@@ -186,6 +193,23 @@ export default function RestaurantHero({
           <span className="font-semibold text-saffron">{priceLabel(priceLevel)}</span>
         </p>
       </div>
+
+      {isFeed && onScrollToProfile && (
+        <button
+          type="button"
+          onClick={onScrollToProfile}
+          onPointerDown={(e) => e.stopPropagation()}
+          aria-label={`Scroll for ${name}'s full profile`}
+          className="absolute inset-x-0 bottom-4 z-20 mx-auto flex w-fit flex-col items-center gap-1 border-0 bg-transparent px-3 py-1 text-white/85 opacity-70 transition hover:opacity-95 active:scale-95"
+        >
+          <span className="bounce-subtle flex flex-col items-center gap-1">
+            <MaterialIcon name="keyboard_arrow_up" className="text-[22px] text-white/75" />
+            <span className="text-[11px] font-bold uppercase tracking-[0.25em]">
+              Swipe up for the full profile
+            </span>
+          </span>
+        </button>
+      )}
     </motion.div>
   );
 }

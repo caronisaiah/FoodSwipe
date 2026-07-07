@@ -464,8 +464,12 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
 
     // Scroll-linked hero fade — tracks this card's own scroll container.
     const { scrollY } = useScroll({ container: scrollRef });
-    const heroOpacity = useTransform(scrollY, [0, 320], [1, 0]);
-    const heroScale = useTransform(scrollY, [0, 320], [1, 1.04]);
+    const heroProgress = useTransform(scrollY, (latest) => {
+      const viewportHeight = scrollRef.current?.clientHeight ?? 640;
+      return Math.min(1, latest / (viewportHeight * 0.7));
+    });
+    const heroOpacity = useTransform(heroProgress, [0, 1], [1, 0]);
+    const heroScale = useTransform(heroProgress, [0, 1], [1, 1.05]);
 
     // Entrance: rise + scale into place.
     useEffect(() => {
@@ -476,6 +480,12 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
         transition: { type: "spring", stiffness: 330, damping: 28, mass: 0.9 },
       });
     }, [controls]);
+
+    useEffect(() => {
+      const el = scrollRef.current;
+      if (!el) return;
+      el.scrollTop = 0;
+    }, [r.id]);
 
     const leave = useCallback(
       async (direction: SwipeDirection) => {
@@ -497,6 +507,12 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
     );
 
     useImperativeHandle(ref, () => ({ swipe: leave }), [leave]);
+
+    const scrollToProfile = useCallback(() => {
+      const el = scrollRef.current;
+      if (!el) return;
+      el.scrollTo({ top: el.clientHeight, behavior: "smooth" });
+    }, []);
 
     async function shareProfile() {
       if (typeof window === "undefined") return;
@@ -551,7 +567,7 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
             touch-action: pan-y keeps horizontal pans free for the card drag. */}
         <div
           ref={scrollRef}
-          className="no-scrollbar h-full overflow-y-auto overscroll-contain pb-12 [touch-action:pan-y]"
+          className="no-scrollbar h-full min-h-0 overflow-y-auto overscroll-contain [overflow-anchor:none] [touch-action:pan-y]"
         >
           <RestaurantProfileView
             restaurant={r}
@@ -559,6 +575,7 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
             feedHeroFullscreen
             heroStyle={{ opacity: heroOpacity, scale: heroScale }}
             heroMedia={heroMedia}
+            onScrollToProfile={scrollToProfile}
           />
         </div>
 

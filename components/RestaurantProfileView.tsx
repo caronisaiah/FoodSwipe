@@ -6,20 +6,21 @@ import type { PlacePhoto, Restaurant } from "@/lib/types";
 import type { ClientHeroMedia } from "@/lib/clientHeroMedia";
 import { cuisineEmoji } from "@/lib/emoji";
 import { getMarketShortName } from "@/lib/markets";
+import { priceLabel } from "@/lib/options";
 import TagPill from "@/components/TagPill";
 import RestaurantHero from "@/components/RestaurantHero";
-import RestaurantVideos from "@/components/RestaurantVideos";
+import {
+  firstReviewHref,
+  ReviewClipCard,
+  type ProfileVideoItem,
+  useRestaurantProfileVideos,
+} from "@/components/RestaurantVideos";
 import GoThere from "@/components/GoThere";
-import MetricBadge, { formatCount } from "@/components/MetricBadge";
 import MaterialIcon from "@/components/MaterialIcon";
 
 /**
- * Reusable restaurant-profile body (hero + tags + hype + dishes + best-for +
- * review videos + go-there). Fully client-renderable from a `Restaurant`, so it
- * is shared by BOTH the standalone `/restaurants/[id]` page (via
- * `RestaurantProfile`) and the in-feed scrollable feed card (`SwipeDeck`). Each
- * caller supplies its own chrome (page top bar vs feed-card actions); this is just
- * the content. Pass `variant="feed"` for the full-bleed hero on the feed card.
+ * Reusable restaurant profile: hero plus the D3 polished module stack. Shared by
+ * the standalone detail page and the in-feed scrollable card.
  */
 export default function RestaurantProfileView({
   restaurant: r,
@@ -27,6 +28,7 @@ export default function RestaurantProfileView({
   variant = "page",
   feedHeroFullscreen = false,
   heroMedia,
+  onScrollToProfile,
 }: {
   restaurant: Restaurant;
   /** Scroll-linked motion style for the hero (in-feed card only). */
@@ -37,6 +39,8 @@ export default function RestaurantProfileView({
   feedHeroFullscreen?: boolean;
   /** Feed deck can provide in-memory media so preview/active use the same URL. */
   heroMedia?: ClientHeroMedia | null;
+  /** Feed-only: smooth-scroll the card to the profile body. */
+  onScrollToProfile?: () => void;
 }) {
   const isFeed = variant === "feed";
   const poster = cuisineEmoji(r.cuisineTags);
@@ -45,128 +49,152 @@ export default function RestaurantProfileView({
     (items: PlacePhoto["attributions"]) => setPhotoAttributions(items),
     [],
   );
-  // Distinct emojis from the cuisine tags so carousel clips don't all look alike.
   const clipPosters = [...new Set(r.cuisineTags.map((t) => cuisineEmoji([t])))];
-  // DB-published restaurants carry neutral-zero metrics (no fabricated social
-  // proof) — only show the "hype" numbers when there's real data behind them.
-  const hasHype =
-    r.videoCount > 0 || r.saveCount > 0 || r.trendScore > 0 || r.vibeScore > 0;
+  const profileVideos = useRestaurantProfileVideos({
+    restaurantId: r.id,
+    seedVideos: r.videos,
+  });
+  const reviewHref = firstReviewHref(profileVideos.videos.map((item) => item.video));
   const directionsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
     `${r.name} ${r.address}`,
   )}`;
+  const primaryCuisine = r.cuisineTags[0];
+  const topTags = [
+    ...r.cuisineTags.map((tag) => ({ tag, variant: "cuisine" as const })),
+    ...r.vibeTags.map((tag) => ({ tag, variant: "vibe" as const })),
+    ...r.dietaryTags.map((tag) => ({ tag, variant: "dietary" as const })),
+    ...r.bestFor
+      .filter((tag) => !r.vibeTags.includes(tag))
+      .map((tag) => ({ tag, variant: "vibe" as const })),
+  ];
+  const hasReason = r.reasonText.trim().length > 0;
+  const clipPoster = (index: number) =>
+    clipPosters[index % Math.max(clipPosters.length, 1)] ?? poster;
+  const hero = (
+    <RestaurantHero
+      restaurantId={r.id}
+      fallbackVideo={r.videos[0]}
+      posterEmoji={poster}
+      name={r.name}
+      neighborhood={r.neighborhood}
+      distanceMiles={r.distanceMiles}
+      priceLevel={r.priceLevel}
+      heroStyle={heroStyle}
+      variant={variant}
+      feedHeroFullscreen={feedHeroFullscreen}
+      badges={isFeed ? <HeroStatusBadges restaurant={r} /> : null}
+      onPhotoAttributions={isFeed ? updatePhotoAttributions : undefined}
+      heroMedia={heroMedia}
+      onScrollToProfile={isFeed ? onScrollToProfile : undefined}
+    />
+  );
 
   return (
     <>
-      {/* Hero — real Google Place Photo when available, else logo card, else placeholder */}
-      <RestaurantHero
-        restaurantId={r.id}
-        fallbackVideo={r.videos[0]}
-        posterEmoji={poster}
-        name={r.name}
-        neighborhood={r.neighborhood}
-        distanceMiles={r.distanceMiles}
-        priceLevel={r.priceLevel}
-        heroStyle={heroStyle}
-        variant={variant}
-        feedHeroFullscreen={feedHeroFullscreen}
-        badges={isFeed ? <HeroStatusBadges restaurant={r} /> : null}
-        onPhotoAttributions={isFeed ? updatePhotoAttributions : undefined}
-        heroMedia={heroMedia}
-      />
+      {isFeed ? (
+        <section
+          aria-label={`${r.name} hero`}
+          className="h-full min-h-full w-full flex-none overflow-hidden"
+        >
+          {hero}
+        </section>
+      ) : (
+        hero
+      )}
 
-      <div className="space-y-7 px-4 pt-6">
-        {/* Tags */}
-        <div className="flex flex-wrap gap-1.5">
-          {r.cuisineTags.map((t) => (
-            <TagPill key={t} variant="cuisine">
-              {t}
-            </TagPill>
-          ))}
-          {r.vibeTags.map((t) => (
-            <TagPill key={t} variant="vibe">
-              {t}
-            </TagPill>
-          ))}
-          {r.dietaryTags.map((t) => (
-            <TagPill key={t} variant="dietary">
-              {t}
-            </TagPill>
-          ))}
-        </div>
-
-        {/* The hype (social proof) — only when there's real data; DB-published
-            restaurants have neutral-zero metrics and show just the reason. */}
-        <Section title={hasHype ? "The hype" : "Why you'll like it"}>
-          {hasHype && (
-            <div className="grid grid-cols-3 gap-2">
-              <MetricBadge icon="🎬" value={formatCount(r.videoCount)} label="videos" />
-              <MetricBadge icon="🆕" value={r.recentVideoCount} label="recent" />
-              <MetricBadge
-                icon="🔥"
-                value={r.trendScore}
-                label="trend"
-                accentClassName="text-saffron"
-              />
-              <MetricBadge
-                icon="✨"
-                value={r.vibeScore}
-                label="vibe"
-                accentClassName="text-saffron-soft"
-              />
-              <MetricBadge
-                icon="❤️"
-                value={formatCount(r.saveCount)}
-                label="saves"
-                accentClassName="text-chili-soft"
-              />
-            </div>
-          )}
-          <p className={`${hasHype ? "mt-3 " : ""}text-sm leading-relaxed text-haze`}>
-            {r.reasonText}
+      <div className={`bg-ink-2 px-4 pt-[26px] ${isFeed ? "pb-12" : "pb-7"}`}>
+        <header className="mb-4">
+          <h2 className="font-display text-[26px] font-black leading-[1.05] tracking-normal text-cream">
+            {r.name}
+          </h2>
+          <p className="mt-1.5 flex flex-wrap items-center gap-x-1.5 text-[13px] text-tan">
+            <span>{r.neighborhood}</span>
+            {primaryCuisine && (
+              <>
+                <span aria-hidden>·</span>
+                <span className="capitalize">{primaryCuisine}</span>
+              </>
+            )}
+            <span aria-hidden>·</span>
+            <span className="font-semibold text-saffron">{priceLabel(r.priceLevel)}</span>
           </p>
-        </Section>
+        </header>
 
-        {/* Dish highlights */}
-        <Section title="What to order">
-          <ul className="grid gap-2">
-            {r.dishHighlights.map((dish) => (
-              <li
-                key={dish}
-                className="flex items-center gap-2 rounded-2xl bg-surface px-3.5 py-2.5 text-sm text-cream ring-1 ring-inset ring-white/5"
-              >
-                <MaterialIcon name="restaurant_menu" className="text-[18px] text-saffron" />
-                {dish}
-              </li>
-            ))}
-          </ul>
-        </Section>
-
-        {/* Best for */}
-        <Section title="Best for">
-          <div className="flex flex-wrap gap-1.5">
-            {r.bestFor.map((b) => (
-              <TagPill key={b} variant="vibe">
-                {b}
+        {topTags.length > 0 && (
+          <div className="mb-5 flex flex-wrap gap-1.5">
+            {topTags.map(({ tag, variant: tagVariant }) => (
+              <TagPill key={`${tagVariant}-${tag}`} variant={tagVariant}>
+                {tag}
               </TagPill>
             ))}
           </div>
-        </Section>
+        )}
 
-        {/* Source videos (client — merges seed + manually-added demo clips) */}
-        <RestaurantVideos
-          restaurantId={r.id}
-          seedVideos={r.videos}
-          posters={clipPosters}
-        />
+        <div className="flex flex-col gap-3">
+          {profileVideos.videos[0] && (
+            <ReviewClipSection
+              item={profileVideos.videos[0]}
+              posterEmoji={clipPoster(0)}
+              featured
+            />
+          )}
 
-        {/* External links — client so "Reviews" reflects merged seed + manual */}
-        <GoThere
-          restaurantId={r.id}
-          seedVideos={r.videos}
-          directionsUrl={directionsUrl}
-        />
+          {hasReason && (
+            <ProfileModule title="Why you'll like it">
+              <p className="text-[15px] leading-[1.6] text-tan">{r.reasonText}</p>
+            </ProfileModule>
+          )}
 
-        {isFeed && <PhotoCreditRow attributions={photoAttributions} />}
+          {r.dishHighlights.length > 0 && (
+            <ProfileModule title="What to order">
+              <ul className="grid gap-2">
+                {r.dishHighlights.map((dish) => (
+                  <li
+                    key={dish}
+                    className="flex items-center gap-2.5 rounded-xl bg-black/30 px-3.5 py-3 text-[15px] text-cream ring-1 ring-inset ring-white/5"
+                  >
+                    <MaterialIcon name="restaurant_menu" className="text-[18px] text-saffron" />
+                    <span>{dish}</span>
+                  </li>
+                ))}
+              </ul>
+            </ProfileModule>
+          )}
+
+          {profileVideos.videos[1] && (
+            <ReviewClipSection
+              item={profileVideos.videos[1]}
+              posterEmoji={clipPoster(1)}
+            />
+          )}
+
+          {r.bestFor.length > 0 && (
+            <ProfileModule title="Best for">
+              <div className="flex flex-wrap gap-1.5">
+                {r.bestFor.map((b) => (
+                  <TagPill key={b} variant="vibe">
+                    {b}
+                  </TagPill>
+                ))}
+              </div>
+            </ProfileModule>
+          )}
+
+          {profileVideos.videos[2] && (
+            <ReviewClipSection
+              item={profileVideos.videos[2]}
+              posterEmoji={clipPoster(2)}
+            />
+          )}
+
+          <GoThere
+            directionsUrl={directionsUrl}
+            websiteDomain={r.websiteDomain}
+            reviewsHref={reviewHref}
+          />
+
+          {isFeed && <PhotoCreditRow attributions={photoAttributions} />}
+        </div>
       </div>
     </>
   );
@@ -206,12 +234,35 @@ function HeroStatusBadges({ restaurant: r }: { restaurant: Restaurant }) {
   );
 }
 
+function ReviewClipSection({
+  item,
+  posterEmoji,
+  featured = false,
+}: {
+  item: ProfileVideoItem;
+  posterEmoji: string;
+  featured?: boolean;
+}) {
+  return (
+    <section>
+      {featured && (
+        <div className="mb-3">
+          <h3 className="text-[11px] font-bold uppercase tracking-[0.25em] text-haze">
+            Watch the reviews
+          </h3>
+        </div>
+      )}
+      <ReviewClipCard item={item} posterEmoji={posterEmoji} featured={featured} />
+    </section>
+  );
+}
+
 function PhotoCreditRow({ attributions }: { attributions: PlacePhoto["attributions"] }) {
   const items = attributions.filter((a) => a.displayName.trim().length > 0);
   if (items.length === 0) return null;
 
   return (
-    <p className="border-t border-white/10 pt-3 text-[11px] leading-relaxed text-haze">
+    <p className="mt-2 border-t border-white/10 pt-3 text-[10.5px] leading-relaxed text-haze">
       Photo:{" "}
       {items.map((a, i) => (
         <span key={`${a.displayName}-${i}`}>
@@ -236,21 +287,18 @@ function PhotoCreditRow({ attributions }: { attributions: PlacePhoto["attributio
   );
 }
 
-function Section({
+function ProfileModule({
   title,
-  hint,
   children,
 }: {
   title: string;
-  hint?: string;
   children: React.ReactNode;
 }) {
   return (
-    <section>
-      <div className="mb-2.5">
-        <h2 className="font-display text-lg font-semibold text-cream">{title}</h2>
-        {hint && <p className="text-xs text-haze">{hint}</p>}
-      </div>
+    <section className="rounded-[24px] bg-surface px-4 py-[18px] pb-5 ring-1 ring-inset ring-white/5">
+      <h3 className="mb-3 text-[11px] font-bold uppercase tracking-[0.25em] text-haze">
+        {title}
+      </h3>
       {children}
     </section>
   );
