@@ -717,6 +717,7 @@ Other scripts:
 npm run build    # production build (also type-checks)
 npm run start    # serve the production build
 npm run lint     # eslint
+npm run content:audit  # read-only DB content audit/export
 ```
 
 The app is mobile-first. On desktop it renders as a centered phone-width column;
@@ -750,6 +751,27 @@ Set `FOODSWIPE_CONTENT_MODE=production` in Vercel Production before launch. No
 `NEXT_PUBLIC_` content-mode variable is required; server components decide whether
 seed fallback is serialized into client props. An invalid explicit mode fails
 closed to `production`.
+
+### Dry-run content audit/export
+
+Before any future production cleanup or reset, run the read-only audit script:
+
+```bash
+npm run content:audit
+npm run content:audit -- --check-connection
+npm run content:audit -- --export ./exports/content-audit.json
+npm run content:audit -- --export ./exports/content-audit.json --force
+```
+
+The script uses `DATABASE_URL`, loads `.env*` the same way Next does, and prints a
+concise report covering DB restaurant counts by market/status, candidates,
+attached videos, video candidates, website evidence, sources, ingestion jobs,
+seed/demo overlaps, possible test/demo rows, and data that should be protected.
+The optional JSON export creates parent directories but refuses to overwrite an
+existing file unless `--force` is passed. It uses read-only Neon queries and never
+runs migrations, `drizzle push`, delete/reset SQL, or status changes. Do not run
+delete/reset SQL until this report has been reviewed and protected data has been
+backed up.
 
 `DATABASE_URL` and `FOODSWIPE_ADMIN_SECRET` enable shared persistence (the app
 still runs without them). `YOUTUBE_API_KEY` is optional: with it, resolving a
@@ -899,6 +921,9 @@ lib/
   db/videos.ts               Persisted video data access
   db/candidates.ts           Candidate-restaurant review data access (Phase 1 ingestion)
   seed/restaurants.ts        18 seeded Washington, DC restaurants
+
+scripts/
+  content-audit.mjs          Read-only DB content audit/export before reset work
 
 drizzle.config.ts            drizzle-kit configuration
 drizzle/                     Generated SQL migrations
