@@ -328,6 +328,15 @@ plus a **503** if `GOOGLE_MAPS_API_KEY` is unset and **400** on a blank `query`.
   `{ photo, status, logoUrl }` shape as the public route. To bound Google cost the
   console fetches a candidate's photo only when its row is **expanded** (not for
   every queue row, and never for dry-run preview rows).
+- **Admin exact-location photo candidates (read-only).** [`GET /api/admin/restaurants/candidates/[id]/photo-candidates`](app/api/admin/restaurants/candidates/[id]/photo-candidates/route.ts)
+  (admin-secret, `no-store`, read-only) fetches up to ten Google Place Photo
+  candidates for the candidate's exact `googlePlaceId`. It requests only
+  `photos.name`, `photos.widthPx`, `photos.heightPx`, and
+  `photos.authorAttributions`, resolves fresh ephemeral preview `photoUri` values
+  with `skipHttpRedirect=true`, then discards the Google photo names. The admin
+  console shows vertical hero-crop previews, dimensions, attribution, and
+  metadata-only crop/resolution heuristics. It never stores photo names, URLs, or
+  bytes, and it has no approve/save/reject controls; selection is deferred to P2C.
 - **Review console.** [`/admin/restaurants/candidates`](app/admin/restaurants/candidates/page.tsx)
   is a dense internal queue: rows ranked by review-likelihood (null/manual last),
   with status + source filters, name/address/Place-ID search, and per-row flags
@@ -887,6 +896,7 @@ app/
   api/admin/restaurants/candidates/route.ts      GET/POST candidate restaurants (admin secret)
   api/admin/restaurants/candidates/[id]/route.ts PATCH a candidate (admin secret)
   api/admin/restaurants/candidates/[id]/photo/route.ts  GET candidate hero preview (admin secret, no-store)
+  api/admin/restaurants/candidates/[id]/photo-candidates/route.ts  GET exact-location Google photo candidates (admin secret, no-store)
   api/admin/restaurants/candidates/import/google/route.ts  POST Google Places Text Search import (admin secret)
 
 components/

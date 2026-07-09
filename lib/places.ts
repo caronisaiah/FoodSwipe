@@ -60,6 +60,8 @@ interface AuthorAttribution {
 }
 interface PlaceDetailsPhoto {
   name?: string;
+  widthPx?: number;
+  heightPx?: number;
   authorAttributions?: AuthorAttribution[];
 }
 interface PlaceDetailsResponse {
@@ -72,6 +74,12 @@ interface PhotoMediaResponse {
 function apiKey(): string | undefined {
   const k = process.env.GOOGLE_MAPS_API_KEY;
   return typeof k === "string" && k.trim().length > 0 ? k.trim() : undefined;
+}
+
+function positiveInt(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.trunc(value)
+    : null;
 }
 
 /** Accept only a well-formed https URL for the ephemeral photo (never persisted). */
@@ -199,6 +207,223 @@ export async function getPlacePhoto(placeId: string): Promise<PlacePhotoResult> 
   } catch {
     // Network / quota / parse failure — degrade to the placeholder hero.
     return { photo: null, status: "error" };
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Exact-location photo candidates (admin-only preview, P2B)                  */
+/* -------------------------------------------------------------------------- */
+
+export interface PlacePhotoCandidateHeuristicFlags {
+  highResolution: boolean;
+  cropFriendly: boolean;
+  veryWide: boolean;
+  lowResolution: boolean;
+  /**
+   * We do not download/analyze image bytes in this slice, so logo/text detection
+   * is intentionally unknown rather than guessed from metadata.
+   */
+  possibleLogoOrTextHeavy: "unknown";
+}
+
+export interface PlacePhotoCandidate {
+  /** 1-based order returned by Google for this exact Place ID. */
+  ordinal: number;
+  widthPx: number | null;
+  heightPx: number | null;
+  aspectRatio: number | null;
+  /** Ephemeral Google URL resolved at request time. Do not persist. */
+  photoUri: string | null;
+  attributions: PlacePhoto["attributions"];
+  hasAttribution: boolean;
+  heuristicFlags: PlacePhotoCandidateHeuristicFlags;
+  sourceProvider: "google_places";
+  relationship: "exact_location";
+  status: "ok" | "photo-media-failed";
+  httpStatus?: number;
+  googleStatus?: string;
+}
+
+export interface PlacePhotoCandidatesResult {
+  status: PlacePhotoStatus;
+  candidates: PlacePhotoCandidate[];
+  requestedCount: number;
+  detailsPhotoCount: number;
+  resolvedCount: number;
+  failedCount: number;
+  httpStatus?: number;
+  googleStatus?: string;
+}
+
+function aspectRatio(widthPx: number | null, heightPx: number | null): number | null {
+  if (!widthPx || !heightPx) return null;
+  return Number((widthPx / heightPx).toFixed(2));
+}
+
+function heuristicFlags(
+  widthPx: number | null,
+  heightPx: number | null,
+  ratio: number | null,
+): PlacePhotoCandidateHeuristicFlags {
+  return {
+    highResolution: Boolean(widthPx && heightPx && widthPx >= 900 && heightPx >= 900),
+    cropFriendly: Boolean(ratio && ratio >= 0.55 && ratio <= 1.35),
+    veryWide: Boolean(ratio && ratio > 1.75),
+    lowResolution: Boolean(widthPx && heightPx && (widthPx < 700 || heightPx < 700)),
+    possibleLogoOrTextHeavy: "unknown",
+  };
+}
+
+async function resolvePhotoCandidate(
+  photo: PlaceDetailsPhoto,
+  index: number,
+  key: string,
+): Promise<PlacePhotoCandidate> {
+  const widthPx = positiveInt(photo.widthPx);
+  const heightPx = positiveInt(photo.heightPx);
+  const ratio = aspectRatio(widthPx, heightPx);
+  const attributions = cleanAttributions(photo.authorAttributions);
+  const base: Omit<PlacePhotoCandidate, "photoUri" | "status" | "httpStatus" | "googleStatus"> = {
+    ordinal: index + 1,
+    widthPx,
+    heightPx,
+    aspectRatio: ratio,
+    attributions,
+    hasAttribution: attributions.length > 0,
+    heuristicFlags: heuristicFlags(widthPx, heightPx, ratio),
+    sourceProvider: "google_places",
+    relationship: "exact_location",
+  };
+
+  try {
+    const mediaUrl =
+      `${PLACES_BASE}/${photo.name}/media` +
+      `?maxWidthPx=${MAX_WIDTH_PX}&skipHttpRedirect=true`;
+    const mediaRes = await fetch(mediaUrl, {
+      method: "GET",
+      headers: { "X-Goog-Api-Key": key },
+      cache: "no-store",
+    });
+    if (!mediaRes.ok) {
+      return {
+        ...base,
+        photoUri: null,
+        status: "photo-media-failed",
+        httpStatus: mediaRes.status,
+        googleStatus: await safeGoogleError(mediaRes),
+      };
+    }
+
+    const media = (await mediaRes.json()) as PhotoMediaResponse;
+    const photoUri = safePhotoUri(media.photoUri);
+    if (!photoUri) return { ...base, photoUri: null, status: "photo-media-failed" };
+
+    return { ...base, photoUri, status: "ok" };
+  } catch {
+    return { ...base, photoUri: null, status: "photo-media-failed" };
+  }
+}
+
+/**
+ * Fetch up to ten exact-location Google Place Photo candidates for an admin
+ * reviewer. The Google photo `name` is used only inside this function to resolve
+ * a fresh `photoUri`, then discarded; callers never receive it and nothing here
+ * writes to the database.
+ */
+export async function getPlacePhotoCandidates(
+  placeId: string,
+  maxCandidates = 10,
+): Promise<PlacePhotoCandidatesResult> {
+  const key = apiKey();
+  const requestedCount = Math.min(Math.max(Math.trunc(maxCandidates) || 10, 1), 10);
+  if (!key) {
+    return {
+      status: "missing-api-key",
+      candidates: [],
+      requestedCount,
+      detailsPhotoCount: 0,
+      resolvedCount: 0,
+      failedCount: 0,
+    };
+  }
+  if (typeof placeId !== "string" || placeId.trim().length === 0) {
+    return {
+      status: "missing-google-place-id",
+      candidates: [],
+      requestedCount,
+      detailsPhotoCount: 0,
+      resolvedCount: 0,
+      failedCount: 0,
+    };
+  }
+  const id = placeId.trim();
+
+  try {
+    const detailsRes = await fetch(
+      `${PLACES_BASE}/places/${encodeURIComponent(id)}`,
+      {
+        method: "GET",
+        headers: {
+          "X-Goog-Api-Key": key,
+          "X-Goog-FieldMask":
+            "photos.name,photos.widthPx,photos.heightPx,photos.authorAttributions",
+        },
+        cache: "no-store",
+      },
+    );
+    if (!detailsRes.ok) {
+      return {
+        status: "place-details-failed",
+        candidates: [],
+        requestedCount,
+        detailsPhotoCount: 0,
+        resolvedCount: 0,
+        failedCount: 0,
+        httpStatus: detailsRes.status,
+        googleStatus: await safeGoogleError(detailsRes),
+      };
+    }
+
+    const details = (await detailsRes.json()) as PlaceDetailsResponse;
+    const photos = Array.isArray(details.photos)
+      ? details.photos
+          .filter((p) => typeof p?.name === "string" && p.name.length > 0)
+          .slice(0, requestedCount)
+      : [];
+    if (photos.length === 0) {
+      return {
+        status: "no-photos",
+        candidates: [],
+        requestedCount,
+        detailsPhotoCount: 0,
+        resolvedCount: 0,
+        failedCount: 0,
+      };
+    }
+
+    const candidates = await Promise.all(
+      photos.map((photo, index) => resolvePhotoCandidate(photo, index, key)),
+    );
+    const resolvedCount = candidates.filter((c) => c.status === "ok").length;
+    const failedCount = candidates.length - resolvedCount;
+
+    return {
+      status: resolvedCount > 0 ? "ok" : "photo-media-failed",
+      candidates,
+      requestedCount,
+      detailsPhotoCount: photos.length,
+      resolvedCount,
+      failedCount,
+    };
+  } catch {
+    return {
+      status: "error",
+      candidates: [],
+      requestedCount,
+      detailsPhotoCount: 0,
+      resolvedCount: 0,
+      failedCount: 0,
+    };
   }
 }
 

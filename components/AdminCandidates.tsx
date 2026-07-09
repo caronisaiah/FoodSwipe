@@ -104,6 +104,46 @@ interface CandidateVideoMeta {
   approvedOrAttached: number;
 }
 
+interface HeroPhotoCandidate {
+  ordinal: number;
+  widthPx: number | null;
+  heightPx: number | null;
+  aspectRatio: number | null;
+  photoUri: string | null;
+  attributions: PlacePhoto["attributions"];
+  hasAttribution: boolean;
+  sourceProvider: "google_places";
+  relationship: "exact_location";
+  status: "ok" | "photo-media-failed";
+  httpStatus?: number;
+  googleStatus?: string;
+  heuristicFlags: {
+    highResolution: boolean;
+    cropFriendly: boolean;
+    veryWide: boolean;
+    lowResolution: boolean;
+    possibleLogoOrTextHeavy: "unknown";
+  };
+}
+
+interface HeroPhotoCandidatesDiagnostics {
+  requestedCount?: number;
+  detailsPhotoCount?: number;
+  resolvedCount?: number;
+  failedCount?: number;
+  httpStatus?: number;
+  googleStatus?: string;
+  sourceProvider?: string;
+  relationship?: string;
+}
+
+interface HeroPhotoCandidatesResponse {
+  error?: string;
+  status?: string;
+  candidates?: HeroPhotoCandidate[];
+  diagnostics?: HeroPhotoCandidatesDiagnostics;
+}
+
 interface CandidatePromotionConflict {
   conflict: PromotionConflict;
   restaurantSlug: string;
@@ -949,6 +989,7 @@ function CandidateDetail({
             (NOT keyed by updatedAt) so a save never refetches the Google photo. */}
         <div className="min-w-0">
           <CandidatePhoto candidateId={candidate.id} secret={secret} name={candidate.name} />
+          <p className="mt-1 text-[10px] text-haze">Current hero ladder preview</p>
           <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px]">
             <Meta label="Source" value={LABEL[candidate.source] ?? candidate.source} />
             <Meta label="Market" value={candidate.market.toUpperCase()} />
@@ -970,7 +1011,15 @@ function CandidateDetail({
 
         {/* Right: editor — keyed by updatedAt so it re-seeds when the candidate
             changes on the server, without remounting the photo above. */}
-        <CandidateEditor key={candidate.updatedAt} candidate={candidate} secret={secret} onSaved={onSaved} />
+        <div className="min-w-0 max-w-full space-y-2.5">
+          <HeroPhotoCandidatesPanel
+            candidateId={candidate.id}
+            googlePlaceId={candidate.googlePlaceId}
+            secret={secret}
+            name={candidate.name}
+          />
+          <CandidateEditor key={candidate.updatedAt} candidate={candidate} secret={secret} onSaved={onSaved} />
+        </div>
       </div>
     </div>
   );
@@ -1362,6 +1411,260 @@ function PreviewCard({ row }: { row: PreviewRow }) {
         <p className="mt-1.5 text-[10px] text-haze">No confident tag suggestions — needs human tagging.</p>
       )}
     </li>
+  );
+}
+
+/* ----- exact-location Google hero photo candidates (read-only) ----- */
+
+function HeroPhotoCandidatesPanel({
+  candidateId,
+  googlePlaceId,
+  secret,
+  name,
+}: {
+  candidateId: string;
+  googlePlaceId: string | null;
+  secret: string;
+  name: string;
+}) {
+  const hasPlaceId = Boolean(googlePlaceId);
+  const hasSecret = secret.trim().length > 0;
+  const requestKey = `${candidateId}:${googlePlaceId ?? ""}`;
+  const [lookup, setLookup] = useState<{
+    key: string;
+    state: "ready" | "error";
+    message: string | null;
+    candidates: HeroPhotoCandidate[];
+    diagnostics: HeroPhotoCandidatesDiagnostics | null;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!hasPlaceId || !hasSecret) return;
+
+    let cancelled = false;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch(`/api/admin/restaurants/candidates/${candidateId}/photo-candidates`, {
+          headers: { "x-foodswipe-admin-secret": secret },
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const data = (await res.json()) as HeroPhotoCandidatesResponse;
+        if (cancelled) return;
+        setLookup({
+          key: requestKey,
+          state: res.ok ? "ready" : "error",
+          message: res.ok ? (data.error ?? null) : (data.error ?? `Photo candidate lookup failed (${res.status}).`),
+          candidates: Array.isArray(data.candidates) ? data.candidates : [],
+          diagnostics: data.diagnostics ?? null,
+        });
+      } catch {
+        if (!cancelled) {
+          setLookup({
+            key: requestKey,
+            state: "error",
+            message: "Network error while loading photo candidates.",
+            candidates: [],
+            diagnostics: null,
+          });
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [candidateId, googlePlaceId, hasPlaceId, hasSecret, requestKey, secret]);
+
+  const isLoading = hasPlaceId && hasSecret && (!lookup || lookup.key !== requestKey);
+  const state = !hasPlaceId || !hasSecret ? "idle" : isLoading ? "loading" : lookup?.state ?? "ready";
+  const message = !hasPlaceId
+    ? "No Google Place ID, so there are no exact-location photo candidates."
+    : !hasSecret
+      ? "Enter the admin secret to preview Google hero candidates."
+      : isLoading
+        ? null
+        : lookup?.message ?? null;
+  const candidates = isLoading ? [] : lookup?.candidates ?? [];
+  const diagnostics = isLoading ? null : lookup?.diagnostics ?? null;
+  const resolvedCount = diagnostics?.resolvedCount ?? candidates.filter((c) => c.status === "ok").length;
+  const detailsCount = diagnostics?.detailsPhotoCount ?? candidates.length;
+
+  return (
+    <section className="min-w-0 max-w-full rounded-lg bg-ink-2 p-2 ring-1 ring-inset ring-white/5">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <p className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-cream">
+          <MaterialIcon name="photo_library" className="text-sm" />
+          Hero photo candidates
+        </p>
+        <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-haze ring-1 ring-inset ring-white/10">
+          Read-only
+        </span>
+      </div>
+      <p className="mt-1 break-words text-[10px] text-haze [overflow-wrap:anywhere]">
+        Exact Google place photos only. The current hero ladder preview is on the left; selection comes in P2C.
+      </p>
+
+      {state === "loading" && (
+        <p className="mt-2 flex items-center gap-1.5 text-[11px] text-haze">
+          <MaterialIcon name="hourglass_empty" className="text-xs" />
+          Loading exact-location candidates...
+        </p>
+      )}
+
+      {state === "error" && (
+        <p className="mt-2 break-words rounded-lg bg-chili/10 p-2 text-[11px] text-chili-soft [overflow-wrap:anywhere]">
+          {message ?? "Photo candidate lookup failed."}
+          {diagnostics?.googleStatus ? ` Google status: ${diagnostics.googleStatus}.` : ""}
+          {diagnostics?.httpStatus ? ` HTTP ${diagnostics.httpStatus}.` : ""}
+        </p>
+      )}
+
+      {state !== "loading" && state !== "error" && candidates.length === 0 && (
+        <p className="mt-2 rounded-lg bg-white/5 p-2 text-[11px] text-haze">
+          {message ?? "No exact-location Google photos were returned for this candidate."}
+        </p>
+      )}
+
+      {candidates.length > 0 && (
+        <>
+          <p className="mt-2 break-words text-[10px] text-haze [overflow-wrap:anywhere]">
+            {resolvedCount}/{detailsCount} preview URL{detailsCount === 1 ? "" : "s"} resolved from the exact Place ID.
+            {diagnostics?.failedCount ? ` ${diagnostics.failedCount} media lookup failed.` : ""}
+          </p>
+          <div className="mt-2 max-h-[760px] overflow-y-auto pr-1">
+            <div className="grid min-w-0 grid-cols-1 gap-2.5 sm:grid-cols-2">
+              {candidates.map((candidate) => (
+                <HeroPhotoCandidateCard
+                  key={candidate.ordinal}
+                  candidate={candidate}
+                  restaurantName={name}
+                />
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function HeroPhotoCandidateCard({
+  candidate,
+  restaurantName,
+}: {
+  candidate: HeroPhotoCandidate;
+  restaurantName: string;
+}) {
+  const dimensions = candidate.widthPx && candidate.heightPx
+    ? `${candidate.widthPx} x ${candidate.heightPx}`
+    : "dimensions unknown";
+
+  return (
+    <article className="min-w-0 overflow-hidden rounded-lg bg-surface ring-1 ring-inset ring-white/10">
+      <div className="relative aspect-[9/16] min-h-[320px] overflow-hidden bg-ink">
+        {candidate.photoUri ? (
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element -- ephemeral Google
+                Place Photo loaded directly from Google; never downloaded/rehosted. */}
+            <img
+              src={candidate.photoUri}
+              alt={`${restaurantName} Google place photo candidate ${candidate.ordinal}`}
+              className="absolute inset-0 h-full w-full object-cover"
+              loading="lazy"
+              referrerPolicy="no-referrer"
+            />
+            <PreviewAttribution attributions={candidate.attributions} />
+          </>
+        ) : (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 p-4 text-center text-haze">
+            <MaterialIcon name="broken_image" className="text-3xl" />
+            <span className="text-[11px]">Preview URL unavailable</span>
+          </div>
+        )}
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent p-2 text-white">
+          <p className="text-[11px] font-semibold">#{candidate.ordinal} Exact Google place photo</p>
+          <p className="text-[10px] text-white/75">Selection comes in P2C</p>
+        </div>
+      </div>
+      <div className="space-y-1.5 p-2">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-1.5">
+          <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-tan ring-1 ring-inset ring-white/10">
+            {candidate.status === "ok" ? "preview ready" : "media failed"}
+          </span>
+          <span className="text-[10px] text-haze">google_places / exact_location</span>
+        </div>
+        <p className="break-words text-[11px] text-tan [overflow-wrap:anywhere]">
+          {dimensions} - aspect {candidate.aspectRatio?.toFixed(2) ?? "unknown"}
+        </p>
+        <PhotoCandidateBadges candidate={candidate} />
+        <PhotoCandidateAttribution attributions={candidate.attributions} />
+      </div>
+    </article>
+  );
+}
+
+function PhotoCandidateBadges({ candidate }: { candidate: HeroPhotoCandidate }) {
+  const flags = candidate.heuristicFlags;
+  const badges: { label: string; cls: string }[] = [
+    {
+      label: "exact location",
+      cls: "bg-mint/10 text-mint ring-mint/25",
+    },
+  ];
+  if (flags.highResolution) badges.push({ label: "high-res", cls: "bg-mint/10 text-mint ring-mint/25" });
+  if (flags.cropFriendly) badges.push({ label: "crop-friendly", cls: "bg-saffron/10 text-saffron ring-saffron/25" });
+  if (flags.veryWide) badges.push({ label: "very wide", cls: "bg-chili/10 text-chili-soft ring-chili/25" });
+  if (flags.lowResolution) badges.push({ label: "low-res", cls: "bg-chili/10 text-chili-soft ring-chili/25" });
+  badges.push({ label: "text/logo unknown", cls: "bg-white/5 text-haze ring-white/10" });
+
+  return (
+    <div className="flex min-w-0 flex-wrap gap-1">
+      {badges.map((badge) => (
+        <span
+          key={badge.label}
+          className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset ${badge.cls}`}
+        >
+          {badge.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function PhotoCandidateAttribution({ attributions }: { attributions: PlacePhoto["attributions"] }) {
+  const items = attributions.filter((a) => a.displayName.trim().length > 0);
+  if (items.length === 0) {
+    return (
+      <p className="break-words text-[10px] text-haze [overflow-wrap:anywhere]">
+        Attribution unavailable from Google.
+      </p>
+    );
+  }
+
+  return (
+    <p className="break-words text-[10px] text-haze [overflow-wrap:anywhere]">
+      Photo attribution:{" "}
+      {items.map((item, index) => (
+        <span key={`${item.displayName}-${index}`}>
+          {index > 0 ? ", " : ""}
+          {item.uri ? (
+            <a
+              href={item.uri}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-saffron underline-offset-2 hover:underline"
+            >
+              {item.displayName}
+            </a>
+          ) : (
+            <span className="text-tan">{item.displayName}</span>
+          )}
+        </span>
+      ))}
+    </p>
   );
 }
 
