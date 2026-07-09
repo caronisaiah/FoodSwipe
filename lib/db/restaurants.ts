@@ -7,6 +7,7 @@ import { RESTAURANTS, getRestaurantById } from "@/lib/seed/restaurants";
 import { filterCuisines, filterDietary, filterVibes } from "@/lib/vocab";
 import { getMarketOrigin, normalizeMarket, type Market } from "@/lib/markets";
 import { missingPromotionRequiredFields, type PromotionConflict } from "@/lib/candidateReadiness";
+import { cleanPublicReasonText, publicReasonTextOrFallback } from "@/lib/publicReasonText";
 import type { Cuisine, Dietary, PriceLevel, Restaurant, Vibe, Video } from "@/lib/types";
 
 export { isDbConfigured };
@@ -116,7 +117,7 @@ function rowToRestaurant(row: RestaurantRow): Restaurant {
       ? row.dishHighlights.filter((d): d is string => typeof d === "string" && d.trim().length > 0).map((d) => d.trim())
       : [],
     bestFor: filterVibes(row.bestFor),
-    reasonText: row.reasonText ?? "",
+    reasonText: cleanPublicReasonText(row.reasonText) ?? "",
     // Neutral internal placeholders — never real user metrics, never fabricated.
     trendScore: row.trendScore ?? 0,
     vibeScore: row.vibeScore ?? 0,
@@ -363,7 +364,7 @@ export async function promoteCandidateToRestaurant(candidateId: string): Promise
     vibeTags: filterVibes(candidate.vibeTags),
     bestFor: filterVibes(candidate.bestFor),
     dishHighlights: candidate.dishHighlights,
-    reasonText: str(candidate.reasonText) ?? "",
+    reasonText: publicReasonTextOrFallback(candidate.reasonText),
     // Neutral placeholders — never fabricated social proof.
     trendScore: 0,
     vibeScore: 0,
@@ -466,7 +467,7 @@ export async function updatePublishedRestaurant(
     if (a) set.address = a;
   }
   if ("reasonText" in b) {
-    const rt = str(b.reasonText);
+    const rt = cleanPublicReasonText(str(b.reasonText));
     if (rt) set.reasonText = rt;
   }
   if ("cuisineTags" in b) {

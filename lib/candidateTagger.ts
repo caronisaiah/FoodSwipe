@@ -12,9 +12,10 @@ import type { Cuisine, Dietary, Vibe } from "@/lib/types";
  *   - dish highlights stay empty unless the dish is directly implied by the
  *     name/type (Tacos / Ramen / Pizza / Pastries / Ice cream) — never invented.
  *
- * Every suggestion is explained in `suggestionReasons`, and `reasonText` is a
- * neutral review template, NOT marketing copy. Output is a STARTING POINT for a
- * human reviewer — it is never published to `/feed` and never auto-approved.
+ * Every suggestion is explained in `suggestionReasons`. The deterministic import
+ * pass does NOT generate `reasonText` because that field is public profile copy.
+ * Output remains a STARTING POINT for a human reviewer; it is never
+ * auto-approved or directly published to `/feed`.
  */
 
 export type SuggestionConfidence = "low" | "medium" | "high";
@@ -43,9 +44,6 @@ export interface CandidateSuggestion {
   suggestionConfidence: SuggestionConfidence;
   suggestionReasons: string[];
 }
-
-const REASON_TEXT =
-  "Imported candidate; suggested tags are based on Google type/name/query and need human review.";
 
 export interface TypeRule {
   cuisines: Cuisine[];
@@ -297,6 +295,7 @@ export function suggestCandidateTags(input: CandidateTagInput): CandidateSuggest
   if (cuisines.length === 0) {
     reasons.push("No confident cuisine signal from Google type/name; left for human review.");
   }
+  reasons.push("Reason text is public profile copy; deterministic import left it blank for human review.");
 
   const confidence: SuggestionConfidence = cuisineFromPrimary
     ? "high"
@@ -310,7 +309,7 @@ export function suggestCandidateTags(input: CandidateTagInput): CandidateSuggest
     vibeTags: uniq(vibeTags),
     bestFor: uniq(bestFor),
     dishHighlights: uniq(dishes),
-    reasonText: REASON_TEXT,
+    reasonText: "",
     suggestionConfidence: confidence,
     suggestionReasons: reasons,
   };

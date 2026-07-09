@@ -10,6 +10,7 @@ import {
   type CandidateReadinessResult,
   type PromotionConflict,
 } from "@/lib/candidateReadiness";
+import { cleanPublicReasonText } from "@/lib/publicReasonText";
 import MaterialIcon from "@/components/MaterialIcon";
 import TagSuggestionsPanel, { type AppliedTagSuggestions } from "@/components/TagSuggestionsPanel";
 
@@ -1068,7 +1069,7 @@ function CandidateEditor({
   const [bestFor, setBestFor] = useState(candidate.bestFor.join(", "));
   const [dishes, setDishes] = useState(candidate.dishHighlights.join(", "));
   const [priceLevel, setPriceLevel] = useState(priceDraftValue(candidate.priceLevel));
-  const [reasonText, setReasonText] = useState(candidate.reasonText ?? "");
+  const [reasonText, setReasonText] = useState(cleanPublicReasonText(candidate.reasonText) ?? "");
   const [reviewNotes, setReviewNotes] = useState(candidate.reviewNotes ?? "");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<Msg>(null);
@@ -1139,7 +1140,7 @@ function CandidateEditor({
     setVibe(snap.vibeTags.join(", "));
     setBestFor(snap.bestFor.join(", "));
     setDishes(snap.dishHighlights.join(", "));
-    setReasonText(snap.reasonText);
+    setReasonText(cleanPublicReasonText(snap.reasonText) ?? "");
     setMsg({ type: "ok", text: "Reset to suggestions — review and Save to persist." });
   }
 
@@ -1149,8 +1150,9 @@ function CandidateEditor({
     setVibe((prev) => mergeDraftList(prev, suggestions.vibeTags));
     setBestFor((prev) => mergeDraftList(prev, suggestions.bestFor));
     setDishes((prev) => mergeDraftList(prev, suggestions.dishHighlights));
-    if (suggestions.reasonText) {
-      setReasonText((prev) => (prev.trim() ? prev : suggestions.reasonText ?? prev));
+    const publicReasonSuggestion = cleanPublicReasonText(suggestions.reasonText);
+    if (publicReasonSuggestion) {
+      setReasonText((prev) => (prev.trim() ? prev : publicReasonSuggestion));
     }
     setMsg({ type: "ok", text: "Applied selected suggestions to the form draft — review and Save to persist." });
   }
@@ -1291,7 +1293,7 @@ function CandidateEditor({
           <TagField label="Dish highlights" hint={VOCAB_HINT.dish} value={dishes} onChange={setDishes}
             suggested={snap?.dishHighlights ?? null} confidence={candidate.suggestionConfidence} />
 
-          <Field label="Reason text" hint="neutral review copy — not marketing">
+          <Field label="Public reason text" hint="shown under Why you'll like it; blank uses fallback copy">
             <Textarea value={reasonText} onChange={setReasonText} placeholder="Why this matches…" />
           </Field>
           <Field label="Review notes" hint="provenance + curation notes">
@@ -1367,7 +1369,8 @@ function CandidateEditor({
                 </button>
                 <p className="mt-1 text-[10px] text-haze">
                   Creates a live DB restaurant from the reviewed fields. Requires name,
-                  address, price, lat/lng, cuisine, a vibe/best-for, and reason text.
+                  address, price, lat/lng, cuisine, and a vibe/best-for. Blank public
+                  reason text uses safe fallback copy.
                 </p>
               </>
             ) : (

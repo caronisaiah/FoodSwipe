@@ -1,4 +1,5 @@
 import { filterCuisines, filterVibes } from "@/lib/vocab";
+import { cleanPublicReasonText } from "@/lib/publicReasonText";
 
 export type PromotionConflict = "already-promoted" | "place-already-published";
 
@@ -54,7 +55,6 @@ const FRIENDLY_MISSING: Record<string, string> = {
   lng: "longitude",
   cuisineTags: "at least one cuisine tag",
   "vibeTags|bestFor": "at least one vibe or best-for tag",
-  reasonText: "reason text",
 };
 
 function str(v: string | null | undefined): string | null {
@@ -81,7 +81,6 @@ export function missingPromotionRequiredFields(c: CandidateReadinessInput): stri
   if (filterVibes(c.vibeTags ?? []).length === 0 && filterVibes(c.bestFor ?? []).length === 0) {
     missing.push("vibeTags|bestFor");
   }
-  if (!str(c.reasonText)) missing.push("reasonText");
   return missing;
 }
 
@@ -97,7 +96,7 @@ export function computeCandidateReadiness(c: CandidateReadinessInput): Candidate
     hasCuisine: filterCuisines(c.cuisineTags ?? []).length > 0,
     hasVibeOrBestFor: filterVibes(c.vibeTags ?? []).length > 0 || filterVibes(c.bestFor ?? []).length > 0,
     hasDishHighlights: Array.isArray(c.dishHighlights) && c.dishHighlights.some((d) => str(d)),
-    hasReasonText: Boolean(str(c.reasonText)),
+    hasReasonText: Boolean(cleanPublicReasonText(c.reasonText)),
     hasWebsite: Boolean(str(c.websiteDomain)),
     hasWebsiteEvidence: (c.websiteEvidenceOkDocs ?? 0) > 0,
     // Cheap, honest proxy for the hero-media ladder: Place Photo if a Place ID
@@ -113,6 +112,7 @@ export function computeCandidateReadiness(c: CandidateReadinessInput): Candidate
   if (c.promotionConflict === "place-already-published") warnings.push("Another live restaurant uses this Google Place ID.");
   if (!signals.hasWebsite) warnings.push("No website on candidate.");
   else if (!signals.hasWebsiteEvidence) warnings.push("No website evidence yet.");
+  if (!signals.hasReasonText) warnings.push("No public reason text; promotion will use fallback copy.");
   if (!signals.hasVideoCandidates && !signals.hasApprovedVideos) warnings.push("Needs media/video leads.");
   if (!signals.hasDishHighlights) warnings.push("No dish highlights yet.");
 
