@@ -1,4 +1,4 @@
-import { getPlacePhoto, type PlacePhotoStatus } from "@/lib/places";
+import { getPlacePhoto, getPlacePhotoByOrdinal, type PlacePhotoStatus } from "@/lib/places";
 import { logoUrl } from "@/lib/logos";
 import type { PlacePhoto } from "@/lib/types";
 
@@ -71,4 +71,46 @@ export async function resolveHeroMedia(input: {
     httpStatus: result.httpStatus,
     googleStatus: result.googleStatus,
   };
+}
+
+/**
+ * Prefer an approved exact-location Google photo selection, then fall back to
+ * the existing Place Photo -> Logo.dev -> placeholder ladder on any mismatch,
+ * stale ordinal, quota/network failure, or missing selection data. Response
+ * shape stays identical to `resolveHeroMedia`.
+ */
+export async function resolveHeroMediaWithSelection(input: {
+  googlePlaceId?: string | null;
+  websiteDomain?: string | null;
+  selectedHero?: {
+    sourcePlaceId: string | null;
+    selectedPhotoOrdinal: number | null;
+  } | null;
+}): Promise<HeroMedia> {
+  const logo = logoUrl(input.websiteDomain ?? null);
+  const placeId = typeof input.googlePlaceId === "string" ? input.googlePlaceId.trim() : "";
+  const sourcePlaceId =
+    typeof input.selectedHero?.sourcePlaceId === "string"
+      ? input.selectedHero.sourcePlaceId.trim()
+      : "";
+  const ordinal = input.selectedHero?.selectedPhotoOrdinal;
+
+  if (placeId && sourcePlaceId && sourcePlaceId === placeId && typeof ordinal === "number") {
+    const selected = await getPlacePhotoByOrdinal(sourcePlaceId, ordinal);
+    if (selected.photo) {
+      return {
+        tier: "photo",
+        photo: selected.photo,
+        logoUrl: logo,
+        photoStatus: selected.status,
+        httpStatus: selected.httpStatus,
+        googleStatus: selected.googleStatus,
+      };
+    }
+  }
+
+  return resolveHeroMedia({
+    googlePlaceId: input.googlePlaceId,
+    websiteDomain: input.websiteDomain,
+  });
 }

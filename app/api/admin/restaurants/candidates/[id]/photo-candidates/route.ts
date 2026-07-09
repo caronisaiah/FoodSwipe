@@ -13,6 +13,7 @@ function errorForStatus(status: PlacePhotoStatus): string | undefined {
   if (status === "missing-google-place-id") return "Candidate has no Google Place ID.";
   if (status === "place-details-failed") return "Google Place Details request failed.";
   if (status === "no-photos") return "Google returned no photos for this exact Place ID.";
+  if (status === "invalid-photo-ordinal") return "Selected photo ordinal is unavailable for this Place ID.";
   if (status === "photo-media-failed") return "Google photo media request failed.";
   if (status === "error") return "Google photo candidate lookup failed.";
   return undefined;

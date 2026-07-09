@@ -1,6 +1,7 @@
 import { getAppRestaurantById } from "@/lib/db/restaurants";
+import { getApprovedHeroSelectionForRestaurantSlug } from "@/lib/db/heroMediaSelections";
 import { shouldIncludeSeedRestaurants } from "@/lib/contentMode";
-import { resolveHeroMedia } from "@/lib/heroMedia";
+import { resolveHeroMediaWithSelection } from "@/lib/heroMedia";
 
 /*
   GET /api/restaurants/[id]/photo  (public read, v1.5)
@@ -36,12 +37,18 @@ export async function GET(
     return Response.json({ error: "Unknown restaurant." }, { status: 404 });
   }
 
-  // Shared resolver: Place Photo -> Logo.dev logo -> placeholder. With no Place
-  // ID it short-circuits to status "missing-google-place-id" (no Google call),
-  // exactly as before; the hero then uses its logo/placeholder fallback.
-  const media = await resolveHeroMedia({
+  // DB-published rows may have an explicit approved exact-location selection.
+  // Seed-only rows have no DB selection and keep the existing ladder unchanged.
+  const selection = await getApprovedHeroSelectionForRestaurantSlug(id);
+  const media = await resolveHeroMediaWithSelection({
     googlePlaceId: restaurant.googlePlaceId,
     websiteDomain: restaurant.websiteDomain,
+    selectedHero: selection
+      ? {
+          sourcePlaceId: selection.sourcePlaceId,
+          selectedPhotoOrdinal: selection.selectedPhotoOrdinal,
+        }
+      : null,
   });
 
   return noStoreJson({

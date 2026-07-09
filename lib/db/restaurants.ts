@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { getDb, isDbConfigured } from "./index";
 import { restaurants, type RestaurantRow } from "./schema";
 import { getCandidateRestaurant, slugify } from "./candidates";
+import { cloneCandidateHeroSelectionToRestaurant } from "./heroMediaSelections";
 import { RESTAURANTS, getRestaurantById } from "@/lib/seed/restaurants";
 import { filterCuisines, filterDietary, filterVibes } from "@/lib/vocab";
 import { getMarketOrigin, normalizeMarket, type Market } from "@/lib/markets";
@@ -232,12 +233,12 @@ async function uniquePublishedSlug(base: string): Promise<string> {
 }
 
 export type PromoteResult =
-  | { ok: true; restaurant: PublishedRestaurantAdmin }
+  | { ok: true; restaurant: PublishedRestaurantAdmin; heroSelectionWarning?: string }
   | { ok: false; code: "no-db" }
   | { ok: false; code: "not-found" }
   | { ok: false; code: "not-approved"; status: string }
   | { ok: false; code: "incomplete"; missingFields: string[] }
-  | { ok: false; code: "already-promoted"; restaurant: PublishedRestaurantAdmin }
+  | { ok: false; code: "already-promoted"; restaurant: PublishedRestaurantAdmin; heroSelectionWarning?: string }
   | { ok: false; code: "place-already-published"; restaurant: PublishedRestaurantAdmin }
   | { ok: false; code: "error" };
 
@@ -319,7 +320,13 @@ export async function promoteCandidateToRestaurant(candidateId: string): Promise
     .where(eq(restaurants.sourceCandidateId, candidate.id))
     .limit(1);
   if (existingBySource[0]) {
-    return { ok: false, code: "already-promoted", restaurant: rowToAdmin(existingBySource[0]) };
+    const clone = await cloneCandidateHeroSelectionToRestaurant(candidate.id, existingBySource[0].id);
+    return {
+      ok: false,
+      code: "already-promoted",
+      restaurant: rowToAdmin(existingBySource[0]),
+      heroSelectionWarning: clone.ok ? undefined : clone.warning,
+    };
   }
   if (candidate.googlePlaceId) {
     const existingByPlace = await db
@@ -381,7 +388,12 @@ export async function promoteCandidateToRestaurant(candidateId: string): Promise
         .insert(restaurants)
         .values({ id: crypto.randomUUID(), slug, ...baseValues })
         .returning();
-      return { ok: true, restaurant: rowToAdmin(row) };
+      const clone = await cloneCandidateHeroSelectionToRestaurant(candidate.id, row.id);
+      return {
+        ok: true,
+        restaurant: rowToAdmin(row),
+        heroSelectionWarning: clone.ok ? undefined : clone.warning,
+      };
     } catch {
       const bySource = await db
         .select()
@@ -389,7 +401,13 @@ export async function promoteCandidateToRestaurant(candidateId: string): Promise
         .where(eq(restaurants.sourceCandidateId, candidate.id))
         .limit(1);
       if (bySource[0]) {
-        return { ok: false, code: "already-promoted", restaurant: rowToAdmin(bySource[0]) };
+        const clone = await cloneCandidateHeroSelectionToRestaurant(candidate.id, bySource[0].id);
+        return {
+          ok: false,
+          code: "already-promoted",
+          restaurant: rowToAdmin(bySource[0]),
+          heroSelectionWarning: clone.ok ? undefined : clone.warning,
+        };
       }
       if (candidate.googlePlaceId) {
         const byPlace = await db

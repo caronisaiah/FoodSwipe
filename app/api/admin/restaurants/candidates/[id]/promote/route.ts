@@ -47,7 +47,10 @@ export async function POST(
   }
 
   if (result.ok) {
-    return Response.json({ restaurant: result.restaurant }, { status: 201 });
+    return Response.json(
+      { restaurant: result.restaurant, heroSelectionWarning: result.heroSelectionWarning },
+      { status: 201 },
+    );
   }
 
   switch (result.code) {
@@ -76,7 +79,11 @@ export async function POST(
       );
     case "already-promoted":
       return Response.json(
-        { error: "Candidate has already been promoted.", restaurant: result.restaurant },
+        {
+          error: "Candidate has already been promoted.",
+          restaurant: result.restaurant,
+          heroSelectionWarning: result.heroSelectionWarning,
+        },
         { status: 409 },
       );
     case "place-already-published":

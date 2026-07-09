@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   doublePrecision,
   index,
   integer,
@@ -253,6 +254,61 @@ export const restaurants = pgTable("restaurants", {
 
 export type RestaurantRow = typeof restaurants.$inferSelect;
 export type NewRestaurantRow = typeof restaurants.$inferInsert;
+
+/**
+ * P2C selected hero-media approvals. Stores ONLY durable, policy-safe selection
+ * metadata: target, exact Google Place ID, and 1-based Google photo ordinal.
+ * It never stores Google photo names/references, ephemeral photoUri values,
+ * image bytes, or API keys. Public rendering resolves the selected ordinal fresh
+ * at request time and falls back to the normal hero ladder if stale/invalid.
+ */
+export const restaurantHeroMediaSelections = pgTable("restaurant_hero_media_selections", {
+  id: text("id").primaryKey(),
+  // "candidate" | "restaurant"
+  targetType: text("target_type").notNull(),
+  candidateRestaurantId: text("candidate_restaurant_id"),
+  restaurantId: text("restaurant_id"),
+  // P2C supports exact Google place photos only. Text fields leave room for later
+  // sibling-location work without widening this slice.
+  sourceProvider: text("source_provider").notNull().default("google_places"),
+  relationship: text("relationship").notNull().default("exact_location"),
+  sourcePlaceId: text("source_place_id").notNull(),
+  // 1-based ordinal in the fresh Google Place Details photo list.
+  selectedPhotoOrdinal: integer("selected_photo_ordinal").notNull(),
+  // "approved" | "cleared"
+  approvalState: text("approval_state").notNull().default("approved"),
+  reviewerNotes: text("reviewer_notes"),
+  selectionReason: text("selection_reason"),
+  riskNote: text("risk_note"),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("restaurant_hero_media_candidate_idx").on(t.candidateRestaurantId),
+  index("restaurant_hero_media_restaurant_idx").on(t.restaurantId),
+  index("restaurant_hero_media_source_place_idx").on(t.sourcePlaceId),
+  uniqueIndex("restaurant_hero_media_candidate_active_key")
+    .on(t.candidateRestaurantId)
+    .where(sql`${t.targetType} = 'candidate' and ${t.approvalState} = 'approved' and ${t.candidateRestaurantId} is not null`),
+  uniqueIndex("restaurant_hero_media_restaurant_active_key")
+    .on(t.restaurantId)
+    .where(sql`${t.targetType} = 'restaurant' and ${t.approvalState} = 'approved' and ${t.restaurantId} is not null`),
+  check(
+    "restaurant_hero_media_target_check",
+    sql`(
+      (${t.targetType} = 'candidate' and ${t.candidateRestaurantId} is not null and ${t.restaurantId} is null)
+      or
+      (${t.targetType} = 'restaurant' and ${t.restaurantId} is not null and ${t.candidateRestaurantId} is null)
+    )`,
+  ),
+  check("restaurant_hero_media_provider_check", sql`${t.sourceProvider} = 'google_places'`),
+  check("restaurant_hero_media_relationship_check", sql`${t.relationship} = 'exact_location'`),
+  check("restaurant_hero_media_state_check", sql`${t.approvalState} in ('approved', 'cleared')`),
+  check("restaurant_hero_media_ordinal_check", sql`${t.selectedPhotoOrdinal} >= 1 and ${t.selectedPhotoOrdinal} <= 10`),
+]);
+
+export type RestaurantHeroMediaSelectionRow = typeof restaurantHeroMediaSelections.$inferSelect;
+export type NewRestaurantHeroMediaSelectionRow = typeof restaurantHeroMediaSelections.$inferInsert;
 
 /**
  * Social video intake (Phase 1) — a REVIEW STAGING queue for TikTok/Instagram/

@@ -337,6 +337,19 @@ plus a **503** if `GOOGLE_MAPS_API_KEY` is unset and **400** on a blank `query`.
   console shows vertical hero-crop previews, dimensions, attribution, and
   metadata-only crop/resolution heuristics. It never stores photo names, URLs, or
   bytes, and it has no approve/save/reject controls; selection is deferred to P2C.
+- **Selected exact-location hero media (P2C).** Migration
+  `0011_flat_next_avengers.sql` adds `restaurant_hero_media_selections` for
+  explicit admin approvals. The table stores only target metadata, `sourcePlaceId`
+  (the exact Google Place ID), a 1-based `selectedPhotoOrdinal`, approval state,
+  and notes. It never stores Google `photoUri`, photo names/references, image
+  bytes, or API keys. Candidate routes
+  [`GET/PUT/DELETE …/hero-media-selection`](app/api/admin/restaurants/candidates/[id]/hero-media-selection/route.ts)
+  validate the exact Place ID and re-resolve the ordinal fresh before saving.
+  When a candidate is promoted, an approved selection is cloned to the published
+  restaurant target. Public DB-published photo requests prefer the approved
+  selection, resolving it fresh with attribution; stale/missing selections fall
+  back to the existing Google-first-photo â†’ Logo.dev â†’ placeholder ladder. Seed
+  restaurants, sibling-location fallback, and readiness gating are unchanged.
 - **Review console.** [`/admin/restaurants/candidates`](app/admin/restaurants/candidates/page.tsx)
   is a dense internal queue: rows ranked by review-likelihood (null/manual last),
   with status + source filters, name/address/Place-ID search, and per-row flags
@@ -897,6 +910,7 @@ app/
   api/admin/restaurants/candidates/[id]/route.ts PATCH a candidate (admin secret)
   api/admin/restaurants/candidates/[id]/photo/route.ts  GET candidate hero preview (admin secret, no-store)
   api/admin/restaurants/candidates/[id]/photo-candidates/route.ts  GET exact-location Google photo candidates (admin secret, no-store)
+  api/admin/restaurants/candidates/[id]/hero-media-selection/route.ts  GET/PUT/DELETE selected exact-location hero (admin secret, no-store)
   api/admin/restaurants/candidates/import/google/route.ts  POST Google Places Text Search import (admin secret)
 
 components/
@@ -926,7 +940,7 @@ lib/
   recommendations.ts         Ranking
   storage.ts                 localStorage hooks (prefs, saves, legacy clips)
   emoji.ts                   Cuisine to placeholder glyph
-  db/schema.ts               Drizzle tables: restaurant_videos, candidate_restaurants, restaurant_sources, ingestion_jobs
+  db/schema.ts               Drizzle tables: restaurant_videos, candidate_restaurants, restaurants, hero media selections, evidence, ingestion
   db/index.ts                Lazy Neon/Drizzle client
   db/videos.ts               Persisted video data access
   db/candidates.ts           Candidate-restaurant review data access (Phase 1 ingestion)

@@ -144,6 +144,31 @@ interface HeroPhotoCandidatesResponse {
   diagnostics?: HeroPhotoCandidatesDiagnostics;
 }
 
+interface HeroMediaSelection {
+  id: string;
+  targetType: "candidate" | "restaurant";
+  candidateRestaurantId: string | null;
+  restaurantId: string | null;
+  sourceProvider: "google_places";
+  relationship: "exact_location";
+  sourcePlaceId: string;
+  selectedPhotoOrdinal: number;
+  approvalState: "approved" | "cleared";
+  reviewerNotes: string | null;
+  selectionReason: string | null;
+  riskNote: string | null;
+  approvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface HeroMediaSelectionResponse {
+  error?: string;
+  status?: string;
+  selection?: HeroMediaSelection | null;
+  preview?: { photo?: PlacePhoto | null; status?: string } | null;
+}
+
 interface CandidatePromotionConflict {
   conflict: PromotionConflict;
   restaurantSlug: string;
@@ -1068,17 +1093,28 @@ function CandidateEditor({
       });
       const data = (await res.json()) as {
         restaurant?: { slug?: string };
+        heroSelectionWarning?: string;
         error?: string;
         missingFields?: string[];
       };
       if (res.ok && data.restaurant?.slug) {
         setPromotedSlug(data.restaurant.slug);
-        setPromoteMsg({ type: "ok", text: "Promoted to the live feed." });
+        setPromoteMsg({
+          type: data.heroSelectionWarning ? "err" : "ok",
+          text: data.heroSelectionWarning
+            ? `Promoted, but hero selection was not cloned: ${data.heroSelectionWarning}`
+            : "Promoted to the live feed.",
+        });
         return;
       }
       if (res.status === 409 && data.restaurant?.slug) {
         setPromotedSlug(data.restaurant.slug);
-        setPromoteMsg({ type: "err", text: data.error ?? "Already promoted." });
+        setPromoteMsg({
+          type: "err",
+          text: data.heroSelectionWarning
+            ? `${data.error ?? "Already promoted."} Hero selection warning: ${data.heroSelectionWarning}`
+            : data.error ?? "Already promoted.",
+        });
         return;
       }
       if (res.status === 422 && data.missingFields?.length) {
@@ -1436,7 +1472,12 @@ function HeroPhotoCandidatesPanel({
     message: string | null;
     candidates: HeroPhotoCandidate[];
     diagnostics: HeroPhotoCandidatesDiagnostics | null;
+    selection: HeroMediaSelection | null;
+    selectionError: string | null;
   } | null>(null);
+  const [savingOrdinal, setSavingOrdinal] = useState<number | null>(null);
+  const [clearing, setClearing] = useState(false);
+  const [actionMessage, setActionMessage] = useState<Msg>(null);
 
   useEffect(() => {
     if (!hasPlaceId || !hasSecret) return;
@@ -1445,19 +1486,29 @@ function HeroPhotoCandidatesPanel({
     const controller = new AbortController();
     void (async () => {
       try {
-        const res = await fetch(`/api/admin/restaurants/candidates/${candidateId}/photo-candidates`, {
-          headers: { "x-foodswipe-admin-secret": secret },
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        const data = (await res.json()) as HeroPhotoCandidatesResponse;
+        const [photoRes, selectionRes] = await Promise.all([
+          fetch(`/api/admin/restaurants/candidates/${candidateId}/photo-candidates`, {
+            headers: { "x-foodswipe-admin-secret": secret },
+            cache: "no-store",
+            signal: controller.signal,
+          }),
+          fetch(`/api/admin/restaurants/candidates/${candidateId}/hero-media-selection`, {
+            headers: { "x-foodswipe-admin-secret": secret },
+            cache: "no-store",
+            signal: controller.signal,
+          }),
+        ]);
+        const data = (await photoRes.json()) as HeroPhotoCandidatesResponse;
+        const selectionData = (await selectionRes.json()) as HeroMediaSelectionResponse;
         if (cancelled) return;
         setLookup({
           key: requestKey,
-          state: res.ok ? "ready" : "error",
-          message: res.ok ? (data.error ?? null) : (data.error ?? `Photo candidate lookup failed (${res.status}).`),
+          state: photoRes.ok ? "ready" : "error",
+          message: photoRes.ok ? (data.error ?? null) : (data.error ?? `Photo candidate lookup failed (${photoRes.status}).`),
           candidates: Array.isArray(data.candidates) ? data.candidates : [],
           diagnostics: data.diagnostics ?? null,
+          selection: selectionData.selection ?? null,
+          selectionError: selectionRes.ok ? (selectionData.error ?? null) : (selectionData.error ?? `Selection lookup failed (${selectionRes.status}).`),
         });
       } catch {
         if (!cancelled) {
@@ -1467,6 +1518,8 @@ function HeroPhotoCandidatesPanel({
             message: "Network error while loading photo candidates.",
             candidates: [],
             diagnostics: null,
+            selection: null,
+            selectionError: null,
           });
         }
       }
@@ -1489,8 +1542,72 @@ function HeroPhotoCandidatesPanel({
         : lookup?.message ?? null;
   const candidates = isLoading ? [] : lookup?.candidates ?? [];
   const diagnostics = isLoading ? null : lookup?.diagnostics ?? null;
+  const selection = isLoading ? null : lookup?.selection ?? null;
+  const selectionError = isLoading ? null : lookup?.selectionError ?? null;
   const resolvedCount = diagnostics?.resolvedCount ?? candidates.filter((c) => c.status === "ok").length;
   const detailsCount = diagnostics?.detailsPhotoCount ?? candidates.length;
+
+  async function saveSelection(candidate: HeroPhotoCandidate) {
+    if (!googlePlaceId || savingOrdinal !== null || clearing) return;
+    setSavingOrdinal(candidate.ordinal);
+    setActionMessage(null);
+    try {
+      const res = await fetch(`/api/admin/restaurants/candidates/${candidateId}/hero-media-selection`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "x-foodswipe-admin-secret": secret,
+        },
+        body: JSON.stringify({
+          sourcePlaceId: googlePlaceId,
+          selectedPhotoOrdinal: candidate.ordinal,
+          selectionReason: "Selected from exact-location Google photo candidates",
+        }),
+      });
+      const data = (await res.json()) as HeroMediaSelectionResponse;
+      if (!res.ok || !data.selection) {
+        setActionMessage({ type: "err", text: data.error ?? `Selection failed (${res.status}).` });
+        return;
+      }
+      setLookup((prev) =>
+        prev && prev.key === requestKey
+          ? { ...prev, selection: data.selection ?? null, selectionError: null }
+          : prev,
+      );
+      setActionMessage({ type: "ok", text: `Hero photo #${candidate.ordinal} selected.` });
+    } catch {
+      setActionMessage({ type: "err", text: "Network error saving hero selection." });
+    } finally {
+      setSavingOrdinal(null);
+    }
+  }
+
+  async function clearSelection() {
+    if (clearing || savingOrdinal !== null) return;
+    setClearing(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch(`/api/admin/restaurants/candidates/${candidateId}/hero-media-selection`, {
+        method: "DELETE",
+        headers: { "x-foodswipe-admin-secret": secret },
+      });
+      const data = (await res.json()) as HeroMediaSelectionResponse;
+      if (!res.ok) {
+        setActionMessage({ type: "err", text: data.error ?? `Clear failed (${res.status}).` });
+        return;
+      }
+      setLookup((prev) =>
+        prev && prev.key === requestKey
+          ? { ...prev, selection: null, selectionError: null }
+          : prev,
+      );
+      setActionMessage({ type: "ok", text: "Hero selection cleared." });
+    } catch {
+      setActionMessage({ type: "err", text: "Network error clearing hero selection." });
+    } finally {
+      setClearing(false);
+    }
+  }
 
   return (
     <section className="min-w-0 max-w-full rounded-lg bg-ink-2 p-2 ring-1 ring-inset ring-white/5">
@@ -1500,12 +1617,41 @@ function HeroPhotoCandidatesPanel({
           Hero photo candidates
         </p>
         <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-haze ring-1 ring-inset ring-white/10">
-          Read-only
+          Exact-location only
         </span>
       </div>
       <p className="mt-1 break-words text-[10px] text-haze [overflow-wrap:anywhere]">
-        Exact Google place photos only. The current hero ladder preview is on the left; selection comes in P2C.
+        Choose one Google place photo as the approved hero. It affects public feed/profile after this candidate is promoted.
       </p>
+
+      {(selection || selectionError || actionMessage) && (
+        <div className="mt-2 rounded-lg bg-white/5 p-2 ring-1 ring-inset ring-white/5">
+          {selection ? (
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+              <p className="break-words text-[11px] text-tan [overflow-wrap:anywhere]">
+                Selected hero: <span className="font-semibold text-cream">photo #{selection.selectedPhotoOrdinal}</span>
+                {selection.approvedAt ? ` · approved ${shortDate(selection.approvedAt)}` : ""}
+              </p>
+              <button
+                type="button"
+                onClick={() => void clearSelection()}
+                disabled={clearing || savingOrdinal !== null}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-semibold text-chili-soft ring-1 ring-inset ring-chili/30 transition hover:bg-chili/10 disabled:opacity-40"
+              >
+                <MaterialIcon name="backspace" className="text-xs" />
+                {clearing ? "Clearing..." : "Clear"}
+              </button>
+            </div>
+          ) : selectionError ? (
+            <p className="break-words text-[11px] text-saffron [overflow-wrap:anywhere]">{selectionError}</p>
+          ) : null}
+          {actionMessage && (
+            <p className={`mt-1 break-words text-[11px] [overflow-wrap:anywhere] ${actionMessage.type === "ok" ? "text-mint" : "text-chili-soft"}`}>
+              {actionMessage.text}
+            </p>
+          )}
+        </div>
+      )}
 
       {state === "loading" && (
         <p className="mt-2 flex items-center gap-1.5 text-[11px] text-haze">
@@ -1541,6 +1687,10 @@ function HeroPhotoCandidatesPanel({
                   key={candidate.ordinal}
                   candidate={candidate}
                   restaurantName={name}
+                  selected={selection?.selectedPhotoOrdinal === candidate.ordinal}
+                  saving={savingOrdinal === candidate.ordinal}
+                  disabled={clearing || savingOrdinal !== null || candidate.status !== "ok" || !candidate.photoUri}
+                  onUse={() => void saveSelection(candidate)}
                 />
               ))}
             </div>
@@ -1554,9 +1704,17 @@ function HeroPhotoCandidatesPanel({
 function HeroPhotoCandidateCard({
   candidate,
   restaurantName,
+  selected,
+  saving,
+  disabled,
+  onUse,
 }: {
   candidate: HeroPhotoCandidate;
   restaurantName: string;
+  selected: boolean;
+  saving: boolean;
+  disabled: boolean;
+  onUse: () => void;
 }) {
   const dimensions = candidate.widthPx && candidate.heightPx
     ? `${candidate.widthPx} x ${candidate.heightPx}`
@@ -1585,8 +1743,15 @@ function HeroPhotoCandidateCard({
           </div>
         )}
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent p-2 text-white">
-          <p className="text-[11px] font-semibold">#{candidate.ordinal} Exact Google place photo</p>
-          <p className="text-[10px] text-white/75">Selection comes in P2C</p>
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <p className="text-[11px] font-semibold">#{candidate.ordinal} Exact Google place photo</p>
+            {selected && (
+              <span className="rounded-full bg-mint px-1.5 py-0.5 text-[9px] font-bold text-ink">
+                Selected
+              </span>
+            )}
+          </div>
+          <p className="text-[10px] text-white/75">Resolves fresh at public request time</p>
         </div>
       </div>
       <div className="space-y-1.5 p-2">
@@ -1601,6 +1766,19 @@ function HeroPhotoCandidateCard({
         </p>
         <PhotoCandidateBadges candidate={candidate} />
         <PhotoCandidateAttribution attributions={candidate.attributions} />
+        <button
+          type="button"
+          onClick={onUse}
+          disabled={disabled || selected}
+          className={`inline-flex w-full items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-bold transition active:scale-[0.98] disabled:opacity-45 ${
+            selected
+              ? "bg-mint/15 text-mint ring-1 ring-inset ring-mint/25"
+              : "bg-brand-gradient text-ink"
+          }`}
+        >
+          <MaterialIcon name={selected ? "check_circle" : "photo_camera"} className="text-sm" />
+          {selected ? "Selected hero" : saving ? "Saving..." : "Use as hero"}
+        </button>
       </div>
     </article>
   );

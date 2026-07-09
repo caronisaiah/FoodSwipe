@@ -40,6 +40,7 @@ export type PlacePhotoStatus =
   | "missing-google-place-id"
   | "place-details-failed"
   | "no-photos"
+  | "invalid-photo-ordinal"
   | "photo-media-failed"
   | "error";
 
@@ -206,6 +207,86 @@ export async function getPlacePhoto(placeId: string): Promise<PlacePhotoResult> 
     };
   } catch {
     // Network / quota / parse failure — degrade to the placeholder hero.
+    return { photo: null, status: "error" };
+  }
+}
+
+/**
+ * Resolve a specific 1-based Google photo ordinal for an exact Place ID. P2C
+ * stores only this ordinal + sourcePlaceId; this function fetches Place Details
+ * fresh, uses the Google photo `name` only in-memory for this request, resolves a
+ * fresh ephemeral `photoUri`, and discards the name before returning.
+ */
+export async function getPlacePhotoByOrdinal(
+  placeId: string,
+  selectedPhotoOrdinal: number,
+): Promise<PlacePhotoResult> {
+  const key = apiKey();
+  if (!key) return { photo: null, status: "missing-api-key" };
+  if (typeof placeId !== "string" || placeId.trim().length === 0) {
+    return { photo: null, status: "missing-google-place-id" };
+  }
+  const ordinal = Math.trunc(selectedPhotoOrdinal);
+  if (!Number.isFinite(selectedPhotoOrdinal) || ordinal < 1 || ordinal > 10) {
+    return { photo: null, status: "invalid-photo-ordinal" };
+  }
+  const id = placeId.trim();
+
+  try {
+    const detailsRes = await fetch(
+      `${PLACES_BASE}/places/${encodeURIComponent(id)}`,
+      {
+        method: "GET",
+        headers: {
+          "X-Goog-Api-Key": key,
+          "X-Goog-FieldMask": "photos.name,photos.authorAttributions",
+        },
+        cache: "no-store",
+      },
+    );
+    if (!detailsRes.ok) {
+      return {
+        photo: null,
+        status: "place-details-failed",
+        httpStatus: detailsRes.status,
+        googleStatus: await safeGoogleError(detailsRes),
+      };
+    }
+
+    const details = (await detailsRes.json()) as PlaceDetailsResponse;
+    const photos = Array.isArray(details.photos)
+      ? details.photos.filter((p) => typeof p?.name === "string" && p.name.length > 0)
+      : [];
+    if (photos.length === 0) return { photo: null, status: "no-photos" };
+    const selected = photos[ordinal - 1];
+    if (!selected?.name) return { photo: null, status: "invalid-photo-ordinal" };
+
+    const mediaUrl =
+      `${PLACES_BASE}/${selected.name}/media` +
+      `?maxWidthPx=${MAX_WIDTH_PX}&skipHttpRedirect=true`;
+    const mediaRes = await fetch(mediaUrl, {
+      method: "GET",
+      headers: { "X-Goog-Api-Key": key },
+      cache: "no-store",
+    });
+    if (!mediaRes.ok) {
+      return {
+        photo: null,
+        status: "photo-media-failed",
+        httpStatus: mediaRes.status,
+        googleStatus: await safeGoogleError(mediaRes),
+      };
+    }
+
+    const media = (await mediaRes.json()) as PhotoMediaResponse;
+    const photoUri = safePhotoUri(media.photoUri);
+    if (!photoUri) return { photo: null, status: "photo-media-failed" };
+
+    return {
+      photo: { photoUri, attributions: cleanAttributions(selected.authorAttributions) },
+      status: "ok",
+    };
+  } catch {
     return { photo: null, status: "error" };
   }
 }
