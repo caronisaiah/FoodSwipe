@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb, isDbConfigured } from "./index";
 import {
   restaurantHeroMediaSelections,
@@ -132,6 +132,40 @@ export async function getApprovedHeroSelectionForCandidate(
     .orderBy(desc(restaurantHeroMediaSelections.updatedAt))
     .limit(1);
   return rows[0] ? rowToSelection(rows[0]) : null;
+}
+
+export async function getApprovedHeroSelectionMapForCandidates(
+  candidateRestaurantIds: string[],
+): Promise<Record<string, HeroMediaSelection>> {
+  const db = getDb();
+  if (!db || candidateRestaurantIds.length === 0) return {};
+  const ids = Array.from(new Set(
+    candidateRestaurantIds
+      .map((id) => cleanText(id, 200))
+      .filter((id): id is string => Boolean(id)),
+  ));
+  if (ids.length === 0) return {};
+
+  const out: Record<string, HeroMediaSelection> = {};
+  try {
+    const rows = await db
+      .select()
+      .from(restaurantHeroMediaSelections)
+      .where(and(
+        eq(restaurantHeroMediaSelections.targetType, "candidate"),
+        inArray(restaurantHeroMediaSelections.candidateRestaurantId, ids),
+        eq(restaurantHeroMediaSelections.approvalState, "approved"),
+      ))
+      .orderBy(desc(restaurantHeroMediaSelections.updatedAt));
+    for (const row of rows) {
+      const candidateId = row.candidateRestaurantId;
+      if (!candidateId || out[candidateId]) continue;
+      out[candidateId] = rowToSelection(row);
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 export async function getApprovedHeroSelectionForRestaurant(

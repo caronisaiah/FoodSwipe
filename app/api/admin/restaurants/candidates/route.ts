@@ -8,6 +8,7 @@ import {
   type CandidateStatus,
 } from "@/lib/db/candidates";
 import { getCandidateEvidenceMetaMap } from "@/lib/db/restaurantEvidence";
+import { getApprovedHeroSelectionMapForCandidates } from "@/lib/db/heroMediaSelections";
 import { getCandidatePromotionConflictMap } from "@/lib/db/restaurants";
 import { getCandidateVideoMetaMap } from "@/lib/db/videoCandidates";
 import { computeCandidateReadiness } from "@/lib/candidateReadiness";
@@ -56,22 +57,29 @@ export async function GET(req: Request): Promise<Response> {
 
   try {
     const candidates = await listCandidateRestaurants(status);
-    const [evidenceMeta, videoMeta, promotionConflicts] = await Promise.all([
-      getCandidateEvidenceMetaMap(candidates.map((c) => c.id)),
+    const candidateIds = candidates.map((c) => c.id);
+    const [evidenceMeta, videoMeta, promotionConflicts, heroSelections] = await Promise.all([
+      getCandidateEvidenceMetaMap(candidateIds),
       getCandidateVideoMetaMap(candidates.map((c) => ({ id: c.id, slug: c.slug }))),
       getCandidatePromotionConflictMap(candidates.map((c) => ({ id: c.id, googlePlaceId: c.googlePlaceId }))),
+      getApprovedHeroSelectionMapForCandidates(candidateIds),
     ]);
     const enriched = candidates.map((candidate) => {
       const websiteEvidenceMeta = evidenceMeta[candidate.id] ?? { total: 0, okDocs: 0, latestFetchedAt: null, stale: false };
       const video = videoMeta[candidate.id] ?? { total: 0, approvedOrAttached: 0 };
       const promotionConflict = promotionConflicts[candidate.id] ?? null;
+      const heroMediaSelection = heroSelections[candidate.id] ?? null;
+      const hasApprovedHeroSelection = Boolean(heroMediaSelection);
       return {
         ...candidate,
         websiteEvidenceMeta,
         videoMeta: video,
         promotionConflict,
+        heroMediaSelection,
+        hasApprovedHeroSelection,
         readiness: computeCandidateReadiness({
           ...candidate,
+          hasApprovedHeroSelection,
           websiteEvidenceOkDocs: websiteEvidenceMeta.okDocs,
           videoCandidateCount: video.total,
           approvedOrAttachedVideoCount: video.approvedOrAttached,

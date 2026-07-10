@@ -315,8 +315,8 @@ plus a **503** if `GOOGLE_MAPS_API_KEY` is unset and **400** on a blank `query`.
   only when the type/name clearly says so (taqueria→Tacos, ramen→Ramen,
   pizza→Pizza, bakery→Pastries, ice-cream→Ice cream); dietary tags **only when
   explicit** (never assumed); vibe/`bestFor` from price + an obvious service style;
-  a neutral `reasonText` template (not marketing). Every suggestion is explained in
-  `suggestionReasons`. Import applies suggestions to NEW candidates only (existing
+  no generated `reasonText` because that field is public profile copy. Every
+  suggestion is explained in `suggestionReasons`. Import applies suggestions to NEW candidates only (existing
   ones are skipped, never overwritten); the dry run shows them in the preview. The
   suggestion snapshot (`suggested_tags` jsonb) + `suggestion_confidence` +
   `suggestion_reasons` persist on `candidate_restaurants` so the console can show
@@ -349,7 +349,15 @@ plus a **503** if `GOOGLE_MAPS_API_KEY` is unset and **400** on a blank `query`.
   restaurant target. Public DB-published photo requests prefer the approved
   selection, resolving it fresh with attribution; stale/missing selections fall
   back to the existing Google-first-photo â†’ Logo.dev â†’ placeholder ladder. Seed
-  restaurants, sibling-location fallback, and readiness gating are unchanged.
+  restaurants and sibling-location fallback are unchanged.
+- **Hero media readiness gate (P2D).** Candidate readiness now treats hero media
+  as launch-ready only when an admin has approved a selected exact-location hero
+  in `restaurant_hero_media_selections`. A `googlePlaceId` without a selected
+  hero is **needs review**, a website/logo fallback is **fallback only**, and a
+  candidate with neither Place ID nor website is **missing hero**. The dashboard
+  batch-reads approved hero selections, never calls Google Places for readiness,
+  and keeps promotion warning-only for now; accepted fallback overrides and
+  sibling-location sourcing are deferred.
 - **Review console.** [`/admin/restaurants/candidates`](app/admin/restaurants/candidates/page.tsx)
   is a dense internal queue: rows ranked by review-likelihood (null/manual last),
   with status + source filters, name/address/Place-ID search, and per-row flags
@@ -357,14 +365,16 @@ plus a **503** if `GOOGLE_MAPS_API_KEY` is unset and **400** on a blank `query`.
   controlled-vocab tags (with auto-vs-edited markers), `reasonText`, and notes, and
   to Save / Mark needs-review / Approve / Reject / Reset-to-suggestions. **Approve
   marks a candidate reviewed only — it never publishes to `/feed`.**
-- **Candidate readiness dashboard (B6).** The same console adds a compact,
-  read-only readiness summary and filters for ready-to-promote, missing price,
-  missing required tags, missing website evidence, needs media/video, status,
-  source, and market. Readiness is computed by [`lib/candidateReadiness.ts`](lib/candidateReadiness.ts),
-  sharing the required-field helper used by promotion, and the list API enriches
-  candidates with batch-read website-evidence/video-lead summaries plus known
-  publish conflicts. It does **not** collect evidence, resolve/attach videos,
-  bulk-promote, weaken validation, or change public feed behavior.
+- **Candidate readiness dashboard (B6/P2D).** The same console adds a compact,
+  read-only readiness summary and filters for ready-to-promote, needs hero,
+  missing price, missing required tags, missing website evidence, needs
+  media/video, status, source, and market. Readiness is computed by
+  [`lib/candidateReadiness.ts`](lib/candidateReadiness.ts), sharing the
+  required-field helper used by promotion, and the list API enriches candidates
+  with batch-read website-evidence/video-lead/approved-hero summaries plus known
+  publish conflicts. It does **not** collect evidence, call Google Places for
+  readiness, resolve/attach videos, bulk-promote, weaken validation, or change
+  public feed behavior.
 - **`ingestion_jobs`** records each **real** import run (`source: google_places`,
   `query`, `dryRun: false`, `status: success|failed`, `candidatesCreated`,
   `skippedDuplicates`, `error`) for audit. Dry runs are intentionally not
@@ -470,12 +480,14 @@ seed **plus** DB-published restaurants.
 - **Promotion.** [`POST /api/admin/restaurants/candidates/[id]/promote`](app/api/admin/restaurants/candidates/[id]/promote/route.ts)
   (admin-secret) requires the candidate to be **`approved`** (else `400`) and to
   have the required feed fields — `name`, `address`, `priceLevel`, `lat`/`lng`,
-  non-empty in-vocab `cuisineTags`, a `vibeTags`-or-`bestFor`, and `reasonText`
-  (else `422` with `missingFields`). It copies only reviewed/curated fields
-  (re-validated against the controlled vocab), computes a real `distanceMiles`
-  from the candidate's **market origin** (see [Markets](#markets-multi-market-a1)),
-  and is idempotent — a second promote returns the existing restaurant (`409`),
-  never a duplicate. It never publishes videos or touches Google photo data.
+  non-empty in-vocab `cuisineTags`, and a `vibeTags`-or-`bestFor` (else `422`
+  with `missingFields`). It copies only reviewed/curated fields (re-validated
+  against the controlled vocab), uses safe fallback copy if public `reasonText`
+  is blank/internal, computes a real `distanceMiles` from the candidate's
+  **market origin** (see [Markets](#markets-multi-market-a1)), and is idempotent
+  — a second promote returns the existing restaurant (`409`), never a duplicate.
+  It never publishes videos or touches Google photo data; P2D hero approval is
+  dashboard readiness/warning-only, not a hard promotion block.
 - **Manual price readiness (B5.1).** The candidate editor exposes a controlled
   `priceLevel` dropdown (`Unknown`, `$`, `$$`, `$$$`, `$$$$`) because Google does
   not always return price data. It updates the local draft only until the existing

@@ -7,6 +7,7 @@ import { listMarkets } from "@/lib/markets";
 import {
   computeCandidateReadiness,
   formatMissingRequiredFields,
+  type HeroMediaReadinessStatus,
   type CandidateReadinessResult,
   type PromotionConflict,
 } from "@/lib/candidateReadiness";
@@ -34,8 +35,8 @@ const STATUS_FILTERS: StatusFilter[] = ["needs_review", "candidate", "approved",
 type SourceFilter = "all" | "manual" | "google_places";
 const SOURCE_FILTERS: SourceFilter[] = ["all", "google_places", "manual"];
 
-type ReadinessFilter = "all" | "ready" | "missing_price" | "missing_tags" | "missing_evidence" | "needs_media";
-const READINESS_FILTERS: ReadinessFilter[] = ["all", "ready", "missing_price", "missing_tags", "missing_evidence", "needs_media"];
+type ReadinessFilter = "all" | "ready" | "needs_hero" | "missing_price" | "missing_tags" | "missing_evidence" | "needs_media";
+const READINESS_FILTERS: ReadinessFilter[] = ["all", "ready", "needs_hero", "missing_price", "missing_tags", "missing_evidence", "needs_media"];
 
 type MarketFilter = "all" | string;
 
@@ -51,6 +52,7 @@ const LABEL: Record<string, string> = {
   missing_price: "Missing price",
   missing_tags: "Missing tags",
   missing_evidence: "Missing evidence",
+  needs_hero: "Needs hero",
   needs_media: "Needs media",
 };
 
@@ -203,6 +205,8 @@ interface Candidate {
   suggestedTags: SuggestedTags | null;
   websiteEvidenceMeta?: EvidenceMeta;
   videoMeta?: CandidateVideoMeta;
+  heroMediaSelection?: HeroMediaSelection | null;
+  hasApprovedHeroSelection?: boolean;
   promotionConflict?: CandidatePromotionConflict | null;
   readiness?: CandidateReadinessResult;
   createdAt: string;
@@ -302,8 +306,10 @@ function warningFrom(c: { reviewNotes: string | null; seedMatchWarning?: string 
 function computeReadinessFor(candidate: Candidate): CandidateReadinessResult {
   const evidence = candidate.websiteEvidenceMeta;
   const video = candidate.videoMeta;
+  const hasApprovedHeroSelection = candidate.hasApprovedHeroSelection ?? Boolean(candidate.heroMediaSelection);
   return computeCandidateReadiness({
     ...candidate,
+    hasApprovedHeroSelection,
     websiteEvidenceOkDocs: evidence?.okDocs ?? 0,
     videoCandidateCount: video?.total ?? 0,
     approvedOrAttachedVideoCount: video?.approvedOrAttached ?? 0,
@@ -312,7 +318,9 @@ function computeReadinessFor(candidate: Candidate): CandidateReadinessResult {
 }
 
 function normalizeCandidate(candidate: Candidate): Candidate {
-  return { ...candidate, readiness: computeReadinessFor(candidate) };
+  const hasApprovedHeroSelection = candidate.hasApprovedHeroSelection ?? Boolean(candidate.heroMediaSelection);
+  const normalized = { ...candidate, hasApprovedHeroSelection };
+  return { ...normalized, readiness: computeReadinessFor(normalized) };
 }
 
 function readinessFor(candidate: Candidate): CandidateReadinessResult {
@@ -323,6 +331,7 @@ function matchesReadinessFilter(candidate: Candidate, filter: ReadinessFilter): 
   if (filter === "all") return true;
   const readiness = readinessFor(candidate);
   if (filter === "ready") return readiness.isReadyToPromote;
+  if (filter === "needs_hero") return readiness.heroMediaStatus !== "approved";
   if (filter === "missing_price") return !readiness.signals.hasPriceLevel;
   if (filter === "missing_tags") return !readiness.signals.hasCuisine || !readiness.signals.hasVibeOrBestFor;
   if (filter === "missing_evidence") return readiness.signals.hasWebsite && !readiness.signals.hasWebsiteEvidence;
@@ -349,6 +358,45 @@ function videoSignalLabel(candidate: Candidate): string {
   return meta.approvedOrAttached > 0
     ? `${meta.approvedOrAttached}/${meta.total} approved`
     : `${meta.total} lead${meta.total === 1 ? "" : "s"}`;
+}
+
+function heroMediaStatusLabel(status: HeroMediaReadinessStatus): string {
+  switch (status) {
+    case "approved":
+      return "Approved hero";
+    case "needs_review":
+      return "Needs hero review";
+    case "fallback_only":
+      return "Fallback only";
+    case "missing":
+      return "Missing hero";
+  }
+}
+
+function heroMediaStatusHint(status: HeroMediaReadinessStatus): string {
+  switch (status) {
+    case "approved":
+      return "Admin-selected exact-location hero is approved.";
+    case "needs_review":
+      return "Google Place ID exists, but no hero photo has been selected.";
+    case "fallback_only":
+      return "Only logo/placeholder fallback is available by default.";
+    case "missing":
+      return "No Google Place ID or website fallback is available.";
+  }
+}
+
+function heroMediaStatusTone(status: HeroMediaReadinessStatus): "mint" | "saffron" | "chili" | "haze" {
+  switch (status) {
+    case "approved":
+      return "mint";
+    case "needs_review":
+      return "saffron";
+    case "missing":
+      return "chili";
+    case "fallback_only":
+      return "haze";
+  }
 }
 
 /** Sort highest review-likelihood first; null scores (e.g. manual) last. */
@@ -431,11 +479,27 @@ export default function AdminCandidates() {
               ...updated,
               websiteEvidenceMeta: c.websiteEvidenceMeta,
               videoMeta: c.videoMeta,
+              heroMediaSelection: c.heroMediaSelection,
+              hasApprovedHeroSelection: c.hasApprovedHeroSelection,
               promotionConflict: c.promotionConflict,
             })
           : c,
       );
     });
+  }
+
+  function onHeroSelectionChanged(candidateId: string, selection: HeroMediaSelection | null) {
+    setCandidates((list) =>
+      list.map((c) =>
+        c.id === candidateId
+          ? normalizeCandidate({
+              ...c,
+              heroMediaSelection: selection,
+              hasApprovedHeroSelection: Boolean(selection),
+            })
+          : c,
+      ),
+    );
   }
 
   async function runImport(dry: boolean) {
@@ -779,6 +843,7 @@ export default function AdminCandidates() {
                 expanded={expandedId === c.id}
                 onToggle={() => setExpandedId((id) => (id === c.id ? null : c.id))}
                 onSaved={onSaved}
+                onHeroSelectionChanged={onHeroSelectionChanged}
                 duplicatePlaceId={Boolean(c.googlePlaceId && dupePlaceIds.has(c.googlePlaceId))}
               />
             ))}
@@ -795,6 +860,8 @@ function ReadinessDashboard({ candidates }: { candidates: Candidate[] }) {
       const readiness = readinessFor(candidate);
       acc.total += 1;
       if (readiness.isReadyToPromote) acc.ready += 1;
+      if (readiness.heroMediaStatus === "approved") acc.heroApproved += 1;
+      else acc.needsHero += 1;
       if (!readiness.signals.hasPriceLevel) acc.missingPrice += 1;
       if (!readiness.signals.hasCuisine || !readiness.signals.hasVibeOrBestFor) acc.missingTags += 1;
       if (readiness.signals.hasWebsite && !readiness.signals.hasWebsiteEvidence) acc.missingEvidence += 1;
@@ -807,6 +874,8 @@ function ReadinessDashboard({ candidates }: { candidates: Candidate[] }) {
     {
       total: 0,
       ready: 0,
+      heroApproved: 0,
+      needsHero: 0,
       missingPrice: 0,
       missingTags: 0,
       missingEvidence: 0,
@@ -828,6 +897,8 @@ function ReadinessDashboard({ candidates }: { candidates: Candidate[] }) {
       </div>
       <div className="grid min-w-0 grid-cols-2 gap-1.5 sm:grid-cols-3">
         <SummaryMetric label="Ready" value={summary.ready} tone="mint" />
+        <SummaryMetric label="Approved hero" value={summary.heroApproved} tone="mint" />
+        <SummaryMetric label="Needs hero" value={summary.needsHero} tone="saffron" />
         <SummaryMetric label="Missing price" value={summary.missingPrice} tone="saffron" />
         <SummaryMetric label="Missing tags" value={summary.missingTags} tone="saffron" />
         <SummaryMetric label="Missing evidence" value={summary.missingEvidence} tone="haze" />
@@ -876,6 +947,9 @@ function ReadinessStrip({
     <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1">
       <ReadinessBadge tone={readiness.isReadyToPromote ? "mint" : "haze"}>
         {readiness.isReadyToPromote ? "Ready to promote" : `Completeness ${readiness.completenessScore}%`}
+      </ReadinessBadge>
+      <ReadinessBadge tone={heroMediaStatusTone(readiness.heroMediaStatus)}>
+        {heroMediaStatusLabel(readiness.heroMediaStatus)}
       </ReadinessBadge>
       {!readiness.signals.hasPriceLevel && <ReadinessBadge tone="saffron">Missing price</ReadinessBadge>}
       {(!readiness.signals.hasCuisine || !readiness.signals.hasVibeOrBestFor) && (
@@ -932,6 +1006,7 @@ function CandidateRow({
   expanded,
   onToggle,
   onSaved,
+  onHeroSelectionChanged,
   duplicatePlaceId,
 }: {
   candidate: Candidate;
@@ -939,6 +1014,7 @@ function CandidateRow({
   expanded: boolean;
   onToggle: () => void;
   onSaved: (updated: Candidate) => void;
+  onHeroSelectionChanged: (candidateId: string, selection: HeroMediaSelection | null) => void;
   duplicatePlaceId: boolean;
 }) {
   const warn = warningFrom(candidate);
@@ -989,7 +1065,13 @@ function CandidateRow({
       </button>
 
       {expanded && (
-        <CandidateDetail candidate={candidate} secret={secret} onSaved={onSaved} warn={warn} />
+        <CandidateDetail
+          candidate={candidate}
+          secret={secret}
+          onSaved={onSaved}
+          onHeroSelectionChanged={onHeroSelectionChanged}
+          warn={warn}
+        />
       )}
     </li>
   );
@@ -1001,13 +1083,16 @@ function CandidateDetail({
   candidate,
   secret,
   onSaved,
+  onHeroSelectionChanged,
   warn,
 }: {
   candidate: Candidate;
   secret: string;
   onSaved: (updated: Candidate) => void;
+  onHeroSelectionChanged: (candidateId: string, selection: HeroMediaSelection | null) => void;
   warn: string | null;
 }) {
+  const readiness = readinessFor(candidate);
   return (
     <div className="border-t border-line bg-ink-2/40 p-3">
       <div className="grid min-w-0 gap-3 sm:grid-cols-[180px_minmax(0,1fr)]">
@@ -1021,6 +1106,7 @@ function CandidateDetail({
             <Meta label="Market" value={candidate.market.toUpperCase()} />
             <Meta label="Place ID" value={candidate.googlePlaceId ?? "—"} mono />
             <Meta label="Website" value={candidate.websiteDomain ?? "—"} />
+            <Meta label="Hero" value={heroMediaStatusLabel(readiness.heroMediaStatus)} />
             <Meta label="Evidence" value={websiteEvidenceLabel(candidate)} />
             <Meta label="Video" value={videoSignalLabel(candidate)} />
             <Meta label="Price" value={priceLabel(candidate.priceLevel)} />
@@ -1043,6 +1129,7 @@ function CandidateDetail({
             googlePlaceId={candidate.googlePlaceId}
             secret={secret}
             name={candidate.name}
+            onSelectionChanged={(selection) => onHeroSelectionChanged(candidate.id, selection)}
           />
           <CandidateEditor key={candidate.updatedAt} candidate={candidate} secret={secret} onSaved={onSaved} />
         </div>
@@ -1222,6 +1309,11 @@ function CandidateEditor({
               </span>
             </div>
             <ReadinessStrip candidate={candidate} readiness={readiness} />
+            {readiness.heroMediaStatus !== "approved" && (
+              <p className="mt-1 break-words text-[10px] text-saffron [overflow-wrap:anywhere]">
+                {heroMediaStatusHint(readiness.heroMediaStatus)}
+              </p>
+            )}
             {readiness.missingRequired.length > 0 && (
               <p className="mt-1 break-words text-[10px] text-saffron [overflow-wrap:anywhere]">
                 Missing: {formatMissingRequiredFields(readiness.missingRequired)}
@@ -1460,11 +1552,13 @@ function HeroPhotoCandidatesPanel({
   googlePlaceId,
   secret,
   name,
+  onSelectionChanged,
 }: {
   candidateId: string;
   googlePlaceId: string | null;
   secret: string;
   name: string;
+  onSelectionChanged: (selection: HeroMediaSelection | null) => void;
 }) {
   const hasPlaceId = Boolean(googlePlaceId);
   const hasSecret = secret.trim().length > 0;
@@ -1577,6 +1671,7 @@ function HeroPhotoCandidatesPanel({
           ? { ...prev, selection: data.selection ?? null, selectionError: null }
           : prev,
       );
+      onSelectionChanged(data.selection);
       setActionMessage({ type: "ok", text: `Hero photo #${candidate.ordinal} selected.` });
     } catch {
       setActionMessage({ type: "err", text: "Network error saving hero selection." });
@@ -1604,6 +1699,7 @@ function HeroPhotoCandidatesPanel({
           ? { ...prev, selection: null, selectionError: null }
           : prev,
       );
+      onSelectionChanged(null);
       setActionMessage({ type: "ok", text: "Hero selection cleared." });
     } catch {
       setActionMessage({ type: "err", text: "Network error clearing hero selection." });

@@ -2,6 +2,7 @@ import { filterCuisines, filterVibes } from "@/lib/vocab";
 import { cleanPublicReasonText } from "@/lib/publicReasonText";
 
 export type PromotionConflict = "already-promoted" | "place-already-published";
+export type HeroMediaReadinessStatus = "approved" | "needs_review" | "fallback_only" | "missing";
 
 export interface CandidateReadinessInput {
   status?: string | null;
@@ -17,6 +18,7 @@ export interface CandidateReadinessInput {
   reasonText?: string | null;
   websiteDomain?: string | null;
   googlePlaceId?: string | null;
+  hasApprovedHeroSelection?: boolean | null;
   websiteEvidenceOkDocs?: number | null;
   videoCandidateCount?: number | null;
   approvedOrAttachedVideoCount?: number | null;
@@ -34,7 +36,9 @@ export interface CandidateReadinessSignals {
   hasReasonText: boolean;
   hasWebsite: boolean;
   hasWebsiteEvidence: boolean;
+  hasApprovedHeroSelection: boolean;
   hasHeroMedia: boolean;
+  heroMediaStatus: HeroMediaReadinessStatus;
   hasVideoCandidates: boolean;
   hasApprovedVideos: boolean;
 }
@@ -42,6 +46,7 @@ export interface CandidateReadinessSignals {
 export interface CandidateReadinessResult {
   isReadyToPromote: boolean;
   completenessScore: number;
+  heroMediaStatus: HeroMediaReadinessStatus;
   missingRequired: string[];
   warnings: string[];
   signals: CandidateReadinessSignals;
@@ -63,6 +68,13 @@ function str(v: string | null | undefined): string | null {
 
 function finiteNumber(v: number | null | undefined): v is number {
   return typeof v === "number" && Number.isFinite(v);
+}
+
+function heroMediaStatusFor(c: CandidateReadinessInput): HeroMediaReadinessStatus {
+  if (c.hasApprovedHeroSelection) return "approved";
+  if (str(c.googlePlaceId)) return "needs_review";
+  if (str(c.websiteDomain)) return "fallback_only";
+  return "missing";
 }
 
 export function formatMissingRequiredFields(fields: string[]): string {
@@ -88,6 +100,7 @@ export function computeCandidateReadiness(c: CandidateReadinessInput): Candidate
   const missingRequired = missingPromotionRequiredFields(c);
   const hasVideoCandidates = (c.videoCandidateCount ?? 0) > 0;
   const hasApprovedVideos = (c.approvedOrAttachedVideoCount ?? 0) > 0;
+  const heroMediaStatus = heroMediaStatusFor(c);
   const signals: CandidateReadinessSignals = {
     hasName: Boolean(str(c.name)),
     hasAddress: Boolean(str(c.address)),
@@ -99,9 +112,11 @@ export function computeCandidateReadiness(c: CandidateReadinessInput): Candidate
     hasReasonText: Boolean(cleanPublicReasonText(c.reasonText)),
     hasWebsite: Boolean(str(c.websiteDomain)),
     hasWebsiteEvidence: (c.websiteEvidenceOkDocs ?? 0) > 0,
-    // Cheap, honest proxy for the hero-media ladder: Place Photo if a Place ID
-    // resolves, Logo.dev fallback if a website domain exists. Do not fetch here.
-    hasHeroMedia: Boolean(str(c.googlePlaceId) || str(c.websiteDomain)),
+    hasApprovedHeroSelection: heroMediaStatus === "approved",
+    // Launch-ready hero media now means an admin selected an exact-location
+    // hero. A Place ID or Logo.dev fallback remains useful, but needs review.
+    hasHeroMedia: heroMediaStatus === "approved",
+    heroMediaStatus,
     hasVideoCandidates,
     hasApprovedVideos,
   };
@@ -113,28 +128,32 @@ export function computeCandidateReadiness(c: CandidateReadinessInput): Candidate
   if (!signals.hasWebsite) warnings.push("No website on candidate.");
   else if (!signals.hasWebsiteEvidence) warnings.push("No website evidence yet.");
   if (!signals.hasReasonText) warnings.push("No public reason text; promotion will use fallback copy.");
+  if (heroMediaStatus === "needs_review") warnings.push("Hero photo needs admin selection.");
+  if (heroMediaStatus === "fallback_only") warnings.push("Only logo/placeholder fallback available for hero media.");
+  if (heroMediaStatus === "missing") warnings.push("No Google Place ID or website fallback for hero media.");
   if (!signals.hasVideoCandidates && !signals.hasApprovedVideos) warnings.push("Needs media/video leads.");
   if (!signals.hasDishHighlights) warnings.push("No dish highlights yet.");
 
-  const scoreChecks = [
-    signals.hasName,
-    signals.hasAddress,
-    signals.hasCoordinates,
-    signals.hasPriceLevel,
-    signals.hasCuisine,
-    signals.hasVibeOrBestFor,
-    signals.hasReasonText,
-    signals.hasWebsite,
-    signals.hasWebsiteEvidence,
-    signals.hasHeroMedia,
-    signals.hasVideoCandidates || signals.hasApprovedVideos,
-    signals.hasDishHighlights,
+  const scoreUnits = [
+    signals.hasName ? 1 : 0,
+    signals.hasAddress ? 1 : 0,
+    signals.hasCoordinates ? 1 : 0,
+    signals.hasPriceLevel ? 1 : 0,
+    signals.hasCuisine ? 1 : 0,
+    signals.hasVibeOrBestFor ? 1 : 0,
+    signals.hasReasonText ? 1 : 0,
+    signals.hasWebsite ? 1 : 0,
+    signals.hasWebsiteEvidence ? 1 : 0,
+    heroMediaStatus === "approved" ? 2 : heroMediaStatus === "needs_review" ? 1 : 0,
+    signals.hasVideoCandidates || signals.hasApprovedVideos ? 1 : 0,
+    signals.hasDishHighlights ? 1 : 0,
   ];
-  const completenessScore = Math.round((scoreChecks.filter(Boolean).length / scoreChecks.length) * 100);
+  const completenessScore = Math.round((scoreUnits.reduce((sum, value) => sum + value, 0) / 13) * 100);
 
   return {
-    isReadyToPromote: c.status === "approved" && missingRequired.length === 0 && !c.promotionConflict,
+    isReadyToPromote: c.status === "approved" && missingRequired.length === 0 && heroMediaStatus === "approved" && !c.promotionConflict,
     completenessScore,
+    heroMediaStatus,
     missingRequired,
     warnings,
     signals,
