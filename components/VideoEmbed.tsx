@@ -55,6 +55,7 @@ interface VideoEmbedProps {
   /** Fill the parent (absolute). Parent must be `relative`. */
   fill?: boolean;
   className?: string;
+  onSourceClick?: () => void;
 }
 
 export default function VideoEmbed({
@@ -62,6 +63,7 @@ export default function VideoEmbed({
   posterEmoji = "🍽️",
   fill = false,
   className = "",
+  onSourceClick,
 }: VideoEmbedProps) {
   // Fallback guards a tampered/legacy platform value from crashing render.
   const meta = PLATFORM_META[video.platform] ?? PLATFORM_META.Web;
@@ -114,6 +116,7 @@ export default function VideoEmbed({
               href={sourceHref}
               label={sourceLinkLabel(video)}
               attribution={video.attributionText}
+              onClick={onSourceClick}
             />
           )}
         </div>
@@ -167,6 +170,7 @@ export default function VideoEmbed({
             href={sourceHref}
             label={sourceLinkLabel(video)}
             attribution={video.attributionText}
+            onClick={onSourceClick}
           />
         ) : chip ? (
           <span
@@ -216,10 +220,12 @@ function SourceLink({
   href,
   label,
   attribution,
+  onClick,
 }: {
   href: string;
   label: string;
   attribution: string;
+  onClick?: () => void;
 }) {
   return (
     <a
@@ -228,6 +234,7 @@ function SourceLink({
       rel="noopener noreferrer"
       aria-label={`${label} — ${attribution}`}
       onPointerDown={(e) => e.stopPropagation()}
+      onClick={onClick}
       className="pointer-events-auto shrink-0 rounded-full bg-white/15 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur-md ring-1 ring-white/25 transition hover:bg-white/25"
     >
       {label} ↗

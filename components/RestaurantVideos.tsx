@@ -11,6 +11,14 @@ import {
 } from "@/lib/video";
 import MaterialIcon from "@/components/MaterialIcon";
 import VideoEmbed from "@/components/VideoEmbed";
+import {
+  analyticsVideoPlatform,
+  captureFoodSwipeEvent,
+  type AnalyticsVideoPosition,
+  type AnalyticsVideoRenderMode,
+  type RestaurantAnalyticsContext,
+} from "@/lib/analytics";
+import { useVisibleOnce } from "@/lib/useVisibleOnce";
 
 /** Public profiles show at most this many videos (a DISPLAY rule, not a DB/admin
  * limit - the backend may store more for future ranking/moderation). */
@@ -171,22 +179,63 @@ export function ReviewClipCard({
   item,
   posterEmoji,
   featured = false,
+  analytics,
 }: {
   item: ProfileVideoItem;
   posterEmoji: string;
   featured?: boolean;
+  analytics?: {
+    restaurant: RestaurantAnalyticsContext;
+    videoPosition: AnalyticsVideoPosition;
+  };
 }) {
   const { video, origin } = item;
   const canEmbed = videoCanEmbed(video);
   const sourceHref = videoSourceHref(video);
+  const renderMode: AnalyticsVideoRenderMode = canEmbed
+    ? "embed"
+    : sourceHref
+      ? "source_link"
+      : "unavailable";
+  const videoContext = analytics
+    ? {
+        ...analytics.restaurant,
+        platform: analyticsVideoPlatform(video.platform),
+        videoPosition: analytics.videoPosition,
+        renderMode,
+      }
+    : null;
+  const impressionRef = useVisibleOnce<HTMLElement>(
+    () => {
+      if (videoContext) captureFoodSwipeEvent("video_impression", videoContext);
+    },
+    { enabled: videoContext !== null },
+  );
+  const captureSourceClick = () => {
+    if (!videoContext) return;
+    captureFoodSwipeEvent("video_source_clicked", {
+      ...videoContext,
+      sourcePlacement: "review_card",
+    });
+  };
 
   return (
-    <article className="relative">
+    <article ref={impressionRef} className="relative">
       <div className="relative aspect-[4/5] w-full overflow-hidden rounded-[24px] bg-ink ring-1 ring-inset ring-white/10 shadow-[0_18px_40px_rgba(0,0,0,0.42)]">
         {canEmbed ? (
-          <VideoEmbed video={video} posterEmoji={posterEmoji} fill />
+          <VideoEmbed
+            video={video}
+            posterEmoji={posterEmoji}
+            fill
+            onSourceClick={captureSourceClick}
+          />
         ) : sourceHref ? (
-          <SourceLinkCard video={video} href={sourceHref} posterEmoji={posterEmoji} />
+          <SourceLinkCard
+            video={video}
+            href={sourceHref}
+            posterEmoji={posterEmoji}
+            onClick={captureSourceClick}
+          />
         ) : (
           <PreviewOnlyCard video={video} posterEmoji={posterEmoji} />
         )}
@@ -205,10 +254,12 @@ function SourceLinkCard({
   video,
   href,
   posterEmoji,
+  onClick,
 }: {
   video: Video;
   href: string;
   posterEmoji: string;
+  onClick?: () => void;
 }) {
   const content = <PosterFrame video={video} posterEmoji={posterEmoji} href={href} />;
   return (
@@ -218,6 +269,7 @@ function SourceLinkCard({
       rel="noopener noreferrer"
       aria-label={`${sourceLinkLabel(video)} for ${video.attributionText}`}
       onPointerDown={(e) => e.stopPropagation()}
+      onClick={onClick}
       className="absolute inset-0 block text-cream"
     >
       {content}

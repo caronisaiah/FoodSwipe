@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useState, type Ref } from "react";
 import type { MotionStyle } from "framer-motion";
 import type { PlacePhoto, Restaurant } from "@/lib/types";
 import type { ClientHeroMedia } from "@/lib/clientHeroMedia";
@@ -17,6 +17,13 @@ import {
 } from "@/components/RestaurantVideos";
 import GoThere from "@/components/GoThere";
 import MaterialIcon from "@/components/MaterialIcon";
+import {
+  captureFoodSwipeEvent,
+  restaurantAnalyticsContext,
+  type AnalyticsVideoPosition,
+  type RestaurantAnalyticsContext,
+} from "@/lib/analytics";
+import { useVisibleOnce } from "@/lib/useVisibleOnce";
 
 /**
  * Reusable restaurant profile: hero plus the D3 polished module stack. Shared by
@@ -68,6 +75,31 @@ export default function RestaurantProfileView({
       .map((tag) => ({ tag, variant: "vibe" as const })),
   ];
   const hasReason = r.reasonText.trim().length > 0;
+  const analyticsContext = restaurantAnalyticsContext(
+    r,
+    isFeed ? "feed" : "standalone_profile",
+  );
+  const profileEngagedRef = useVisibleOnce<HTMLElement>(() => {
+    captureFoodSwipeEvent("profile_engaged", analyticsContext);
+  });
+  const whyLikeRef = useVisibleOnce<HTMLElement>(() => {
+    captureFoodSwipeEvent("profile_depth_reached", {
+      ...analyticsContext,
+      milestone: "why_like",
+    });
+  });
+  const whatToOrderRef = useVisibleOnce<HTMLElement>(() => {
+    captureFoodSwipeEvent("profile_depth_reached", {
+      ...analyticsContext,
+      milestone: "what_to_order",
+    });
+  });
+  const goThereRef = useVisibleOnce<HTMLElement>(() => {
+    captureFoodSwipeEvent("profile_depth_reached", {
+      ...analyticsContext,
+      milestone: "go_there",
+    });
+  });
   const clipPoster = (index: number) =>
     clipPosters[index % Math.max(clipPosters.length, 1)] ?? poster;
   const hero = (
@@ -103,7 +135,7 @@ export default function RestaurantProfileView({
       )}
 
       <div className={`bg-ink-2 px-4 pt-[26px] ${isFeed ? "pb-12" : "pb-7"}`}>
-        <header className="mb-4">
+        <header ref={profileEngagedRef} className="mb-4">
           <h2 className="font-display text-[26px] font-black leading-[1.05] tracking-normal text-cream">
             {r.name}
           </h2>
@@ -135,18 +167,20 @@ export default function RestaurantProfileView({
             <ReviewClipSection
               item={profileVideos.videos[0]}
               posterEmoji={clipPoster(0)}
+              analyticsContext={analyticsContext}
+              videoPosition={1}
               featured
             />
           )}
 
           {hasReason && (
-            <ProfileModule title="Why you'll like it">
+            <ProfileModule title="Why you'll like it" analyticsRef={whyLikeRef}>
               <p className="text-[15px] leading-[1.6] text-tan">{r.reasonText}</p>
             </ProfileModule>
           )}
 
           {r.dishHighlights.length > 0 && (
-            <ProfileModule title="What to order">
+            <ProfileModule title="What to order" analyticsRef={whatToOrderRef}>
               <ul className="grid gap-2">
                 {r.dishHighlights.map((dish) => (
                   <li
@@ -165,6 +199,8 @@ export default function RestaurantProfileView({
             <ReviewClipSection
               item={profileVideos.videos[1]}
               posterEmoji={clipPoster(1)}
+              analyticsContext={analyticsContext}
+              videoPosition={2}
             />
           )}
 
@@ -184,6 +220,8 @@ export default function RestaurantProfileView({
             <ReviewClipSection
               item={profileVideos.videos[2]}
               posterEmoji={clipPoster(2)}
+              analyticsContext={analyticsContext}
+              videoPosition={3}
             />
           )}
 
@@ -191,6 +229,8 @@ export default function RestaurantProfileView({
             directionsUrl={directionsUrl}
             websiteDomain={r.websiteDomain}
             reviewsHref={reviewHref}
+            analyticsContext={analyticsContext}
+            sectionRef={goThereRef}
           />
 
           {isFeed && <PhotoCreditRow attributions={photoAttributions} />}
@@ -237,10 +277,14 @@ function HeroStatusBadges({ restaurant: r }: { restaurant: Restaurant }) {
 function ReviewClipSection({
   item,
   posterEmoji,
+  analyticsContext,
+  videoPosition,
   featured = false,
 }: {
   item: ProfileVideoItem;
   posterEmoji: string;
+  analyticsContext: RestaurantAnalyticsContext;
+  videoPosition: AnalyticsVideoPosition;
   featured?: boolean;
 }) {
   return (
@@ -252,7 +296,12 @@ function ReviewClipSection({
           </h3>
         </div>
       )}
-      <ReviewClipCard item={item} posterEmoji={posterEmoji} featured={featured} />
+      <ReviewClipCard
+        item={item}
+        posterEmoji={posterEmoji}
+        featured={featured}
+        analytics={{ restaurant: analyticsContext, videoPosition }}
+      />
     </section>
   );
 }
@@ -290,12 +339,17 @@ function PhotoCreditRow({ attributions }: { attributions: PlacePhoto["attributio
 function ProfileModule({
   title,
   children,
+  analyticsRef,
 }: {
   title: string;
   children: React.ReactNode;
+  analyticsRef?: Ref<HTMLElement>;
 }) {
   return (
-    <section className="rounded-[24px] bg-surface px-4 py-[18px] pb-5 ring-1 ring-inset ring-white/5">
+    <section
+      ref={analyticsRef}
+      className="rounded-[24px] bg-surface px-4 py-[18px] pb-5 ring-1 ring-inset ring-white/5"
+    >
       <h3 className="mb-3 text-[11px] font-bold uppercase tracking-[0.25em] text-haze">
         {title}
       </h3>

@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { Restaurant } from "@/lib/types";
 import { rankRestaurants } from "@/lib/recommendations";
 import { usePreferences, useSwipes, useHydrated } from "@/lib/storage";
 import SwipeDeck from "@/components/SwipeDeck";
 import MaterialIcon from "@/components/MaterialIcon";
+import {
+  captureFoodSwipeEvent,
+  restaurantAnalyticsContext,
+} from "@/lib/analytics";
 
 /**
  * Owns the swipe feed. Ranks the full deck (memoised on preferences) and lets
@@ -27,6 +31,9 @@ export default function FeedClient({
   // Server decides whether seed fallback is allowed for this deployment. In
   // production mode this starts empty and the API must provide DB-published rows.
   const [restaurants, setRestaurants] = useState<Restaurant[]>(initialRestaurants);
+  const [restaurantsSettled, setRestaurantsSettled] = useState(false);
+  const [deckCycle, setDeckCycle] = useState(0);
+  const entryTrackedRef = useRef(false);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -39,6 +46,8 @@ export default function FeedClient({
       } catch {
         // Keep the server-provided initial list. In production content mode that
         // is intentionally empty rather than a seed fallback.
+      } finally {
+        if (!cancelled) setRestaurantsSettled(true);
       }
     })();
     return () => {
@@ -51,16 +60,64 @@ export default function FeedClient({
     [restaurants, preferences],
   );
 
+  const captureFeedStarted = useCallback(
+    (startReason: "entry" | "restart") => {
+      captureFoodSwipeEvent("foodswipe_feed_started", {
+        market: deck[0]?.restaurant.market ?? "unknown",
+        restaurantCount: deck.length,
+        startReason,
+      });
+    },
+    [deck],
+  );
+
+  useEffect(() => {
+    if (!hydrated || !restaurantsSettled || entryTrackedRef.current) return;
+    entryTrackedRef.current = true;
+    captureFeedStarted("entry");
+  }, [captureFeedStarted, hydrated, restaurantsSettled]);
+
+  const handleSwipe = useCallback(
+    (restaurantId: string, direction: "left" | "right") => {
+      const feedIndex = deck.findIndex((item) => item.restaurant.id === restaurantId);
+      const scored = feedIndex >= 0 ? deck[feedIndex] : undefined;
+
+      recordSwipe(restaurantId, direction);
+      if (!scored) return;
+
+      const context = restaurantAnalyticsContext(
+        scored.restaurant,
+        "feed",
+        feedIndex + 1,
+      );
+      captureFoodSwipeEvent("restaurant_swiped", { ...context, direction });
+      if (direction === "right") {
+        captureFoodSwipeEvent("restaurant_saved", {
+          ...context,
+          saveSource: "swipe",
+        });
+      }
+    },
+    [deck, recordSwipe],
+  );
+
+  const handleReset = useCallback(() => {
+    resetSwipes();
+    setDeckCycle((cycle) => cycle + 1);
+    captureFeedStarted("restart");
+  }, [captureFeedStarted, resetSwipes]);
+
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden bg-ink">
       {/* Full-bleed discovery canvas — hero first, profile details below on scroll */}
       {hydrated ? (
         <SwipeDeck
           deck={deck}
+          deckCycle={deckCycle}
           swipedIds={swipedIds}
-          onSwipe={recordSwipe}
+          onSwipe={handleSwipe}
           savedCount={savedIds.length}
-          onReset={resetSwipes}
+          onReset={handleReset}
         />
       ) : (
         <div className="shimmer absolute inset-0" />

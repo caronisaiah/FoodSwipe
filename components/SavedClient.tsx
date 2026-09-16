@@ -9,6 +9,10 @@ import { cuisineIcon } from "@/lib/emoji";
 import TagPill from "@/components/TagPill";
 import HeroMedia from "@/components/HeroMedia";
 import MaterialIcon from "@/components/MaterialIcon";
+import {
+  captureFoodSwipeEvent,
+  restaurantAnalyticsContext,
+} from "@/lib/analytics";
 
 /** Saved restaurants (right swipes), newest first. */
 export default function SavedClient({
@@ -47,6 +51,16 @@ export default function SavedClient({
   const saved = savedIds
     .map((id) => byId.get(id) ?? seedById.get(id))
     .filter((r): r is Restaurant => Boolean(r));
+
+  const removeSavedRestaurant = (restaurant: Restaurant) => {
+    // Every rendered item came from savedIds, so this is a real saved -> unsaved
+    // transition rather than a generic persistence notification.
+    removeSwipe(restaurant.id);
+    captureFoodSwipeEvent("restaurant_unsaved", {
+      ...restaurantAnalyticsContext(restaurant, "saved"),
+      unsaveSource: "saved_list",
+    });
+  };
 
   return (
     <div className="no-scrollbar flex-1 overflow-y-auto px-4 pb-8 pt-6">
@@ -126,7 +140,7 @@ export default function SavedClient({
 
               <button
                 type="button"
-                onClick={() => removeSwipe(r.id)}
+                onClick={() => removeSavedRestaurant(r)}
                 aria-label={`Remove ${r.name} from saved`}
                 className="shrink-0 self-start rounded-full p-2 text-haze transition hover:bg-white/10 hover:text-saffron"
               >

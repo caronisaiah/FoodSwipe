@@ -776,6 +776,10 @@ LOGODEV_TOKEN="pk_..."                                             # optional �
 BRAVE_SEARCH_API_KEY="..."                                         # optional — admin "Run dry search" video discovery (server-only)
 ANTHROPIC_API_KEY="sk-ant-..."                                     # optional — admin AI-assisted tag suggestions (server-only)
 FOODSWIPE_AI_MODEL="claude-sonnet-4-6"                              # optional — overrides the default AI model
+NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN="phc_..."                         # PostHog public project token
+NEXT_PUBLIC_POSTHOG_HOST="https://us.i.posthog.com"                 # US-region ingestion host
+NEXT_PUBLIC_FOODSWIPE_ANALYTICS_ENABLED="false"                     # explicit client analytics gate
+NEXT_PUBLIC_FOODSWIPE_ANALYTICS_ENV="development"                   # development | preview | production
 ```
 
 `FOODSWIPE_CONTENT_MODE` controls public seed visibility. Unset local/dev defaults
@@ -785,6 +789,40 @@ Set `FOODSWIPE_CONTENT_MODE=production` in Vercel Production before launch. No
 `NEXT_PUBLIC_` content-mode variable is required; server components decide whether
 seed fallback is serialized into client props. An invalid explicit mode fails
 closed to `production`.
+
+### Product analytics
+
+FoodSwipe uses `posthog-js` for a small, explicit product-event contract. It
+does not use autocapture, automatic pageviews/pageleaves, performance capture,
+heatmaps, session replay, or identified users. PostHog persists only its
+anonymous same-browser identity in `localStorage`; FoodSwipe never sends names,
+emails, precise locations, restaurant addresses/coordinates, source URLs,
+captions, creator handles, profile copy, or admin/evidence data.
+
+Analytics initializes only when all four `NEXT_PUBLIC_` variables above are
+present and `NEXT_PUBLIC_FOODSWIPE_ANALYTICS_ENABLED` is exactly `"true"`.
+Missing or disabled configuration is a silent no-op. Recommended Vercel scopes:
+
+| Environment | Enabled | Analytics environment |
+| --- | --- | --- |
+| Local development | `false` by default; temporarily `true` for QA | `development` |
+| Vercel Preview | `false` by default | `preview` |
+| Vercel Production | `true` | `production` |
+
+The NYC launch uses a US-region PostHog project, so Production should use the
+project's public browser token and `https://us.i.posthog.com`. PostHog project
+tokens are intended for browser use, but they should still be configured through
+Vercel rather than committed. Production dashboards must filter
+`analyticsEnvironment = production` so explicitly enabled development QA does
+not affect launch metrics.
+
+The initial explicit events are `foodswipe_feed_started`,
+`restaurant_impression`, `restaurant_swiped`, `restaurant_saved`,
+`restaurant_unsaved`, `profile_engaged`, `profile_depth_reached`,
+`video_impression`, `video_source_clicked`, `directions_clicked`,
+`website_clicked`, `reviews_clicked`, and `restaurant_shared`. Video visibility
+is an impression, never a fabricated play/watch event. Event types and the
+privacy-safe restaurant context live in `lib/analytics.ts`.
 
 ### Dry-run content audit/export
 
@@ -904,6 +942,8 @@ connects normally, which is the environment where shared persistence was proven.
 ## Project structure
 
 ```
+instrumentation-client.ts       Pre-hydration PostHog initialization gate
+
 app/
   layout.tsx                 Root layout: fonts, metadata, viewport
   globals.css                Tailwind v4 @theme tokens and utilities
@@ -942,6 +982,8 @@ components/
   AppShell.tsx / BottomNav.tsx    Mobile frame and navigation
 
 lib/
+  analytics.ts               Typed PostHog initialization + explicit event contract
+  useVisibleOnce.ts          Deduplicated visibility-duration observer for analytics
   types.ts                   Domain types (Restaurant, Video, PlacePhoto, ...)
   video.ts                   Legal-safe core: normalize, enforce, embed allowlist
   youtube.ts                 YouTube URL resolver

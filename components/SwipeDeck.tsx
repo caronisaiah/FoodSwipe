@@ -27,6 +27,10 @@ import { getMarketShortName } from "@/lib/markets";
 import RestaurantCard from "@/components/RestaurantCard";
 import RestaurantProfileView from "@/components/RestaurantProfileView";
 import MaterialIcon from "@/components/MaterialIcon";
+import {
+  captureFoodSwipeEvent,
+  restaurantAnalyticsContext,
+} from "@/lib/analytics";
 
 const HERO_HANDOFF_MAX_WAIT_MS = 350;
 const HERO_IMAGE_SETTLE_MAX_WAIT_MS = 5000;
@@ -44,6 +48,8 @@ interface OutgoingSwipe {
 interface SwipeDeckProps {
   /** Full ranked list. */
   deck: ScoredRestaurant[];
+  /** Changes only when the user explicitly starts the deck over. */
+  deckCycle: number;
   /** Ids already swiped — filtered out of the live queue. */
   swipedIds: string[];
   onSwipe: (restaurantId: string, direction: SwipeDirection) => void;
@@ -55,12 +61,15 @@ interface SwipeDeckProps {
 
 export default function SwipeDeck({
   deck,
+  deckCycle,
   swipedIds,
   onSwipe,
   savedCount,
   onReset,
 }: SwipeDeckProps) {
   const cardRef = useRef<SwipeCardHandle>(null);
+  const impressionCycleRef = useRef(deckCycle);
+  const impressedRestaurantIdsRef = useRef(new Set<string>());
 
   // The live queue is the deck minus anything already swiped. Recording a swipe
   // drops the top card, so queue[0] is always the current card — no index drift.
@@ -85,6 +94,25 @@ export default function SwipeDeck({
   const imagePrewarmPromisesRef = useRef(new Map<string, Promise<ImagePrewarmStatus>>());
   const imagePrewarmStatusRef = useRef(new Map<string, ImagePrewarmStatus | "pending">());
   const isAdvancing = outgoingSwipe?.restaurantId === topId;
+
+  useEffect(() => {
+    if (impressionCycleRef.current === deckCycle) return;
+    impressionCycleRef.current = deckCycle;
+    impressedRestaurantIdsRef.current.clear();
+  }, [deckCycle]);
+
+  useEffect(() => {
+    if (!top || impressedRestaurantIdsRef.current.has(top.restaurant.id)) return;
+    impressedRestaurantIdsRef.current.add(top.restaurant.id);
+    const feedPosition = deck.findIndex(
+      (item) => item.restaurant.id === top.restaurant.id,
+    );
+    if (feedPosition < 0) return;
+    captureFoodSwipeEvent("restaurant_impression", {
+      ...restaurantAnalyticsContext(top.restaurant, "feed", feedPosition + 1),
+      feedPosition: feedPosition + 1,
+    });
+  }, [deck, deckCycle, top]);
 
   const setTransition = useCallback((transition: OutgoingSwipe | null) => {
     outgoingSwipeRef.current = transition;
@@ -520,6 +548,10 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
       try {
         if (typeof navigator !== "undefined" && navigator.share) {
           await navigator.share({ title: r.name, text: `${r.name} — ${r.neighborhood}, ${getMarketShortName(r.market)}`, url });
+          captureFoodSwipeEvent("restaurant_shared", {
+            ...restaurantAnalyticsContext(r, "feed"),
+            method: "native",
+          });
           return;
         }
       } catch {
@@ -527,6 +559,10 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
       }
       try {
         await navigator.clipboard.writeText(url);
+        captureFoodSwipeEvent("restaurant_shared", {
+          ...restaurantAnalyticsContext(r, "feed"),
+          method: "clipboard",
+        });
         setCopied(true);
         window.setTimeout(() => setCopied(false), 1500);
       } catch {

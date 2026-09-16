@@ -1,6 +1,11 @@
 "use client";
 
+import type { Ref } from "react";
 import MaterialIcon from "@/components/MaterialIcon";
+import {
+  captureFoodSwipeEvent,
+  type RestaurantAnalyticsContext,
+} from "@/lib/analytics";
 
 /**
  * Polished public "Go there" module. It receives already-resolved URLs from the
@@ -10,22 +15,45 @@ export default function GoThere({
   directionsUrl,
   websiteDomain,
   reviewsHref,
+  analyticsContext,
+  sectionRef,
 }: {
   directionsUrl: string;
   websiteDomain?: string | null;
   reviewsHref?: string;
+  analyticsContext: RestaurantAnalyticsContext;
+  sectionRef?: Ref<HTMLElement>;
 }) {
   const websiteHref = websiteUrl(websiteDomain);
 
   return (
-    <section className="rounded-[24px] bg-surface px-4 py-[18px] pb-5 ring-1 ring-inset ring-white/5">
+    <section
+      ref={sectionRef}
+      className="rounded-[24px] bg-surface px-4 py-[18px] pb-5 ring-1 ring-inset ring-white/5"
+    >
       <h3 className="mb-3 text-[11px] font-bold uppercase tracking-[0.25em] text-haze">
         Go there
       </h3>
       <div className="grid grid-cols-3 gap-2">
-        <ExternalTile href={directionsUrl} icon="near_me" label="Directions" primary />
-        <ExternalTile href={websiteHref} icon="language" label="Website" />
-        <ExternalTile href={reviewsHref} icon="play_circle" label="Reviews" />
+        <ExternalTile
+          href={directionsUrl}
+          icon="near_me"
+          label="Directions"
+          onClick={() => captureFoodSwipeEvent("directions_clicked", analyticsContext)}
+          primary
+        />
+        <ExternalTile
+          href={websiteHref}
+          icon="language"
+          label="Website"
+          onClick={() => captureFoodSwipeEvent("website_clicked", analyticsContext)}
+        />
+        <ExternalTile
+          href={reviewsHref}
+          icon="play_circle"
+          label="Reviews"
+          onClick={() => captureFoodSwipeEvent("reviews_clicked", analyticsContext)}
+        />
       </div>
     </section>
   );
@@ -44,11 +72,13 @@ function ExternalTile({
   icon,
   label,
   primary = false,
+  onClick,
 }: {
   href?: string;
   icon: string;
   label: string;
   primary?: boolean;
+  onClick?: () => void;
 }) {
   const base =
     "flex min-h-[74px] flex-col items-center justify-center gap-1.5 rounded-2xl px-1.5 py-3 text-center text-xs font-semibold ring-1 ring-inset transition";
@@ -73,6 +103,7 @@ function ExternalTile({
       target="_blank"
       rel="noopener noreferrer"
       onPointerDown={(e) => e.stopPropagation()}
+      onClick={onClick}
       className={
         primary
           ? `${base} bg-brand-gradient text-saffron-ink ring-transparent shadow-lg shadow-saffron/20 active:scale-[0.98]`

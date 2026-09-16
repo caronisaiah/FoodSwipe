@@ -27,7 +27,7 @@ export default function RestaurantProfile({
         >
           <MaterialIcon name="arrow_back" className="text-xl" />
         </Link>
-        <SaveButton restaurantId={r.id} />
+        <SaveButton restaurant={r} />
       </div>
 
       <RestaurantProfileView restaurant={r} />
