@@ -522,12 +522,13 @@ seed **plus** DB-published restaurants.
   a **Promote to feed** action on approved candidates (showing `missingFields` on
   failure and the resulting `/restaurants/[slug]` link on success).
 
-### Markets (multi-market — A1 + A2)
+### Markets (multi-market — A1 + A2 + M2A)
 
-FoodSwipe is DC-first but is being prepared for additional markets (e.g. NYC).
+FoodSwipe's first launch market is NYC, selected through server configuration.
 **A1** added the write-path foundation (data carries a market; distance uses the
-market origin). **A2** makes the read/discovery side market-aware while keeping the
-public app DC-first. No new schema/migration was needed for A2.
+market origin). **A2** made reads/discovery market-aware. **M2A** adds a configurable
+public discovery default without changing stored data or admin market behavior.
+No schema/migration or market selector is needed.
 
 - **Config.** [`lib/markets.ts`](lib/markets.ts) is the allow-list source of truth:
   markets `dc` and `nyc`, each with `displayName` ("Washington, DC" / "New York
@@ -536,7 +537,10 @@ public app DC-first. No new schema/migration was needed for A2.
   "New York"), and `locationTerms` (scoring detection: city + abbreviations +
   boroughs). Helpers: `isAllowedMarket`, `normalizeMarket` (coerce untrusted → `dc`),
   `getMarketOrigin`, `getMarketDisplayName`, `getMarketShortName`, `getMarketQueryCity`,
-  `getMarketLocationTerms`, `listMarkets`. The default everywhere is **`dc`**.
+  `getMarketLocationTerms`, `listMarkets`. `DEFAULT_MARKET` remains **`dc`** for
+  storage normalization, seed identity, and admin compatibility. The server-only
+  [`lib/publicMarket.ts`](lib/publicMarket.ts) reuses this allow-list to resolve
+  `FOODSWIPE_DEFAULT_MARKET`; it is not a second market registry.
 - **Schema (A1).** Migration `0009_tidy_speed.sql` adds `market text NOT NULL DEFAULT
   'dc'` to `candidate_restaurants` and `restaurants` (the `DEFAULT` backfills existing
   rows), plus `(status, market, created_at)` indexes. `video_candidates` and
@@ -550,11 +554,35 @@ public app DC-first. No new schema/migration was needed for A2.
 - **Promotion → distance.** Promotion copies `candidate.market` into
   `restaurants.market` and computes `distanceMiles` from **that market's origin**;
   editing a published row's lat/lng recomputes from the row's market.
-- **Public read (A2).** `/api/restaurants` is **DC by default**. In `demo`/`mixed`,
-  no `?market` or `?market=dc` returns seed + DC published rows. In `production`,
-  DC returns DB-published rows only. `?market=nyc` returns NYC published rows only
-  in every mode (seed is DC-only), honest-empty if none. An invalid market falls
-  back to the DC default. No market selector UI yet; the public app stays DC-first.
+- **Public read (M2A).** `/api/restaurants` uses `FOODSWIPE_DEFAULT_MARKET` when
+  the query market is absent, blank, or unsupported. Explicit `?market=dc` and
+  `?market=nyc` always win. Missing/blank env deliberately falls back to `dc` for
+  backward compatibility. Values are trimmed/lowercased; an invalid explicit env
+  logs a sanitized warning and disables default discovery (an uncached empty
+  list), rather than silently showing DC. Valid explicit query markets still
+  work with invalid default configuration. In `demo`/`mixed`, DC includes seeds;
+  NYC never does. In `production`, either market is DB-published-only. An empty
+  NYC dataset never falls back to DC, even outside production.
+- **Feed/saved audit (M2A).** Both clients fetch `/api/restaurants` without a
+  market and therefore follow the configured public default. Server fallback
+  props include only that market's seeds when content mode allows them. NYC has
+  no seeds, so its feed uses the existing empty state until NYC rows are published.
+  Saved displays IDs resolved from the launch-market list, not a cross-market
+  collection. Valid NYC saves resolve with an NYC default; old DC IDs remain in
+  localStorage but are not displayed there. Hidden DB rows and seed-only IDs in
+  production cannot be resurrected by stored IDs. If cross-market saves are
+  introduced later, use a separate status-gated, ID-based read path rather than
+  fetching every market or bypassing hidden status. No save/history reset occurs.
+- **Profiles/admin audit (M2A).** Direct published `/restaurants/[id]` profiles
+  remain market-independent; hidden rows fail public resolution. The launch
+  default is discovery-only, not an access restriction. Admin candidate import,
+  review, promotion, and all-market published reads are unchanged. Two legacy
+  admin pickers explicitly request their existing DC list so launch configuration
+  does not make them NYC-only; video review's free-typed slug entry and the
+  authenticated published editor remain available for both markets. The legacy
+  profile picker retains its existing DC-only suggestions. Onboarding/tune loads no
+  restaurant data: its persisted location text (including legacy DC copy) does
+  not select the discovery market. UI and analytics behavior are unchanged.
 - **Discovery (A2).** [`queryGenerator`](lib/discovery/queryGenerator.ts) derives the
   location qualifier from the restaurant's market (DC → `"Washington DC"`, NYC →
   `"New York"` + neighborhood/borough), and [`scoreDiscoveryLead`](lib/discovery/scoreDiscoveryLead.ts)
@@ -752,6 +780,7 @@ npm run build    # production build (also type-checks)
 npm run start    # serve the production build
 npm run lint     # eslint
 npm run content:audit  # read-only DB content audit/export
+node scripts/public-market-check.mjs  # isolated public market/read checks; no network or DB
 ```
 
 The app is mobile-first. On desktop it renders as a centered phone-width column;
@@ -769,6 +798,7 @@ Environment variables go in `.env` (which is gitignored). Use `.env` rather than
 ```bash
 DATABASE_URL="postgresql://USER:PASSWORD@HOST/DB?sslmode=require"   # Neon connection string (shared persistence)
 FOODSWIPE_CONTENT_MODE="mixed"                                      # demo | mixed | production; production is DB-published only
+FOODSWIPE_DEFAULT_MARKET="dc"                                      # public discovery default: dc | nyc; missing/blank = dc
 FOODSWIPE_ADMIN_SECRET="a-long-random-string"                       # gate for admin writes
 YOUTUBE_API_KEY="..."                                              # optional — YouTube metadata enrichment
 GOOGLE_MAPS_API_KEY="..."                                          # optional — Google Place Photos on profiles
@@ -789,6 +819,27 @@ Set `FOODSWIPE_CONTENT_MODE=production` in Vercel Production before launch. No
 `NEXT_PUBLIC_` content-mode variable is required; server components decide whether
 seed fallback is serialized into client props. An invalid explicit mode fails
 closed to `production`.
+
+`FOODSWIPE_DEFAULT_MARKET` is server-only and independent of content mode. Set
+it to `nyc` for the NYC launch; do not change the storage/admin `DEFAULT_MARKET`,
+seed data, or existing rows. Invalid explicit configuration disables default
+discovery instead of falling back to another city's restaurants. No
+`NEXT_PUBLIC_` market variable is needed.
+
+For local Development and Vercel Preview doing NYC production-style QA, use:
+
+```bash
+FOODSWIPE_CONTENT_MODE=production
+FOODSWIPE_DEFAULT_MARKET=nyc
+```
+
+Production can use the same pair when ready for external alpha. Apply these
+settings manually to the appropriate Vercel environment and create a new
+deployment; existing deployments do not pick up changed environment variables.
+Verify the default API matches `?market=nyc`, explicit `?market=dc` remains DC,
+and feed/saved do not show DC/seeds when NYC is empty. Classify/hide unwanted
+published test rows separately through admin: M2A does not hide, delete, relabel,
+or clean up restaurants, candidates, evidence, or videos.
 
 ### Product analytics
 

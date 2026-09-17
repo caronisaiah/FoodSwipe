@@ -2,10 +2,9 @@
  * Multi-market support — Slice A1 (write-path foundation).
  *
  * The single source of truth for which markets FoodSwipe knows about and the
- * per-market geographic origin used to compute honest `distanceMiles`. The app is
- * DC-first today; `"dc"` is the default everywhere so existing behavior is
- * unchanged. Public feed filtering, a market selector, and market-aware discovery
- * are intentionally NOT here — those are later slices (A2+).
+ * per-market geographic origin used to compute honest `distanceMiles`. Stored
+ * data/admin defaults remain DC for backward compatibility. Consumer discovery
+ * uses the server-only default configuration in lib/publicMarket.ts (M2A).
  *
  * Markets are an allow-list: untrusted input is validated/normalized through these
  * helpers, never stored raw.
@@ -14,7 +13,7 @@
 export const MARKETS = ["dc", "nyc"] as const;
 export type Market = (typeof MARKETS)[number];
 
-/** DC-first: the default for omitted/unknown input and for all backfilled rows. */
+/** Storage/admin/seed default; NOT the configurable consumer discovery market. */
 export const DEFAULT_MARKET: Market = "dc";
 
 export interface MarketConfig {

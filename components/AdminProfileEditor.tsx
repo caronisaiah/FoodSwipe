@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { isEmbedUrlAllowed } from "@/lib/video";
 import MaterialIcon from "@/components/MaterialIcon";
+import { DEFAULT_MARKET } from "@/lib/markets";
 import TagSuggestionsPanel, { type AppliedTagSuggestions } from "@/components/TagSuggestionsPanel";
 
 /*
@@ -176,7 +177,8 @@ export default function AdminProfileEditor() {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch("/api/restaurants");
+        // Preserve this admin picker's existing market independently of launch config.
+        const res = await fetch(`/api/restaurants?market=${DEFAULT_MARKET}`);
         const data = (await res.json()) as { restaurants?: RestaurantLite[] };
         if (!cancelled && Array.isArray(data.restaurants)) {
           setOptions(

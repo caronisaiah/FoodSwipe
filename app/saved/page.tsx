@@ -1,10 +1,9 @@
 import AppShell from "@/components/AppShell";
 import SavedClient from "@/components/SavedClient";
-import { shouldIncludeSeedRestaurants } from "@/lib/contentMode";
-import { RESTAURANTS } from "@/lib/seed/restaurants";
+import { getDefaultPublicMarket, getPublicSeedRestaurants } from "@/lib/publicMarket";
 
 export default function SavedPage() {
-  const seedRestaurants = shouldIncludeSeedRestaurants() ? RESTAURANTS : [];
+  const seedRestaurants = getPublicSeedRestaurants(getDefaultPublicMarket());
 
   return (
     <AppShell>

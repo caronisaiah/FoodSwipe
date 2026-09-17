@@ -1,10 +1,9 @@
 import AppShell from "@/components/AppShell";
 import FeedClient from "@/components/FeedClient";
-import { shouldIncludeSeedRestaurants } from "@/lib/contentMode";
-import { RESTAURANTS } from "@/lib/seed/restaurants";
+import { getDefaultPublicMarket, getPublicSeedRestaurants } from "@/lib/publicMarket";
 
 export default function FeedPage() {
-  const initialRestaurants = shouldIncludeSeedRestaurants() ? RESTAURANTS : [];
+  const initialRestaurants = getPublicSeedRestaurants(getDefaultPublicMarket());
 
   return (
     <AppShell>

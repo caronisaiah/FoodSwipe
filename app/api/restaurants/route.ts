@@ -1,7 +1,7 @@
-import { RESTAURANTS } from "@/lib/seed/restaurants";
 import { getAllRestaurants } from "@/lib/db/restaurants";
 import { shouldIncludeSeedRestaurants } from "@/lib/contentMode";
-import { DEFAULT_MARKET, isAllowedMarket, type Market } from "@/lib/markets";
+import { isAllowedMarket } from "@/lib/markets";
+import { getDefaultPublicMarket, getPublicSeedRestaurants } from "@/lib/publicMarket";
 
 /*
   GET /api/restaurants  (public read)
@@ -9,13 +9,13 @@ import { DEFAULT_MARKET, isAllowedMarket, type Market } from "@/lib/markets";
   Content mode controls whether code-managed seed restaurants are visible
   alongside DB-published restaurants. The client fetches this and ranks locally.
 
-  Market (Slice A2): the app is DC-first, so this route is **DC by default**.
-  - no `?market`           → DC. demo/mixed: seed + published; production:
-                             published only.
-  - `?market=dc`           → same as above for DC.
+  Market (M2A): FOODSWIPE_DEFAULT_MARKET chooses default public discovery.
+  - no `?market`           → configured default (missing config = DC).
+  - `?market=dc`           → DC. demo/mixed: seed + published; production:
+                             published only, regardless of the default.
   - `?market=nyc`          → NYC published rows ONLY (seed is the DC market, so it
                              is never mixed in); honest empty list if none exist.
-  - invalid/garbage market → falls back to the DC default. This is a public,
+  - invalid/garbage market → falls back to the configured default. This is a public,
                              degrade-safe READ route (it already prefers a safe
                              fallback over erroring), so we don't 400 here — unlike
                              the admin WRITE import route, which rejects bad input.
@@ -27,8 +27,9 @@ import { DEFAULT_MARKET, isAllowedMarket, type Market } from "@/lib/markets";
 export async function GET(req: Request): Promise<Response> {
   const raw = new URL(req.url).searchParams.get("market");
   const m = raw ? raw.trim().toLowerCase() : "";
-  // DC-first: absent OR invalid → the default market (dc).
-  const market: Market = isAllowedMarket(m) ? m : DEFAULT_MARKET;
+  // Explicit supported markets win, even if the default env is misconfigured.
+  const market = isAllowedMarket(m) ? m : getDefaultPublicMarket();
+  if (!market) return noStore({ restaurants: [] });
   const includeSeeds = shouldIncludeSeedRestaurants();
   try {
     const restaurants = await getAllRestaurants(market, { includeSeeds });
@@ -36,7 +37,7 @@ export async function GET(req: Request): Promise<Response> {
   } catch {
     // Last-resort safety net. Seed fallback is allowed only outside production.
     return noStore({
-      restaurants: includeSeeds && market === DEFAULT_MARKET ? RESTAURANTS : [],
+      restaurants: getPublicSeedRestaurants(market),
     });
   }
 }
