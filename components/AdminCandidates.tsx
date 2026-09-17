@@ -233,6 +233,16 @@ interface PreviewRow {
   seedMatchWarning: string | null;
   isDuplicate?: boolean;
   duplicateOfStatus?: string | null;
+  duplicateOfKind?: "candidate" | "restaurant" | "preview" | null;
+  importError?: string;
+}
+
+interface ImportOutcome {
+  googlePlaceId: string;
+  status: "imported" | "skipped" | "failed";
+  existingStatus?: string;
+  duplicateOfKind?: "candidate" | "restaurant";
+  error?: string;
 }
 
 type Msg = { type: "ok" | "err"; text: string } | null;
@@ -432,11 +442,34 @@ export default function AdminCandidates() {
   // Google import
   const [query, setQuery] = useState("");
   const [maxResults, setMaxResults] = useState("10");
-  const [dryRun, setDryRun] = useState(true);
   const [market, setMarket] = useState("dc");
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState<Msg>(null);
   const [preview, setPreview] = useState<PreviewRow[] | null>(null);
+  const [previewToken, setPreviewToken] = useState<string | null>(null);
+  const [previewContext, setPreviewContext] = useState<{ query: string; maxResults: number; market: string } | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const importBusyRef = useRef(false);
+  const eligibleIds = [...new Set((preview ?? [])
+    .filter((row) => row.googlePlaceId && !row.isDuplicate)
+    .map((row) => row.googlePlaceId!))];
+
+  function clearPreview() {
+    setPreview(null);
+    setPreviewToken(null);
+    setPreviewContext(null);
+    setSelectedIds(new Set());
+  }
+
+  function toggleSelection(placeId: string) {
+    if (importBusyRef.current || !eligibleIds.includes(placeId)) return;
+    setSelectedIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(placeId)) next.delete(placeId);
+      else next.add(placeId);
+      return next;
+    });
+  }
 
   async function load() {
     if (!secret.trim()) {
@@ -502,8 +535,11 @@ export default function AdminCandidates() {
     );
   }
 
-  async function runImport(dry: boolean) {
-    if (importing) return;
+  async function runImport(selection?: string[]) {
+    if (importBusyRef.current) return;
+    const dry = selection === undefined;
+    const ids = [...new Set(selection ?? [])].filter((id) => eligibleIds.includes(id));
+    if (!dry && (ids.length === 0 || !previewToken || !previewContext)) return;
     if (!secret.trim()) {
       setImportMsg({ type: "err", text: "Enter the admin secret first." });
       return;
@@ -512,22 +548,29 @@ export default function AdminCandidates() {
       setImportMsg({ type: "err", text: "Enter a search query." });
       return;
     }
-    setImporting(true);
-    setImportMsg(null);
     const parsedMax = Math.trunc(Number(maxResults));
     const max = Number.isFinite(parsedMax) && parsedMax >= 1 ? Math.min(parsedMax, 20) : 10;
+    const context = dry ? { query: query.trim(), maxResults: max, market } : previewContext!;
+    importBusyRef.current = true;
+    setImporting(true);
+    setImportMsg(null);
+    if (dry) clearPreview();
     try {
       const res = await fetch("/api/admin/restaurants/candidates/import/google", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-foodswipe-admin-secret": secret },
-        body: JSON.stringify({ query: query.trim(), maxResults: max, dryRun: dry, market }),
+        body: JSON.stringify({ ...context, dryRun: dry,
+          ...(!dry ? { previewToken, selectedPlaceIds: ids } : {}) }),
       });
       const data = (await res.json()) as {
         dryRun?: boolean;
         found?: number;
         candidates?: PreviewRow[];
+        previewToken?: string;
         imported?: number;
         skippedDuplicates?: number;
+        failed?: number;
+        outcomes?: ImportOutcome[];
         error?: string;
       };
       if (!res.ok) {
@@ -536,21 +579,40 @@ export default function AdminCandidates() {
       }
       if (data.dryRun) {
         setPreview(Array.isArray(data.candidates) ? data.candidates : []);
+        setPreviewToken(data.previewToken ?? null);
+        setPreviewContext(context);
+        setSelectedIds(new Set());
         setImportMsg({
           type: "ok",
           text: `Preview only — nothing written. Found ${data.found ?? 0}.`,
         });
       } else {
-        setPreview(null);
+        if (!Array.isArray(data.outcomes)) {
+          setImportMsg({ type: "err", text: "Import outcomes could not be confirmed. Retry safely or check the candidate queue." });
+          return;
+        }
+        const outcomes = new Map(data.outcomes.map((outcome) => [outcome.googlePlaceId, outcome]));
+        setPreview((rows) => rows?.map((row) => {
+          const outcome = row.googlePlaceId ? outcomes.get(row.googlePlaceId) : undefined;
+          if (!outcome) return row;
+          if (outcome.status === "failed") return { ...row, importError: outcome.error ?? "Import failed. Retry safely." };
+          return { ...row, isDuplicate: true, duplicateOfStatus: outcome.existingStatus ?? "needs_review",
+            duplicateOfKind: outcome.duplicateOfKind ?? "candidate", importError: undefined };
+        }) ?? null);
+        setSelectedIds((previous) => new Set([...new Set([...previous, ...ids])].filter((id) => {
+          const outcome = outcomes.get(id);
+          return !outcome || outcome.status === "failed";
+        })));
         setImportMsg({
-          type: "ok",
-          text: `Imported ${data.imported ?? 0}; skipped ${data.skippedDuplicates ?? 0} duplicate(s). Review below.`,
+          type: (data.failed ?? 0) > 0 ? "err" : "ok",
+          text: `Imported ${data.imported ?? 0}; skipped ${data.skippedDuplicates ?? 0} already-existing; failed ${data.failed ?? 0}. Review below.`,
         });
         if (loadedOnce) await load();
       }
     } catch {
-      setImportMsg({ type: "err", text: "Network error — could not reach the import route." });
+      setImportMsg({ type: "err", text: "Request could not be confirmed. Retry safely or check the candidate queue; existing identities will be skipped." });
     } finally {
+      importBusyRef.current = false;
       setImporting(false);
     }
   }
@@ -633,74 +695,55 @@ export default function AdminCandidates() {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              void runImport(dryRun);
+              void runImport();
             }}
             className="space-y-3"
           >
-            <Field label="Search query" hint="cuisine + neighborhood">
-              <TextInput
-                value={query}
-                onChange={setQuery}
-                placeholder={market === "nyc" ? "pizza in Williamsburg, Brooklyn" : "brunch in Shaw, Washington DC"}
-              />
-            </Field>
-            <Field label="Market" hint="where these restaurants are">
-              <select
-                value={market}
-                onChange={(e) => setMarket(e.target.value)}
-                className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 focus:ring-saffron/60"
-              >
-                {markets.map((mkt) => (
-                  <option key={mkt.id} value={mkt.id}>
-                    {mkt.displayName}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <div className="grid grid-cols-2 items-end gap-3">
-              <Field label="Max results" hint="1–20">
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={maxResults}
-                  onChange={(e) => setMaxResults(e.target.value)}
-                  onBlur={() => {
-                    const n = Math.trunc(Number(maxResults));
-                    setMaxResults(String(Number.isFinite(n) && n >= 1 ? Math.min(n, 20) : 10));
-                  }}
-                  className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 focus:ring-saffron/60"
+            <fieldset disabled={importing} className="space-y-3 disabled:opacity-60">
+              <Field label="Search query" hint="cuisine + neighborhood">
+                <TextInput
+                  value={query}
+                  onChange={(value) => { setQuery(value); clearPreview(); }}
+                  placeholder={market === "nyc" ? "pizza in Williamsburg, Brooklyn" : "brunch in Shaw, Washington DC"}
                 />
               </Field>
-              <label className="flex cursor-pointer items-center gap-2 rounded-lg bg-surface-2 px-3 py-2 ring-1 ring-inset ring-white/10">
-                <input
-                  type="checkbox"
-                  checked={dryRun}
-                  onChange={(e) => setDryRun(e.target.checked)}
-                  className="h-4 w-4 accent-saffron"
-                />
-                <span className="text-sm text-cream">
-                  Dry run <span className="text-haze">(preview)</span>
-                </span>
-              </label>
-            </div>
-            <button
-              type="submit"
-              aria-disabled={importing}
-              className={`w-full rounded-lg py-2 text-sm font-bold transition active:scale-[0.99] ${
-                dryRun
-                  ? "bg-white/10 text-cream ring-1 ring-inset ring-white/15 hover:bg-white/20"
-                  : "bg-brand-gradient text-ink"
-              } ${importing ? "opacity-40" : ""}`}
-            >
-              {importing
-                ? dryRun
-                  ? "Previewing…"
-                  : "Importing…"
-                : dryRun
-                  ? "Preview candidates"
-                  : "Import for real"}
-            </button>
+              <Field label="Market" hint="where these restaurants are">
+                <select
+                  value={market}
+                  onChange={(e) => { setMarket(e.target.value); clearPreview(); }}
+                  className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 focus:ring-saffron/60"
+                >
+                  {markets.map((mkt) => (
+                    <option key={mkt.id} value={mkt.id}>
+                      {mkt.displayName}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <div>
+                <Field label="Max results" hint="1–20">
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={maxResults}
+                    onChange={(e) => { setMaxResults(e.target.value); clearPreview(); }}
+                    onBlur={() => {
+                      const n = Math.trunc(Number(maxResults));
+                      setMaxResults(String(Number.isFinite(n) && n >= 1 ? Math.min(n, 20) : 10));
+                    }}
+                    className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 focus:ring-saffron/60"
+                  />
+                </Field>
+              </div>
+              <button
+                type="submit"
+                disabled={importing}
+                className="w-full rounded-lg bg-white/10 py-2 text-sm font-bold text-cream ring-1 ring-inset ring-white/15 transition hover:bg-white/20 disabled:opacity-40"
+              >
+                {importing ? "Working…" : "Preview candidates"}
+              </button>
+            </fieldset>
           </form>
 
           {importMsg && (
@@ -715,26 +758,43 @@ export default function AdminCandidates() {
           {preview && (
             <div className="mt-3">
               <p className="mb-2 text-xs font-semibold text-cream">
-                Preview ({preview.length}) — not yet saved, ranked by review likelihood
+                Preview ({preview.length}) — ranked by review likelihood
               </p>
+              <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+                <span role="status" className="mr-auto text-haze">{selectedIds.size} of {preview.length} selected · {eligibleIds.length} available</span>
+                <button type="button" disabled={importing || !eligibleIds.length} onClick={() => setSelectedIds(new Set(eligibleIds))}
+                  className="rounded-md bg-white/10 px-3 py-2 text-cream disabled:opacity-40">Select all</button>
+                <button type="button" disabled={importing || !selectedIds.size} onClick={() => setSelectedIds(new Set())}
+                  className="rounded-md bg-white/10 px-3 py-2 text-cream disabled:opacity-40">Clear selection</button>
+              </div>
               {preview.length === 0 ? (
                 <p className="text-xs text-haze">No usable results for that query.</p>
               ) : (
                 <ul className="space-y-2">
                   {preview.map((p, i) => (
-                    <PreviewCard key={`${p.googlePlaceId ?? "row"}-${i}`} row={p} />
+                    <PreviewCard key={`${p.googlePlaceId ?? "row"}-${i}`} row={p}
+                      selected={Boolean(p.googlePlaceId && selectedIds.has(p.googlePlaceId) && !p.isDuplicate)}
+                      disabled={importing || p.isDuplicate === true || !p.googlePlaceId || !previewToken}
+                      onToggle={() => { if (p.googlePlaceId) toggleSelection(p.googlePlaceId); }} />
                   ))}
                 </ul>
               )}
               {preview.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => void runImport(false)}
-                  disabled={importing}
-                  className="mt-3 w-full rounded-lg bg-brand-gradient py-2 text-sm font-bold text-ink transition active:scale-[0.99] disabled:opacity-40"
-                >
-                  {importing ? "Importing…" : `Import these ${preview.length} for real`}
-                </button>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => void runImport([...selectedIds])}
+                    disabled={importing || !selectedIds.size || !previewToken}
+                    className="w-full rounded-lg bg-brand-gradient py-2 text-sm font-bold text-ink transition active:scale-[0.99] disabled:opacity-40"
+                  >
+                    Import selected ({selectedIds.size})
+                  </button>
+                  <button type="button" onClick={() => void runImport(eligibleIds)}
+                    disabled={importing || !eligibleIds.length || !previewToken}
+                    className="w-full rounded-lg bg-white/10 py-2 text-sm font-bold text-cream ring-1 ring-inset ring-white/15 disabled:opacity-40">
+                    Import all {eligibleIds.length} eligible
+                  </button>
+                </div>
               )}
               <p className="mt-2 text-[10px] leading-relaxed text-haze">
                 Imports store the Google Place ID + review metadata and conservative
@@ -1493,7 +1553,9 @@ function CandidateEditor({
 
 /* ----- import preview card ----- */
 
-function PreviewCard({ row }: { row: PreviewRow }) {
+function PreviewCard({ row, selected, disabled, onToggle }: {
+  row: PreviewRow; selected: boolean; disabled: boolean; onToggle: () => void;
+}) {
   const warn = warningFrom(row);
   const tags = [
     ...(row.cuisineTags ?? []),
@@ -1502,8 +1564,13 @@ function PreviewCard({ row }: { row: PreviewRow }) {
     ...(row.bestFor ?? []),
   ];
   return (
-    <li className="rounded-lg bg-ink-2 p-2.5 ring-1 ring-inset ring-white/5">
+    <li className={`rounded-lg bg-ink-2 p-2.5 ring-1 ring-inset ${selected ? "ring-saffron/70" : "ring-white/5"}`}>
       <div className="flex items-start gap-2">
+        <label className="-my-2 -ml-2 flex h-11 w-11 shrink-0 items-center justify-center">
+          <input type="checkbox" checked={selected} disabled={disabled} onChange={onToggle}
+            aria-label={`Select ${row.name ?? row.googlePlaceId ?? "restaurant"}`}
+            className="h-5 w-5 accent-saffron disabled:opacity-40" />
+        </label>
         <ScoreChip score={row.reviewLikelihoodScore} />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-cream">{row.name ?? "(no name)"}</p>
@@ -1516,9 +1583,11 @@ function PreviewCard({ row }: { row: PreviewRow }) {
       {row.isDuplicate && (
         <p className="mt-1 flex items-center gap-1 text-[11px] text-chili-soft">
           <MaterialIcon name="content_copy" className="text-xs" />
-          Exact duplicate (same Place ID){row.duplicateOfStatus ? ` · ${row.duplicateOfStatus}` : ""} — a real import skips it.
+          {row.duplicateOfKind === "restaurant" ? (row.duplicateOfStatus === "published" ? "Already published" : "Already in restaurant catalog") : row.duplicateOfKind === "preview" ? "Repeated preview result" : "Already imported"}
+          {row.duplicateOfStatus ? ` · ${row.duplicateOfStatus}` : ""} — not selectable.
         </p>
       )}
+      {row.importError && <p role="status" className="mt-1 text-[11px] text-chili-soft">Import failed — {row.importError}</p>}
       {warn && (
         <p className="mt-1 flex items-center gap-1 text-[11px] text-saffron">
           <MaterialIcon name="warning" className="text-xs" />

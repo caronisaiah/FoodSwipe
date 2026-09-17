@@ -234,13 +234,27 @@ runs an official **Places API (New) Text Search** and turns results into review
 candidates. It never publishes to `/feed`. Same guards as the other admin routes,
 plus a **503** if `GOOGLE_MAPS_API_KEY` is unset and **400** on a blank `query`.
 
-- **Body:** `{ query, maxResults? (1–20, default 10), dryRun? }`. `dryRun`
-  **defaults to `true`** — you must send `"dryRun": false` to write. A dry run
-  calls Google and returns normalized previews but **writes nothing** (not even an
-  ingestion job). A real run inserts candidates (`status: "needs_review"`,
-  `source: "google_places"`) + a `restaurant_sources` provenance row each, and
-  returns `{ imported, skippedDuplicates, candidates }`. Both dry-run and real
-  results are sorted by **review-likelihood** (below), highest first.
+- **Preview body:** `{ query, maxResults? (1–20, default 10), market?, dryRun?: true }`.
+  `dryRun` **defaults to `true`**. Preview calls Google and returns normalized
+  candidates plus a signed `previewToken`, but **writes nothing** (not even an
+  ingestion job). The token binds eligible Google Place IDs to the query, market
+  and result limit for **15 minutes**; it contains no secret or restaurant fields.
+- **Selective write body:** the same query/market/limit, plus `dryRun: false`,
+  `previewToken`, and `selectedPlaceIds` (1–20). Only those IDs can be imported;
+  browser-supplied restaurant fields are not used. The server repeats Text Search
+  and normalizes selected results using the existing scoring/tagging pipeline.
+  If Google no longer returns a selected ID, that row fails safely rather than
+  importing a replacement. The response contains `requested`, `imported`,
+  `skippedDuplicates`, `failed`, `outcomes[]`, `duplicates[]`, and `candidates`.
+  Per-row failures do not discard other successes. Candidate writes remain
+  `status: "needs_review"`, `source: "google_places"`, with best-effort provenance
+  and ingestion audit logging. Nothing is published.
+- **Admin selection:** previews start with nothing selected. Checkboxes, Select
+  all and Clear selection drive **Import selected (N)**. The separate **Import
+  all N eligible** button sends all eligible IDs through that same write path.
+  Already-existing rows are disabled. Confirmed imports/skips become disabled
+  without refreshing the search; failed rows remain selected for retry. Changing
+  search parameters or starting a new preview clears stale selection.
 - **Exact Google fields requested** (minimal `X-Goog-FieldMask`, key via
   `X-Goog-Api-Key` header in `lib/places.ts` `searchPlacesText`): `places.id`,
   `places.displayName`, `places.formattedAddress`, `places.location`,
@@ -254,8 +268,8 @@ plus a **503** if `GOOGLE_MAPS_API_KEY` is unset and **400** on a blank `query`.
   `score` + `reasons` are stored on `candidate_restaurants`; the raw
   `rating`/`userRatingCount` they derive from are recorded only in the
   `restaurant_sources` provenance note (admin metadata). Curated FoodSwipe fields
-  (cuisine/vibe/dietary tags, dishes, copy) are **left empty** — never inferred
-  from Google.
+  (cuisine/vibe/dietary tags and dishes) may receive conservative, explained
+  suggestions for human review; public profile copy is not generated here.
 - **Not stored:** Google photo URLs/bytes or review text. Rating/review counts
   are **never displayed to users**, never shown in `/feed`, and never treated as
   FoodSwipe popularity — they exist only as expiring inputs to the internal
@@ -289,7 +303,9 @@ plus a **503** if `GOOGLE_MAPS_API_KEY` is unset and **400** on a blank `query`.
   regardless of its status (`candidate`/`needs_review`/`approved`/`rejected`), and
   it **never revives a rejected row**. Dedupe is **never by name** (chains have
   many locations, so same-name/different-Place-ID results import as distinct
-  candidates). Three layers guard against duplicates: a within-run `Set` (same
+  candidates). Existing published-table restaurants also block re-import,
+  including hidden restaurants; hiding a public row does not create a new candidate.
+  Three layers guard against candidate duplicates: a within-run `Set` (same
   Place ID twice in one Google response), the status-independent
   `getCandidateByGooglePlaceId` pre-check, and **insert-failure recovery** — if an
   insert throws because a concurrent import inserted the same Place ID between the
@@ -297,8 +313,10 @@ plus a **503** if `GOOGLE_MAPS_API_KEY` is unset and **400** on a blank `query`.
   duplicate-on-retry bug), the loop re-checks and counts it as a skipped duplicate
   instead of creating a second row. Skips are counted in `skippedDuplicates` and
   itemized in `duplicates[]` (`{ googlePlaceId, name, existingId, existingStatus,
-  reason: "existing-candidate" | "within-batch" | "race" }`); a dry run marks each
-  with `isDuplicate` + `duplicateOfStatus`. Safe server logs (Place IDs + reason,
+  reason: "existing-candidate" | "existing-restaurant" | "race" }`); a dry run marks each
+  with `isDuplicate`, `duplicateOfStatus` and `duplicateOfKind` (candidate,
+  restaurant, or repeated preview result). Only the first preview occurrence of
+  an otherwise eligible Place ID is selectable. Safe server logs (Place IDs + reason,
   no secrets) record what was skipped. The race is closed at the database level by
   a **partial `UNIQUE` index** on `google_place_id` (migration
   `0006_serious_stellaris.sql`, `WHERE google_place_id IS NOT NULL` so manual rows
@@ -781,6 +799,7 @@ npm run start    # serve the production build
 npm run lint     # eslint
 npm run content:audit  # read-only DB content audit/export
 node scripts/public-market-check.mjs  # isolated public market/read checks; no network or DB
+node scripts/restaurant-import-check.mjs  # isolated selective-import checks; no network or DB
 ```
 
 The app is mobile-first. On desktop it renders as a centered phone-width column;

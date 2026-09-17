@@ -5,6 +5,7 @@ import {
   candidateRestaurants,
   ingestionJobs,
   restaurantSources,
+  restaurants,
   type CandidateRestaurantRow,
   type NewCandidateRestaurantRow,
   type SuggestedTagSnapshot,
@@ -237,6 +238,18 @@ export async function getExistingCandidatePlaceStatuses(): Promise<Map<string, s
     .from(candidateRestaurants);
   const map = new Map<string, string>();
   for (const r of rows) if (r.googlePlaceId) map.set(r.googlePlaceId, r.status);
+  return map;
+}
+
+/** Import dedupe includes live AND hidden restaurant identities; never revive them. */
+export async function getExistingRestaurantPlaceStatusesForImport(): Promise<Map<string, string>> {
+  const db = getDb();
+  if (!db) return new Map();
+  const rows = await db
+    .select({ googlePlaceId: restaurants.googlePlaceId, status: restaurants.status })
+    .from(restaurants);
+  const map = new Map<string, string>();
+  for (const row of rows) if (row.googlePlaceId) map.set(row.googlePlaceId, row.status);
   return map;
 }
 

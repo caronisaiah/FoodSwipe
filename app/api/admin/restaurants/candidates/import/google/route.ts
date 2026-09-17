@@ -6,6 +6,7 @@ import {
   getCandidateByGooglePlaceId,
   getExistingCandidatePlaceStatuses,
   getExistingCandidateSlugs,
+  getExistingRestaurantPlaceStatusesForImport,
   insertCandidateRestaurant,
   isDbConfigured,
   slugify,
@@ -15,6 +16,7 @@ import { scoreReviewLikelihood, type ReviewLikelihood } from "@/lib/reviewLikeli
 import { suggestCandidateTags } from "@/lib/candidateTagger";
 import { RESTAURANTS } from "@/lib/seed/restaurants";
 import { DEFAULT_MARKET, isAllowedMarket, type Market } from "@/lib/markets";
+import { signImportPreview, verifyImportPreview } from "@/lib/restaurantImportPreview";
 
 /*
   POST /api/admin/restaurants/candidates/import/google  (INTERNAL, admin-secret)
@@ -23,7 +25,8 @@ import { DEFAULT_MARKET, isAllowedMarket, type Market } from "@/lib/markets";
   REVIEW rows. NOTHING is published to /feed; imported rows land as
   status="needs_review", source="google_places", for a human to curate/approve.
 
-  Body: { query: string, maxResults?: number (1-20, default 10), dryRun?: boolean }
+  Preview body: { query, maxResults?, market?, dryRun?: true }
+  Write body: same context + dryRun:false, previewToken, selectedPlaceIds (1–20).
   dryRun DEFAULTS TO true (must pass `"dryRun": false` to actually write).
 
   Guards mirror the other admin routes:
@@ -195,6 +198,14 @@ function scoreAndRank(
 }
 
 export async function POST(req: Request): Promise<Response> {
+  try {
+    return await importRequest(req);
+  } catch {
+    return Response.json({ error: "Could not prepare the candidate import. No result was confirmed; retry safely." }, { status: 500 });
+  }
+}
+
+async function importRequest(req: Request): Promise<Response> {
   if (!isAdminConfigured()) {
     return Response.json(
       { error: "Admin API is disabled (FOODSWIPE_ADMIN_SECRET not set)." },
@@ -226,8 +237,8 @@ export async function POST(req: Request): Promise<Response> {
   const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
 
   const query = str(b.query);
-  if (!query) {
-    return Response.json({ error: "A non-empty `query` is required." }, { status: 400 });
+  if (!query || query.length > 1024) {
+    return Response.json({ error: "A non-empty `query` of at most 1024 characters is required." }, { status: 400 });
   }
   const rawMax = typeof b.maxResults === "number" ? b.maxResults : 10;
   const maxResults = Math.min(Math.max(Math.trunc(rawMax) || 10, 1), 20);
@@ -243,6 +254,27 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: "Invalid market (allowed: dc, nyc)." }, { status: 400 });
     }
     market = m;
+  }
+
+  const context = { query, maxResults, market };
+  let selectedPlaceIds: string[] = [];
+  if (!dryRun) {
+    if (
+      !Array.isArray(b.selectedPlaceIds) || b.selectedPlaceIds.length === 0 ||
+      b.selectedPlaceIds.length > 20 || !b.selectedPlaceIds.every(
+        (id) => typeof id === "string" && id.length > 0 && id.length <= 256 && id.trim() === id,
+      )
+    ) {
+      return Response.json({ error: "Select 1–20 Google Place IDs from a current preview." }, { status: 400 });
+    }
+    const eligibleIds = verifyImportPreview(b.previewToken, context, process.env.FOODSWIPE_ADMIN_SECRET!);
+    if (!eligibleIds) {
+      return Response.json({ error: "Preview expired, changed, or invalid. Search again before importing." }, { status: 409 });
+    }
+    selectedPlaceIds = [...new Set(b.selectedPlaceIds as string[])];
+    if (selectedPlaceIds.some((id) => !eligibleIds.includes(id))) {
+      return Response.json({ error: "Selected IDs must be eligible restaurants from this preview." }, { status: 400 });
+    }
   }
 
   const search = await searchPlacesText(query, maxResults);
@@ -282,27 +314,47 @@ export async function POST(req: Request): Promise<Response> {
   // check + score penalty (a DB READ only — dry runs still write nothing).
   // Score + rank highest-first.
   const existingByPlaceId = await getExistingCandidatePlaceStatuses();
-  const existingPlaceIds = new Set(existingByPlaceId.keys());
+  const existingRestaurants = await getExistingRestaurantPlaceStatusesForImport();
+  const existingPlaceIds = new Set([...existingByPlaceId.keys(), ...existingRestaurants.keys()]);
   const ranked = scoreAndRank(usable, existingPlaceIds);
 
   if (dryRun) {
     // Mark exact duplicates by googlePlaceId so the preview is explicit about
     // what a real run would skip (and the status it would skip — e.g. rejected).
+    const seen = new Set<string>();
     const candidates = ranked.map(({ r, likelihood }) => {
       const dupStatus = r.placeId ? (existingByPlaceId.get(r.placeId) ?? null) : null;
+      const restaurantStatus = existingRestaurants.get(r.placeId) ?? null;
+      const repeated = seen.has(r.placeId);
+      seen.add(r.placeId);
       return {
         ...toCandidateInput(r, query, slugify(r.displayName ?? ""), fetchedAt, expiresAt, likelihood, market),
-        isDuplicate: dupStatus !== null,
-        duplicateOfStatus: dupStatus,
+        isDuplicate: dupStatus !== null || restaurantStatus !== null || repeated,
+        duplicateOfStatus: dupStatus ?? restaurantStatus,
+        duplicateOfKind: dupStatus !== null ? "candidate" : restaurantStatus !== null ? "restaurant" : repeated ? "preview" : null,
       };
     });
-    return Response.json({ dryRun: true, query, found: candidates.length, candidates });
+    const previewToken = signImportPreview(
+      context,
+      candidates.filter((candidate) => !candidate.isDuplicate).map((candidate) => candidate.googlePlaceId),
+      process.env.FOODSWIPE_ADMIN_SECRET!,
+    );
+    return Response.json({ dryRun: true, query, found: candidates.length, candidates, previewToken });
   }
 
-  // Real import — iterate in ranked order so `created` comes back sorted.
+  // Import ONLY selected IDs, with server-resolved fields. Repeated Google rows
+  // represent one requested identity, not an extra candidate or outcome.
+  const selected = new Set(selectedPlaceIds);
+  const seenResults = new Set<string>();
+  const chosen = ranked.filter(({ r }) => {
+    if (!selected.has(r.placeId) || seenResults.has(r.placeId)) return false;
+    seenResults.add(r.placeId);
+    return true;
+  });
   const usedSlugs = await getExistingCandidateSlugs();
   let imported = 0;
   let skippedDuplicates = 0;
+  let failed = 0;
   const created: CandidateRestaurant[] = [];
   // Exact googlePlaceId duplicates we skipped, with the reason/existing status.
   const duplicates: {
@@ -310,43 +362,51 @@ export async function POST(req: Request): Promise<Response> {
     name: string | null;
     existingId: string | null;
     existingStatus: string | null;
-    reason: "existing-candidate" | "within-batch" | "race";
+    reason: "existing-candidate" | "existing-restaurant" | "race";
   }[] = [];
-  // Belt-and-suspenders dedupe: guard against the SAME Place ID appearing twice
-  // in one Google response (the per-row DB check below also catches this once a
-  // prior row is persisted, but this avoids the second DB round-trip).
-  const seenThisRun = new Set<string>();
-  try {
-    for (const { r, likelihood } of ranked) {
-      const placeId = r.placeId;
-
-      // (a) Same Place ID already handled in THIS run.
-      if (seenThisRun.has(placeId)) {
+  const outcomes: {
+    googlePlaceId: string;
+    name: string | null;
+    status: "imported" | "skipped" | "failed";
+    existingStatus?: string;
+    duplicateOfKind?: "candidate" | "restaurant";
+    error?: string;
+  }[] = [];
+  for (const id of selectedPlaceIds) {
+    if (!seenResults.has(id)) {
+      const candidateStatus = existingByPlaceId.get(id);
+      const restaurantStatus = existingRestaurants.get(id);
+      if (candidateStatus !== undefined || restaurantStatus !== undefined) {
+        const existingStatus = candidateStatus ?? restaurantStatus!;
         skippedDuplicates++;
-        duplicates.push({
-          googlePlaceId: placeId,
-          name: r.displayName,
-          existingId: null,
-          existingStatus: null,
-          reason: "within-batch",
-        });
-        continue;
+        duplicates.push({ googlePlaceId: id, name: null, existingId: null, existingStatus,
+          reason: candidateStatus !== undefined ? "existing-candidate" : "existing-restaurant" });
+        outcomes.push({ googlePlaceId: id, name: null, status: "skipped", existingStatus,
+          duplicateOfKind: candidateStatus !== undefined ? "candidate" : "restaurant" });
+      } else {
+        failed++;
+        outcomes.push({ googlePlaceId: id, name: null, status: "failed", error: "No longer returned by Google. Search again." });
       }
-
-      // (b) Exact-duplicate by Google Place ID — NEVER by name (chains have many
-      // locations). Status-INDEPENDENT: skips regardless of candidate/needs_review/
-      // approved/rejected, and never revives a rejected row.
+    }
+  }
+  for (const { r, likelihood } of chosen) {
+    const placeId = r.placeId;
+    try {
+      // Status-independent candidate dedupe remains authoritative, including the
+      // existing partial unique index and race re-check below.
       const existing = await getCandidateByGooglePlaceId(placeId);
-      if (existing) {
+      const restaurantStatus = existingRestaurants.get(placeId);
+      if (existing || restaurantStatus !== undefined) {
         skippedDuplicates++;
-        seenThisRun.add(placeId);
         duplicates.push({
           googlePlaceId: placeId,
           name: r.displayName,
-          existingId: existing.id,
-          existingStatus: existing.status,
-          reason: "existing-candidate",
+          existingId: existing?.id ?? null,
+          existingStatus: existing?.status ?? restaurantStatus ?? null,
+          reason: existing ? "existing-candidate" : "existing-restaurant",
         });
+        outcomes.push({ googlePlaceId: placeId, name: r.displayName, status: "skipped",
+          existingStatus: existing?.status ?? restaurantStatus, duplicateOfKind: existing ? "candidate" : "restaurant" });
         continue;
       }
 
@@ -354,91 +414,72 @@ export async function POST(req: Request): Promise<Response> {
       usedSlugs.add(slug);
       const input = toCandidateInput(r, query, slug, fetchedAt, expiresAt, likelihood, market);
 
-      // (c) Insert. The partial unique index on google_place_id (migration 0006)
-      // makes a concurrent duplicate insert THROW, closing the TOCTOU window
-      // between the pre-check and this insert: on throw we re-check and, if the
-      // row now exists, count it as a skipped duplicate (a concurrent import won
-      // the race) rather than failing the whole batch. A throw with no row is a
-      // genuine error and is rethrown to the outer handler.
-      let candidate: CandidateRestaurant | null = null;
-      try {
-        candidate = await insertCandidateRestaurant(input);
-      } catch (err) {
-        const now = await getCandidateByGooglePlaceId(placeId);
-        if (now) {
-          skippedDuplicates++;
-          seenThisRun.add(placeId);
-          duplicates.push({
-            googlePlaceId: placeId,
-            name: r.displayName,
-            existingId: now.id,
-            existingStatus: now.status,
-            reason: "race",
-          });
-          continue;
-        }
-        throw err; // genuine failure → outer handler records + 500s
-      }
-
-      if (!candidate) {
-        // No usable name (defensive) — not a duplicate, just skip silently.
-        continue;
-      }
-      seenThisRun.add(placeId);
+      const candidate = await insertCandidateRestaurant(input);
+      if (!candidate) throw new Error("No candidate returned");
+      created.push(candidate);
+      imported++;
+      outcomes.push({ googlePlaceId: placeId, name: r.displayName, status: "imported", existingStatus: candidate.status });
 
       // Provenance, kept separate from curated candidate fields (best-effort).
       // Raw expiring Google rating/count live here (admin metadata) — NOT public.
-      await addRestaurantSource(candidate.id, {
-        sourceType: "google_places",
-        externalId: r.placeId,
-        rawName: r.displayName,
-        rawAddress: r.formattedAddress,
-        url: r.websiteUri,
-        notes:
-          `Imported via Google Places Text Search: "${query}"` +
-          ` | review-likelihood ${likelihood.score}` +
-          (r.userRatingCount !== null
-            ? ` | Google ${r.userRatingCount} ratings${r.rating !== null ? ` @ ${r.rating}` : ""}`
-            : "") +
-          (input.seedMatchWarning ? ` | ${input.seedMatchWarning}` : ""),
-      });
-      created.push(candidate);
-      imported++;
+      try {
+        await addRestaurantSource(candidate.id, {
+          sourceType: "google_places",
+          externalId: r.placeId,
+          rawName: r.displayName,
+          rawAddress: r.formattedAddress,
+          url: r.websiteUri,
+          notes:
+            `Imported via Google Places Text Search: "${query}"` +
+            ` | review-likelihood ${likelihood.score}` +
+            (r.userRatingCount !== null
+              ? ` | Google ${r.userRatingCount} ratings${r.rating !== null ? ` @ ${r.rating}` : ""}`
+              : "") +
+            (input.seedMatchWarning ? ` | ${input.seedMatchWarning}` : ""),
+        });
+      } catch {
+        // The candidate already exists. Best-effort provenance must not turn a
+        // confirmed write into a failed/skipped second outcome.
+      }
+    } catch {
+      let now: CandidateRestaurant | null = null;
+      try { now = await getCandidateByGooglePlaceId(placeId); } catch { /* DB still unavailable. */ }
+      if (now) {
+        skippedDuplicates++;
+        duplicates.push({ googlePlaceId: placeId, name: r.displayName, existingId: now.id, existingStatus: now.status, reason: "race" });
+        outcomes.push({ googlePlaceId: placeId, name: r.displayName, status: "skipped", existingStatus: now.status, duplicateOfKind: "candidate" });
+      } else {
+        failed++;
+        outcomes.push({ googlePlaceId: placeId, name: r.displayName, status: "failed", error: "Could not import this restaurant. Retry safely." });
+      }
     }
-  } catch {
-    // Safe, non-secret diagnostics (Place IDs are public; no key/body logged).
-    console.error("[candidate-import] failed partway", { imported, skippedDuplicates });
-    await createIngestionJob({
-      source: "google_places",
-      query,
-      dryRun: false,
-      status: "failed",
-      candidatesCreated: imported,
-      skippedDuplicates,
-      error: "Import failed partway through.",
-    });
-    return Response.json({ error: "Failed to import candidates." }, { status: 500 });
   }
 
   // Safe summary (no secrets) — useful for diagnosing duplicate-skip behavior.
   console.info("[candidate-import] complete", {
     imported,
     skippedDuplicates,
+    failed,
     skippedPlaceIds: duplicates.map((d) => `${d.googlePlaceId}:${d.reason}`),
   });
 
-  await createIngestionJob({
-    source: "google_places",
-    query,
-    dryRun: false,
-    status: "success",
-    candidatesCreated: imported,
-    skippedDuplicates,
-    notes: `Text Search import for "${query}" (max ${maxResults}); ${usable.length} usable results.`,
-  });
+  try {
+    await createIngestionJob({
+      source: "google_places",
+      query,
+      dryRun: false,
+      status: failed > 0 ? "failed" : "success",
+      candidatesCreated: imported,
+      skippedDuplicates,
+      error: failed > 0 ? `${failed} selected restaurant(s) failed.` : undefined,
+      notes: `Selective Text Search import for "${query}" (max ${maxResults}); ${selectedPlaceIds.length} requested; ${failed} failed.`,
+    });
+  } catch {
+    // Preserve confirmed per-row outcomes if best-effort audit logging fails.
+  }
 
   return Response.json(
-    { imported, skippedDuplicates, duplicates, candidates: created },
-    { status: 201 },
+    { requested: selectedPlaceIds.length, imported, skippedDuplicates, failed, duplicates, outcomes, candidates: created },
+    { status: imported > 0 ? 201 : 200 },
   );
 }
