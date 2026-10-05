@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { isEmbedUrlAllowed } from "@/lib/video";
 import MaterialIcon from "@/components/MaterialIcon";
-import { DEFAULT_MARKET } from "@/lib/markets";
+import { getMarketShortName, type Market } from "@/lib/markets";
 import TagSuggestionsPanel, { type AppliedTagSuggestions } from "@/components/TagSuggestionsPanel";
 
 /*
@@ -38,6 +38,7 @@ const PRICE_OPTIONS = [
 interface RestaurantLite {
   id: string; // public slug
   name: string;
+  market: Market;
   neighborhood: string;
   priceLevel: number;
   cuisineTags: string[];
@@ -51,6 +52,9 @@ interface RestaurantLite {
 interface PublishedAdmin {
   id: string; // uuid (PATCH addressing)
   slug: string;
+  name: string;
+  market: Market;
+  neighborhood: string;
   status: string;
   websiteDomain: string | null;
   priceLevel: number;
@@ -164,7 +168,7 @@ export default function AdminProfileEditor() {
   const [secret, setSecret] = useState("");
   const [options, setOptions] = useState<RestaurantLite[]>([]);
   const [publishedBySlug, setPublishedBySlug] = useState<Map<string, PublishedAdmin>>(new Map());
-  const [publishedLoaded, setPublishedLoaded] = useState(false);
+  const [publishedLoading, setPublishedLoading] = useState(false);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [topMsg, setTopMsg] = useState<Msg>(null);
 
@@ -172,66 +176,73 @@ export default function AdminProfileEditor() {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
 
-  // Public merged list (seed + published) for the picker + seed tag display.
+  // Admin inventory is independent of public launch market and content mode.
+  // Debounce secret entry; abort obsolete requests before they can populate it.
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
+    if (!secret.trim()) return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
       try {
-        // Preserve this admin picker's existing market independently of launch config.
-        const res = await fetch(`/api/restaurants?market=${DEFAULT_MARKET}`);
-        const data = (await res.json()) as { restaurants?: RestaurantLite[] };
-        if (!cancelled && Array.isArray(data.restaurants)) {
-          setOptions(
-            data.restaurants
-              .map((r) => ({
-                id: r.id,
-                name: r.name,
-                neighborhood: r.neighborhood ?? "",
-                priceLevel: r.priceLevel,
-                cuisineTags: r.cuisineTags ?? [],
-                dietaryTags: r.dietaryTags ?? [],
-                vibeTags: r.vibeTags ?? [],
-                bestFor: r.bestFor ?? [],
-                dishHighlights: r.dishHighlights ?? [],
-                reasonText: r.reasonText ?? "",
-              }))
-              .sort((a, b) => a.name.localeCompare(b.name)),
-          );
+        const res = await fetch("/api/admin/restaurants/published", {
+          headers: { "x-foodswipe-admin-secret": secret },
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const data = (await res.json()) as { restaurants?: PublishedAdmin[]; error?: string };
+        if (controller.signal.aborted) return;
+        if (!res.ok || !Array.isArray(data.restaurants)) {
+          setTopMsg({ type: "err", text: data.error ?? "Could not load published restaurants (check the secret)." });
+          return;
         }
+        // The catalog endpoint intentionally includes hidden rows for management.
+        // These pickers suggest only live, published records, once per slug.
+        const bySlug = new Map(data.restaurants
+          .filter((r) => r.status === "published" && Boolean(r.slug))
+          .map((r) => [r.slug, r]));
+        setPublishedBySlug(bySlug);
+        setOptions([...bySlug.values()]
+          .map((r) => ({
+            id: r.slug,
+            name: r.name,
+            market: r.market,
+            neighborhood: r.neighborhood ?? "",
+            priceLevel: r.priceLevel,
+            cuisineTags: r.cuisineTags ?? [],
+            dietaryTags: r.dietaryTags ?? [],
+            vibeTags: r.vibeTags ?? [],
+            bestFor: r.bestFor ?? [],
+            dishHighlights: r.dishHighlights ?? [],
+            reasonText: r.reasonText ?? "",
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name)));
       } catch {
-        // picker just won't populate
+        if (!controller.signal.aborted) setTopMsg({ type: "err", text: "Network error loading published restaurants. Re-enter the secret to retry." });
+      } finally {
+        if (!controller.signal.aborted) setPublishedLoading(false);
       }
-    })();
+    }, 300);
     return () => {
-      cancelled = true;
+      clearTimeout(timer);
+      controller.abort();
     };
-  }, []);
+  }, [secret]);
 
-  async function ensurePublishedLoaded() {
-    if (publishedLoaded || !secret.trim()) return;
-    try {
-      const res = await fetch("/api/admin/restaurants/published", {
-        headers: { "x-foodswipe-admin-secret": secret },
-      });
-      const data = (await res.json()) as { restaurants?: PublishedAdmin[]; error?: string };
-      if (res.ok && Array.isArray(data.restaurants)) {
-        setPublishedBySlug(new Map(data.restaurants.map((r) => [r.slug, r])));
-        setPublishedLoaded(true);
-      } else if (!res.ok) {
-        setTopMsg({ type: "err", text: data.error ?? "Could not load published restaurants (check the secret)." });
-      }
-    } catch {
-      setTopMsg({ type: "err", text: "Network error loading published restaurants." });
-    }
-  }
-
-  async function pick(slug: string) {
+  function changeSecret(value: string) {
+    setSecret(value);
+    setOptions([]);
+    setPublishedBySlug(new Map());
+    setSelectedSlug(null);
     setQuery("");
     setOpen(false);
     setTopMsg(null);
-    // Load the published-admin map first so the panel renders with editable tags
-    // immediately (no brief "seed/read-only" flash for a published restaurant).
-    await ensurePublishedLoaded();
+    setPublishedLoading(Boolean(value.trim()));
+  }
+
+  function pick(slug: string) {
+    if (!publishedBySlug.has(slug)) return;
+    setQuery("");
+    setOpen(false);
+    setTopMsg(null);
     setSelectedSlug(slug);
   }
 
@@ -239,7 +250,8 @@ export default function AdminProfileEditor() {
   const matches =
     q.length === 0
       ? options.slice(0, 10)
-      : options.filter((o) => o.id.toLowerCase().includes(q) || o.name.toLowerCase().includes(q)).slice(0, 10);
+      : options.filter((o) => [o.id, o.name, o.neighborhood, getMarketShortName(o.market)]
+          .some((text) => text.toLowerCase().includes(q))).slice(0, 10);
 
   const selected = selectedSlug ? options.find((o) => o.id === selectedSlug) ?? null : null;
   const published = selectedSlug ? publishedBySlug.get(selectedSlug) ?? null : null;
@@ -252,8 +264,8 @@ export default function AdminProfileEditor() {
           Restaurant profile editor
         </p>
         <p className="mt-0.5 text-cream/80">
-          Edit a live restaurant&apos;s tags and add/remove its videos. Seed restaurants
-          are code-managed (tags read-only); published DB restaurants are fully editable.
+          Edit a published restaurant&apos;s tags and add/remove its videos across all markets.
+          Seed restaurants remain code-managed and are not listed here.
           Added videos use the official resolver + legal-safe path — no downloads/rehosting.
         </p>
       </div>
@@ -279,7 +291,7 @@ export default function AdminProfileEditor() {
           <input
             type="password"
             value={secret}
-            onChange={(e) => setSecret(e.target.value)}
+            onChange={(e) => changeSecret(e.target.value)}
             placeholder="FOODSWIPE_ADMIN_SECRET"
             className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze/60 focus:ring-saffron/60"
           />
@@ -309,12 +321,12 @@ export default function AdminProfileEditor() {
                 <button
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => void pick(o.id)}
+                  onClick={() => pick(o.id)}
                   className="flex w-full items-baseline gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-white/10"
                 >
-                  <span className="truncate text-cream">{o.name}</span>
-                  {o.neighborhood && <span className="shrink-0 truncate text-haze">{o.neighborhood}</span>}
-                  <span className="ml-auto shrink-0 font-mono text-[10px] text-haze">/{o.id}</span>
+                  <span className="min-w-0 truncate text-cream">{o.name}</span>
+                  <span className="min-w-0 truncate text-haze">{[o.neighborhood, getMarketShortName(o.market)].filter(Boolean).join(" · ")}</span>
+                  <span className="ml-auto max-w-[40%] shrink-0 truncate font-mono text-[10px] text-haze">/{o.id}</span>
                 </button>
               </li>
             ))}
@@ -322,8 +334,9 @@ export default function AdminProfileEditor() {
         )}
       </div>
 
+      {publishedLoading && <p role="status" className="mb-2 text-xs text-haze">Loading published restaurants…</p>}
       {topMsg && (
-        <p className={`mb-2 text-xs ${topMsg.type === "ok" ? "text-mint" : "text-chili-soft"}`}>{topMsg.text}</p>
+        <p role="status" className={`mb-2 text-xs ${topMsg.type === "ok" ? "text-mint" : "text-chili-soft"}`}>{topMsg.text}</p>
       )}
 
       {!selected ? (

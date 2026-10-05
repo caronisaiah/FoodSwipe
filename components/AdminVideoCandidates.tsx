@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { isEmbedUrlAllowed } from "@/lib/video";
 import MaterialIcon from "@/components/MaterialIcon";
-import { DEFAULT_MARKET } from "@/lib/markets";
+import { getMarketShortName, type Market } from "@/lib/markets";
 
 /*
   Internal social-video REVIEW CONSOLE — NOT a public feature.
@@ -65,6 +65,15 @@ interface RestaurantOption {
   id: string;
   name: string;
   neighborhood: string;
+  market: Market;
+}
+
+interface PublishedRestaurantOption {
+  slug: string;
+  name: string;
+  neighborhood?: string;
+  market: Market;
+  status: string;
 }
 
 function parseList(s: string): string[] {
@@ -83,31 +92,50 @@ export default function AdminVideoCandidates() {
   const [actionMsg, setActionMsg] = useState<Msg>(null);
   const loadSeq = useRef(0);
 
-  // Attachable restaurants (seed + published) for the slug typeahead. Public list
-  // — no secret needed; the combobox just won't suggest if it can't load.
+  // Authenticated, all-market published inventory; typed slugs still work.
   const [options, setOptions] = useState<RestaurantOption[]>([]);
+  const [optionsLoading, setOptionsLoading] = useState(false);
+  const [optionsError, setOptionsError] = useState<string | null>(null);
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
+    if (!secret.trim()) return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
       try {
-        // Preserve this admin picker's existing market independently of launch config.
-        const res = await fetch(`/api/restaurants?market=${DEFAULT_MARKET}`);
-        const data = (await res.json()) as { restaurants?: { id: string; name: string; neighborhood?: string }[] };
-        if (!cancelled && Array.isArray(data.restaurants)) {
-          setOptions(
-            data.restaurants
-              .map((r) => ({ id: r.id, name: r.name, neighborhood: r.neighborhood ?? "" }))
-              .sort((a, b) => a.name.localeCompare(b.name)),
-          );
+        const res = await fetch("/api/admin/restaurants/published", {
+          headers: { "x-foodswipe-admin-secret": secret },
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const data = (await res.json()) as { restaurants?: PublishedRestaurantOption[]; error?: string };
+        if (controller.signal.aborted) return;
+        if (!res.ok || !Array.isArray(data.restaurants)) {
+          setOptionsError(data.error ?? "Could not load published restaurants (check the secret).");
+          return;
         }
+        const bySlug = new Map(data.restaurants
+          .filter((r) => r.status === "published" && Boolean(r.slug))
+          .map((r) => [r.slug, r]));
+        setOptions([...bySlug.values()]
+          .map((r) => ({ id: r.slug, name: r.name, neighborhood: r.neighborhood ?? "", market: r.market }))
+          .sort((a, b) => a.name.localeCompare(b.name)));
       } catch {
-        // ignore — typeahead degrades to a plain input
+        if (!controller.signal.aborted) setOptionsError("Network error loading published restaurants. Re-enter the secret to retry.");
+      } finally {
+        if (!controller.signal.aborted) setOptionsLoading(false);
       }
-    })();
+    }, 300);
     return () => {
-      cancelled = true;
+      clearTimeout(timer);
+      controller.abort();
     };
-  }, []);
+  }, [secret]);
+
+  function changeSecret(value: string) {
+    setSecret(value);
+    setOptions([]);
+    setOptionsError(null);
+    setOptionsLoading(Boolean(value.trim()));
+  }
 
   // Intake form
   const [sourceUrl, setSourceUrl] = useState("");
@@ -252,12 +280,15 @@ export default function AdminVideoCandidates() {
           <input
             type="password"
             value={secret}
-            onChange={(e) => setSecret(e.target.value)}
+            onChange={(e) => changeSecret(e.target.value)}
             placeholder="FOODSWIPE_ADMIN_SECRET"
             className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze/60 focus:ring-saffron/60"
           />
         </label>
       </div>
+
+      {optionsLoading && <p role="status" className="mb-2 text-xs text-haze">Loading published restaurants…</p>}
+      {optionsError && <p role="status" className="mb-2 text-xs text-chili-soft">{optionsError} Typed slugs still work.</p>}
 
       {/* Intake */}
       <section className="mb-5 rounded-xl bg-surface p-3 ring-1 ring-inset ring-white/10">
@@ -645,8 +676,8 @@ function CandidateDetail({
 }
 
 /**
- * Restaurant-slug typeahead. Type a name OR a slug; matching restaurants (seed +
- * published) appear in a dropdown, and picking one stores the actual slug (the
+ * Restaurant-slug typeahead. Type a name OR a slug; published restaurants from
+ * all markets appear in a dropdown, and picking one stores the actual slug (the
  * value attach resolves). Still accepts free-typed slugs, and shows whether the
  * current value is an exact known slug so a mistyped name is obvious before attach.
  */
@@ -666,7 +697,8 @@ function SlugCombobox({
   const matches =
     q.length === 0
       ? options.slice(0, 8)
-      : options.filter((o) => o.id.toLowerCase().includes(q) || o.name.toLowerCase().includes(q)).slice(0, 8);
+      : options.filter((o) => [o.id, o.name, o.neighborhood, getMarketShortName(o.market)]
+          .some((text) => text.toLowerCase().includes(q))).slice(0, 8);
   const exact = options.find((o) => o.id === value.trim());
 
   return (
@@ -698,9 +730,9 @@ function SlugCombobox({
                 }}
                 className="flex w-full items-baseline gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-white/10"
               >
-                <span className="truncate text-cream">{o.name}</span>
-                {o.neighborhood && <span className="shrink-0 truncate text-haze">{o.neighborhood}</span>}
-                <span className="ml-auto shrink-0 truncate font-mono text-[10px] text-haze">/{o.id}</span>
+                <span className="min-w-0 truncate text-cream">{o.name}</span>
+                <span className="min-w-0 truncate text-haze">{[o.neighborhood, getMarketShortName(o.market)].filter(Boolean).join(" · ")}</span>
+                <span className="ml-auto max-w-[40%] shrink-0 truncate font-mono text-[10px] text-haze">/{o.id}</span>
               </button>
             </li>
           ))}
