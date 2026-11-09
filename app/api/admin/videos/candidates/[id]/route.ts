@@ -39,11 +39,13 @@ export async function PATCH(
 
   const { id } = await params;
   try {
-    const candidate = await patchVideoCandidate(id, body);
-    if (!candidate) {
-      return Response.json({ error: "Candidate not found." }, { status: 404 });
+    const result = await patchVideoCandidate(id, body);
+    if (!result.ok) {
+      return result.code === "attached"
+        ? Response.json({ error: "Review edits are locked for attached candidates." }, { status: 409 })
+        : Response.json({ error: "Candidate not found." }, { status: 404 });
     }
-    return Response.json({ candidate });
+    return Response.json({ candidate: result.candidate });
   } catch {
     return Response.json({ error: "Failed to update candidate." }, { status: 500 });
   }

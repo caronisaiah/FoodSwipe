@@ -1,18 +1,16 @@
-import { and, desc, eq, inArray, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import type { LegalDisplayStatus, MatchConfidence, Platform, Video } from "@/lib/types";
 import { LEGAL_STATUSES, normalizeVideo } from "@/lib/video";
 import { getDb, isDbConfigured } from "./index";
-import { videoCandidates, type VideoCandidateRow, type NewVideoCandidateRow } from "./schema";
-import { insertVideo } from "./videos";
-import { getAppRestaurantById } from "./restaurants";
+import { restaurants, restaurantVideos, videoCandidates, type VideoCandidateRow, type NewVideoCandidateRow } from "./schema";
 
 export { isDbConfigured };
 
 /**
  * Data access for the social-video REVIEW QUEUE (Phase 1). These rows never reach
  * a profile; only an explicit `attachVideoCandidate` of an APPROVED candidate
- * inserts into `restaurant_videos` (via the existing legal-safe `normalizeVideo`
- * + `insertVideo`). Status/platform/legal fields are re-validated on read +
+ * inserts into `restaurant_videos` (via the existing legal-safe `normalizeVideo`).
+ * Status/platform/legal fields are re-validated on read +
  * write; unknown DB values coerce to safe defaults.
  */
 
@@ -319,9 +317,11 @@ export async function getVideoCandidate(id: string): Promise<VideoCandidate | nu
 /**
  * Additive patch — only the editable review fields are written. Immutable source
  * identity (sourceUrl/normalizedSourceUrl/platform/platformVideoId/resolver*) is
- * NOT editable here. Returns null if no row matched.
+ * NOT editable here. Attached candidates are locked to their recorded target.
  */
-export async function patchVideoCandidate(id: string, patch: unknown): Promise<VideoCandidate | null> {
+export async function patchVideoCandidate(id: string, patch: unknown): Promise<
+  { ok: true; candidate: VideoCandidate } | { ok: false; code: "not-found" | "attached" }
+> {
   const db = getDb();
   if (!db) throw new Error("DATABASE_URL not configured");
   const b = (patch && typeof patch === "object" ? patch : {}) as Record<string, unknown>;
@@ -341,24 +341,13 @@ export async function patchVideoCandidate(id: string, patch: unknown): Promise<V
   if ("matchReasons" in b) set.matchReasons = strArray(b.matchReasons);
   if ("reviewNotes" in b) set.reviewNotes = optStr(b.reviewNotes);
 
-  const [row] = await db.update(videoCandidates).set(set).where(eq(videoCandidates.id, id)).returning();
-  return row ? rowToCandidate(row) : null;
-}
-
-export async function markVideoCandidateStatus(
-  id: string,
-  status: VideoCandidateStatus,
-  notes?: string,
-): Promise<VideoCandidate | null> {
-  const db = getDb();
-  if (!db) throw new Error("DATABASE_URL not configured");
-  const set: Partial<NewVideoCandidateRow> = {
-    status: inSet(VIDEO_CANDIDATE_STATUSES, status) ? status : "needs_review",
-    updatedAt: new Date(),
-  };
-  if (notes !== undefined) set.reviewNotes = optStr(notes);
-  const [row] = await db.update(videoCandidates).set(set).where(eq(videoCandidates.id, id)).returning();
-  return row ? rowToCandidate(row) : null;
+  const [row] = await db.update(videoCandidates).set(set).where(and(
+    eq(videoCandidates.id, id),
+    ne(videoCandidates.status, "attached"),
+    isNull(videoCandidates.attachedVideoId),
+  )).returning();
+  if (row) return { ok: true, candidate: rowToCandidate(row) };
+  return { ok: false, code: await getVideoCandidate(id) ? "attached" : "not-found" };
 }
 
 /* ---- attach (candidate → restaurant_videos), explicit + gated ---- */
@@ -381,35 +370,42 @@ export type AttachResult =
   | { ok: true; videoId: string; candidate: VideoCandidate; alreadyAttached: boolean }
   | { ok: false; code: "no-db" }
   | { ok: false; code: "not-found" }
+  | { ok: false; code: "target-changed" }
+  | { ok: false; code: "target-required" }
+  | { ok: false; code: "attachment-inconsistent" }
   | { ok: false; code: "not-approved"; status: string }
-  | { ok: false; code: "missing-slug" }
   | { ok: false; code: "restaurant-not-found"; slug: string }
-  | { ok: false; code: "invalid-video" }
-  | { ok: false; code: "error" };
+  | { ok: false; code: "invalid-video" };
+
+function checkAttachmentTarget(candidate: VideoCandidate, expectedSlug?: string): AttachResult | null {
+  if (expectedSlug !== undefined && candidate.restaurantSlug !== expectedSlug) {
+    return { ok: false, code: "target-changed" };
+  }
+  if (candidate.status === "attached" && candidate.attachedVideoId) {
+    return { ok: true, videoId: candidate.attachedVideoId, candidate, alreadyAttached: true };
+  }
+  if (candidate.status === "attached" || candidate.attachedVideoId) {
+    return { ok: false, code: "attachment-inconsistent" };
+  }
+  if (candidate.status !== "approved") {
+    return { ok: false, code: "not-approved", status: candidate.status };
+  }
+  return null;
+}
 
 /**
- * Attach an APPROVED candidate to its restaurant by inserting into
- * `restaurant_videos` (through the existing legal-safe normalizeVideo + insertVideo).
- * Idempotent (an already-attached candidate returns its existing video). NEVER
- * attaches a rejected/needs_review candidate. Never auto-runs.
+ * Attach an approved candidate to its confirmed, published restaurant.
+ * A retry for an already attached candidate returns the recorded video.
  */
-export async function attachVideoCandidate(id: string): Promise<AttachResult> {
+export async function attachVideoCandidate(id: string, expectedRestaurantSlug?: string): Promise<AttachResult> {
   const db = getDb();
   if (!db) return { ok: false, code: "no-db" };
 
   const candidate = await getVideoCandidate(id);
   if (!candidate) return { ok: false, code: "not-found" };
-
-  if (candidate.status === "attached" && candidate.attachedVideoId) {
-    return { ok: true, videoId: candidate.attachedVideoId, candidate, alreadyAttached: true };
-  }
-  if (candidate.status !== "approved") {
-    return { ok: false, code: "not-approved", status: candidate.status };
-  }
-  if (!candidate.restaurantSlug) return { ok: false, code: "missing-slug" };
-
-  const restaurant = await getAppRestaurantById(candidate.restaurantSlug);
-  if (!restaurant) return { ok: false, code: "restaurant-not-found", slug: candidate.restaurantSlug };
+  const blocked = checkAttachmentTarget(candidate, expectedRestaurantSlug);
+  if (blocked) return blocked;
+  if (!expectedRestaurantSlug) return { ok: false, code: "target-required" };
 
   const platform = PLATFORM_MAP[candidate.platform];
   // normalizeVideo + enforceVideoInvariants apply the legal-safe rules: YouTube
@@ -434,53 +430,47 @@ export async function attachVideoCandidate(id: string): Promise<AttachResult> {
   });
   if (!video) return { ok: false, code: "invalid-video" };
 
-  // Atomic CLAIM: flip approved → attached in a single conditional UPDATE. Because
-  // the predicate is WHERE status='approved', only ONE concurrent caller can win;
-  // a racing/double-clicked request gets 0 rows and never reaches insertVideo, so
-  // it can't create a duplicate restaurant_videos row. (restaurant_videos has no
-  // dedupe key, and insertVideo always mints a fresh id, so this CAS is the lock.)
-  const claimed = await db
-    .update(videoCandidates)
-    .set({ status: "attached", updatedAt: new Date() })
-    .where(and(eq(videoCandidates.id, id), eq(videoCandidates.status, "approved")))
-    .returning();
-  if (claimed.length === 0) {
-    // Lost the race (or status changed between our read and the claim).
-    const cur = await getVideoCandidate(id);
-    if (cur && cur.status === "attached") {
-      return { ok: true, videoId: cur.attachedVideoId ?? "", candidate: cur, alreadyAttached: true };
-    }
-    return { ok: false, code: "not-approved", status: cur?.status ?? "unknown" };
+  // Neon HTTP can run this as one atomic PostgreSQL statement. Lock the target
+  // against a concurrent hide, then only insert if the candidate update won.
+  // A failed insert rolls back the status and pointer along with the video.
+  const updatedAt = new Date();
+  const { rows } = await db.execute<{ id: string }>(sql`
+    with target as (
+      select slug from ${restaurants}
+      where slug = ${expectedRestaurantSlug} and status = 'published'
+      for share
+    ), claimed as (
+      update ${videoCandidates}
+      set status = 'attached', attached_video_id = ${video.id}, updated_at = ${updatedAt.toISOString()}
+      where id = ${id} and status = 'approved' and attached_video_id is null
+        and restaurant_slug = (select slug from target)
+      returning restaurant_slug
+    )
+    insert into ${restaurantVideos} (
+      id, restaurant_id, platform, source_url, embed_url, creator_handle,
+      creator_display_name, caption, thumbnail_url, attribution_text,
+      published_at, discovered_at, is_real_source, source_type, match_confidence,
+      legal_display_status
+    )
+    select ${video.id}, restaurant_slug, ${video.platform}, ${video.sourceUrl ?? null},
+      ${video.embedUrl ?? null}, ${video.creatorHandle}, ${video.creatorDisplayName ?? null},
+      ${video.caption}, ${video.thumbnailUrl ?? null}, ${video.attributionText},
+      ${video.publishedAt ?? null}, ${video.discoveredAt ?? null}, ${video.isRealSource},
+      ${video.sourceType}, ${video.matchConfidence}, ${video.legalDisplayStatus}
+    from claimed
+    returning id
+  `);
+  if (rows.length > 0) {
+    return {
+      ok: true,
+      videoId: video.id,
+      candidate: { ...candidate, status: "attached", attachedVideoId: video.id, updatedAt: updatedAt.toISOString() },
+      alreadyAttached: false,
+    };
   }
 
-  // We own the claim — insert, then record the created video id.
-  try {
-    const saved = await insertVideo(restaurant.id, video);
-    const updated = await recordAttachedVideoId(id, saved.id);
-    return { ok: true, videoId: saved.id, candidate: updated ?? candidate, alreadyAttached: false };
-  } catch {
-    // Insert failed AFTER claiming — roll the status back to "approved" so the
-    // candidate stays retryable rather than stuck "attached" with no video.
-    try {
-      await db
-        .update(videoCandidates)
-        .set({ status: "approved", attachedVideoId: null, updatedAt: new Date() })
-        .where(eq(videoCandidates.id, id));
-    } catch {
-      // best-effort rollback
-    }
-    return { ok: false, code: "error" };
-  }
-}
-
-/** Record the created restaurant_videos id on an already-claimed (attached) candidate. */
-async function recordAttachedVideoId(id: string, attachedVideoId: string): Promise<VideoCandidate | null> {
-  const db = getDb();
-  if (!db) return null;
-  const [row] = await db
-    .update(videoCandidates)
-    .set({ attachedVideoId, updatedAt: new Date() })
-    .where(eq(videoCandidates.id, id))
-    .returning();
-  return row ? rowToCandidate(row) : null;
+  const current = await getVideoCandidate(id);
+  if (!current) return { ok: false, code: "not-found" };
+  return checkAttachmentTarget(current, expectedRestaurantSlug)
+    ?? { ok: false, code: "restaurant-not-found", slug: expectedRestaurantSlug };
 }

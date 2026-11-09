@@ -467,9 +467,13 @@ function CandidateDetail({
   // Inline preview for any official, allowlisted embed (YouTube / TikTok / Instagram).
   const canEmbed = isEmbedUrlAllowed(candidate.embedUrl);
   const verticalEmbed = candidate.platform === "tiktok" || candidate.platform === "instagram";
+  const savedSlug = candidate.restaurantSlug;
+  const targetChanged = restaurantSlug.trim() !== (savedSlug ?? "");
+  const reviewLocked = candidate.status === "attached" || Boolean(candidate.attachedVideoId);
+  const canAttach = !reviewLocked && candidate.status === "approved" && Boolean(savedSlug) && !targetChanged;
 
   async function save(overrideStatus?: string) {
-    if (saving) return;
+    if (reviewLocked || saving || attaching) return;
     if (!secret.trim()) {
       setMsg({ type: "err", text: "Enter the admin secret first." });
       return;
@@ -507,13 +511,14 @@ function CandidateDetail({
   }
 
   async function attach() {
-    if (attaching) return;
+    if (!canAttach || saving || attaching || !secret.trim()) return;
     setAttaching(true);
     setMsg(null);
     try {
       const res = await fetch(`/api/admin/videos/candidates/${candidate.id}/attach`, {
         method: "POST",
-        headers: { "x-foodswipe-admin-secret": secret },
+        headers: { "Content-Type": "application/json", "x-foodswipe-admin-secret": secret },
+        body: JSON.stringify({ expectedRestaurantSlug: savedSlug }),
       });
       const data = (await res.json()) as { candidate?: VideoCandidate; videoId?: string; error?: string };
       if (!res.ok || !data.candidate) {
@@ -528,8 +533,6 @@ function CandidateDetail({
       setAttaching(false);
     }
   }
-
-  const canAttach = candidate.status === "approved" && Boolean(candidate.restaurantSlug);
 
   return (
     <div className="space-y-2.5 border-t border-line bg-ink-2/40 p-3">
@@ -640,30 +643,36 @@ function CandidateDetail({
 
       {/* Actions */}
       <div className="flex flex-wrap items-center gap-1.5 border-t border-line pt-2.5">
-        <button type="button" onClick={() => void save()} disabled={saving}
+        <button type="button" onClick={() => void save()} disabled={reviewLocked || saving || attaching}
           className="rounded-md bg-white/10 px-3 py-1.5 text-xs font-semibold text-cream ring-1 ring-inset ring-white/15 hover:bg-white/20 disabled:opacity-40">
           {saving ? "Saving…" : "Save"}
         </button>
-        <button type="button" onClick={() => void save("approved")} disabled={saving}
+        <button type="button" onClick={() => void save("approved")} disabled={reviewLocked || saving || attaching}
           className="flex items-center gap-1 rounded-md px-2 py-1.5 text-xs font-semibold text-mint ring-1 ring-inset ring-mint/30 hover:bg-mint/10 disabled:opacity-40">
           <MaterialIcon name="check_circle" className="text-sm" /> Approve
         </button>
-        <button type="button" onClick={() => void save("rejected")} disabled={saving}
+        <button type="button" onClick={() => void save("rejected")} disabled={reviewLocked || saving || attaching}
           className="flex items-center gap-1 rounded-md px-2 py-1.5 text-xs font-semibold text-chili-soft ring-1 ring-inset ring-chili/30 hover:bg-chili/10 disabled:opacity-40">
           <MaterialIcon name="cancel" className="text-sm" /> Reject
         </button>
         <button
           type="button"
           onClick={() => void attach()}
-          disabled={attaching || !canAttach}
-          title={canAttach ? "" : "Requires status approved + a restaurant slug (Save first)."}
+          disabled={saving || attaching || !canAttach || !secret.trim()}
+          title={canAttach && savedSlug ? `Attach to /${savedSlug}` : undefined}
           className="ml-auto flex items-center gap-1 rounded-md bg-brand-gradient px-3 py-1.5 text-xs font-bold text-ink transition active:scale-[0.98] disabled:opacity-40"
         >
           <MaterialIcon name="link" className="text-sm" />
-          {candidate.status === "attached" ? "Re-attach" : attaching ? "Attaching…" : "Attach to feed"}
+          {candidate.status === "attached" ? "Attached" : attaching ? "Attaching…" : "Attach to feed"}
         </button>
       </div>
-      {!canAttach && candidate.status !== "attached" && (
+      {reviewLocked ? (
+        <p className="text-[10px] text-haze">Review edits are locked for candidates with an attachment record.</p>
+      ) : targetChanged ? (
+        <p className="text-[10px] text-haze">Save the new restaurant before attaching.</p>
+      ) : canAttach ? (
+        <p className="text-[10px] text-haze">Attachment target <span className="font-mono text-cream">/{savedSlug}</span></p>
+      ) : (
         <p className="text-[10px] text-haze">
           Attach needs status <span className="text-cream">approved</span> and a saved restaurant slug.
         </p>
