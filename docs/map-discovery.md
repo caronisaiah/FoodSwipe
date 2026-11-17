@@ -1,0 +1,39 @@
+# M3 map discovery
+
+## Lookup count and field selection
+
+The original `/map` called `getPublishedRestaurants()` without a market filter, so the audited inventory of ten NYC and four DC rows with Place IDs could trigger 14 Place Details lookups. `/map` now uses `FOODSWIPE_DEFAULT_MARKET`, with NYC as the map default when unset. It asks the database for published rows in that market and sends only their slugs and nonempty Place IDs to the map. Hidden rows, seeds, rows in other markets, and rows without IDs cannot trigger map lookups.
+
+Once the map loads, it fetches `location` once per target and uses valid positions for marker placement. Google returns `Place.attributions` automatically. The Google basemap attribution and any returned provider credits stay visible. The old `displayName` field made each request Pro. It is unnecessary for a pin or profile link, so the map uses numbered restaurant labels until names have verified independent provenance. Fresh positions and credits live in memory for the active map. Panning and selecting pins do not fetch more Place Details. [Place field billing](https://developers.google.com/maps/documentation/javascript/place-class-data-fields) · [Maps attribution guidance](https://developers.google.com/maps/documentation/javascript/policies)
+
+## Existing retention and migration
+
+- `lib/places.ts` reads the Text Search `displayName`, `formattedAddress`, and `location` fields. The Google candidate import writes them into `candidate_restaurants`, records a 30-day expiry, and writes a second name and address copy to `restaurant_sources`. The expiry is metadata and does not enforce deletion.
+- `lib/db/restaurants.ts` copies the candidate fields into `restaurants` on promotion, retains `sourceCandidateId`, and derives `distanceMiles` from the stored position and market center. Published rows have no field-level provenance or expiry. Manual review or a subsequent edit alone does not establish an independent source. The public API serializes these values, the feed and profiles consume them, and missing coordinates serialize as zero. The map uses the Place ID to fetch a fresh position and leaves the market-center distance out of the experience.
+- Under Google's standard terms, Place IDs may be stored indefinitely and Places coordinates may be cached for up to 30 days and then must be deleted. The terms prohibit copying and saving Google business names and addresses. Review the terms applicable to the Cloud billing account, including the EEA terms if applicable. The map change does not remediate the existing importer or public catalog. [Google Maps Platform terms](https://cloud.google.com/maps-platform/terms) · [Service-specific terms](https://cloud.google.com/maps-platform/terms/maps-service-terms) · [EEA terms](https://cloud.google.com/terms/maps-platform/eea/maps-service-terms)
+
+Proposed rollout, subject to separate approval for any data changes.
+
+1. Inventory candidate, source, and published copies by `sourceCandidateId` and Place ID, including fetch dates, generated slugs, derived distances, and any exports. Treat unknown provenance as unverified. Preserve curation, evidence and media references that can be kept.
+2. Stop new durable writes of restricted Google fields. Record per-field source, verification date and usage rights for replacements independently obtained from owners, official restaurant sources, or appropriately licensed data. Use durable Place IDs and live lookups for Google-sourced positions.
+3. Rehearse the backfill and public read cutover in staging. Preserve stable restaurant IDs and working profile links, use redirects if a slug needs replacement, and verify feed, profile, saves and media before removing restricted fields. With approval, remove expired coordinates and restricted copies from candidate, published, and source records and address derived values, exports and backups under the applicable retention rules. Pause affected listings where no verified replacement is available.
+
+## Enablement checklist
+
+1. In the Google Cloud project for production Maps, verify an active billing account. In **APIs & Services → Library**, enable **Maps JavaScript API** and **Places API (New)**. [Google API setup](https://developers.google.com/maps/documentation/javascript/get-api-key)
+2. In **APIs & Services → Credentials**, create a dedicated browser API key. Under **Application restrictions → Websites**, allow the exact public FoodSwipe origins using `https://YOUR-PRODUCTION-HOST/*`, with a separate entry for each approved domain. Under **API restrictions → Restrict key**, select **Maps JavaScript API** and **Places API (New)**. Use a separate key limited to the test origin for device testing. Keep the existing `GOOGLE_MAPS_API_KEY` server-side. [API key restrictions](https://developers.google.com/maps/api-security-best-practices)
+3. In **Google Maps Platform → Map Management → Create map ID**, name the map, select **JavaScript → Raster** and save. Raster supports Advanced Markers and is sufficient for this map. Create the ID in the browser key's Cloud project. [Map ID setup](https://developers.google.com/maps/documentation/javascript/map-ids/get-map-id) · [Advanced Markers](https://developers.google.com/maps/documentation/javascript/advanced-markers/start)
+4. Publish a FoodSwipe Terms of Use and Privacy Policy at distinct, public HTTPS pages such as `/terms` and `/privacy`. The Terms must tell users FoodSwipe includes Google Maps features and content and that their use is subject to Google's current end-user terms and privacy policy. The Privacy Policy should explain the use of Google Maps and link to Google's privacy policy. Link to both FoodSwipe pages in the app. Use canonical URLs that return `200 text/html` without authentication or redirects. The app checks reachability, while the owner confirms the policy text and applicable agreement. [Google Maps JavaScript policy](https://developers.google.com/maps/documentation/javascript/policies) · [Google Maps end-user terms](https://maps.google.com/help/terms_maps/) · [Google Privacy Policy](https://policies.google.com/privacy)
+5. Set `GOOGLE_MAPS_BROWSER_KEY`, `GOOGLE_MAPS_MAP_ID`, `FOODSWIPE_MAP_TERMS_URL`, and `FOODSWIPE_MAP_PRIVACY_URL` in the appropriate environment. Set `FOODSWIPE_DEFAULT_MARKET=nyc` explicitly for launch. Keep `FOODSWIPE_MAP_ENABLED` unset until the policy and catalog review are complete and the restricted setup has passed real-device QA in a test environment. The map activates in an environment only when its flag is `true`, the key and map ID pass local checks, and both policy pages are reachable.
+
+## Monthly cost and device test
+
+Estimates use standard global pay-as-you-go rates in USD, one Dynamic Maps load and ten Place Details Essentials requests per successful opening, and unused free allowances. Both SKUs include 10,000 free monthly events. The first paid tier is $7 per 1,000 Dynamic Maps loads and $5 per 1,000 Place Details Essentials requests. Other traffic billed to the same account can consume those allowances. [Google Maps Platform pricing](https://developers.google.com/maps/billing-and-pricing/pricing)
+
+| Map openings/month | Map loads | Place Details | Estimated map cost |
+| ---: | ---: | ---: | ---: |
+| 100 | 100 | 1,000 | $0 |
+| 1,000 | 1,000 | 10,000 | $0 |
+| 10,000 | 10,000 | 100,000 | $450 |
+
+On an approved test origin with a restricted key, real map ID, reachable policy pages, and a staging or fixture catalog, test iOS Safari and Android Chrome. Confirm the referrer works, the map opens in NYC, only eligible records are requested, pins open the correct profiles, touch pan and zoom work, attribution remains visible, and the swipe feed makes no map requests. Check browser traffic and Google Cloud reporting for Dynamic Maps and Place Details Essentials. Repeat with the flag off or a policy URL returning 404 and verify there are no Google Maps requests.

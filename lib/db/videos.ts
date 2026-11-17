@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Video } from "@/lib/types";
 import { normalizeVideo } from "@/lib/video";
 import { getDb, isDbConfigured } from "./index";
@@ -47,6 +47,23 @@ export async function getActiveVideos(restaurantId: string): Promise<Video[]> {
   return rows
     .map(rowToVideo)
     .filter((v): v is Video => v !== null);
+}
+
+/** Use the same source validation as the public profiles when counting creator posts. */
+export async function getRealVideoCounts(slugs: string[]): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  const db = getDb();
+  if (!db || slugs.length === 0) return counts;
+  const rows = await db.select().from(restaurantVideos).where(and(
+    inArray(restaurantVideos.restaurantId, slugs),
+    eq(restaurantVideos.status, "active"),
+    eq(restaurantVideos.sourceType, "real-post"),
+  ));
+  for (const row of rows) {
+    if (!rowToVideo(row)?.isRealSource) continue;
+    counts.set(row.restaurantId, (counts.get(row.restaurantId) ?? 0) + 1);
+  }
+  return counts;
 }
 
 /**

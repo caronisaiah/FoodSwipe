@@ -1,0 +1,645 @@
+{
+  "release": "2026-10-21.0",
+  "restaurants": [
+    {
+      "slug": "milk-burger",
+      "street": "148 Bruckner Blvd",
+      "postcode": "10454",
+      "identityEvidenceUrl": "https://milkburger.com/order/",
+      "disposition": "candidate",
+      "candidates": [
+        {
+          "id": "29acb38a-fec7-47df-82a2-c0aaa2b622dc",
+          "version": 9,
+          "name": "Milk Burger",
+          "addresses": [
+            {
+              "freeform": "148 Bruckner Blvd",
+              "locality": "Bronx",
+              "postcode": "10454-4642",
+              "region": "NY",
+              "country": "US"
+            }
+          ],
+          "websites": [
+            "http://MilkBurger.com/"
+          ],
+          "sources": [
+            {
+              "property": "",
+              "dataset": "meta",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": "197836920238532",
+              "update_time": "2026-10-12T00:00:00.000Z",
+              "confidence": 0.9950683116912842,
+              "between": null,
+              "provider": "meta",
+              "resource": "meta",
+              "version": "2026-10-12"
+            },
+            {
+              "property": "/properties/confidence",
+              "dataset": "Overture",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": null,
+              "update_time": "2026-10-15T18:00:21Z",
+              "confidence": null,
+              "between": null,
+              "provider": "overture",
+              "resource": "confidence_calculation",
+              "version": "2026-10-15"
+            },
+            {
+              "property": "/properties/operating_status",
+              "dataset": "Overture-signals",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": "cf6556f3-01b2-4207-af92-afa323cd3e7f",
+              "update_time": "2026-10-13T21:05:00Z",
+              "confidence": 1.0,
+              "between": null,
+              "provider": "overture",
+              "resource": "operating_status_signal",
+              "version": "2026-10-12"
+            }
+          ],
+          "operating_status": "open",
+          "confidence": 0.9902192950248718,
+          "lat": 40.80359455,
+          "lng": -73.92005431
+        }
+      ],
+      "excludedAddresses": [
+        "2051 2nd Ave"
+      ]
+    },
+    {
+      "slug": "emily",
+      "street": "919 Fulton St",
+      "postcode": "11238",
+      "identityEvidenceUrl": "https://www.pizzalovesemily.com/location/brooklyn/",
+      "disposition": "candidate",
+      "candidates": [
+        {
+          "id": "cb43a0e6-0935-4f90-81b9-4400c6d82523",
+          "version": 8,
+          "name": "Emily",
+          "addresses": [
+            {
+              "freeform": "919 Fulton St",
+              "locality": "Brooklyn",
+              "postcode": "11238-1735",
+              "region": "NY",
+              "country": "US"
+            }
+          ],
+          "websites": [
+            "http://www.pizzalovesemily.com/"
+          ],
+          "sources": [
+            {
+              "property": "",
+              "dataset": "meta",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": "1858103197847552",
+              "update_time": "2026-10-12T00:00:00.000Z",
+              "confidence": 0.9949028491973877,
+              "between": null,
+              "provider": "meta",
+              "resource": "meta",
+              "version": "2026-10-12"
+            },
+            {
+              "property": "/properties/confidence",
+              "dataset": "Overture",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": null,
+              "update_time": "2026-10-15T18:00:21Z",
+              "confidence": null,
+              "between": null,
+              "provider": "overture",
+              "resource": "confidence_calculation",
+              "version": "2026-10-15"
+            },
+            {
+              "property": "/properties/operating_status",
+              "dataset": "Overture-signals",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": "1171349d-2c6a-4189-afe7-0511e307a008",
+              "update_time": "2026-10-13T21:05:00Z",
+              "confidence": 1.0,
+              "between": null,
+              "provider": "overture",
+              "resource": "operating_status_signal",
+              "version": "2026-10-12"
+            }
+          ],
+          "operating_status": "open",
+          "confidence": 0.9924678206443787,
+          "lat": 40.68349896,
+          "lng": -73.96644339
+        }
+      ],
+      "excludedAddresses": [
+        "135 W 72nd St",
+        "35 Downing St"
+      ]
+    },
+    {
+      "slug": "moonburger",
+      "street": "72 Kenmare St",
+      "postcode": "10012",
+      "identityEvidenceUrl": "https://www.moonburger.com/nolita",
+      "disposition": "candidate",
+      "candidates": [
+        {
+          "id": "10f3b427-394d-451d-92f7-ced3b5b0c7b8",
+          "version": 3,
+          "name": "Moonburger",
+          "addresses": [
+            {
+              "freeform": "72 Kenmare St",
+              "locality": "New York",
+              "postcode": "10012",
+              "region": "NY",
+              "country": "US"
+            }
+          ],
+          "websites": [
+            "https://www.moonburger.com"
+          ],
+          "sources": [
+            {
+              "property": "",
+              "dataset": "Foursquare",
+              "license": "Apache-2.0",
+              "record_id": "68ddb6df9f31b0714ca75730",
+              "update_time": "2026-03-31T00:00:00.000",
+              "confidence": 0.77,
+              "between": null,
+              "provider": "foursquare",
+              "resource": "foursquare",
+              "version": "2026-04-14"
+            },
+            {
+              "property": "/properties/confidence",
+              "dataset": "Overture",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": null,
+              "update_time": "2026-10-15T18:00:21Z",
+              "confidence": null,
+              "between": null,
+              "provider": "overture",
+              "resource": "confidence_calculation",
+              "version": "2026-10-15"
+            }
+          ],
+          "operating_status": null,
+          "confidence": 0.77,
+          "lat": 40.720954,
+          "lng": -73.996296
+        }
+      ],
+      "excludedAddresses": []
+    },
+    {
+      "slug": "deux-luxe",
+      "street": "384 Broome St",
+      "postcode": "10012",
+      "identityEvidenceUrl": "https://www.deuxluxeny.com/",
+      "disposition": "candidate",
+      "candidates": [
+        {
+          "id": "51606d62-0432-4f75-aeb8-3ff5ce4cdfc5",
+          "version": 9,
+          "name": "Deux Luxe",
+          "addresses": [
+            {
+              "freeform": "384 Broome St",
+              "locality": "New York",
+              "postcode": "10012",
+              "region": "NY",
+              "country": "US"
+            }
+          ],
+          "websites": [
+            "https://www.deuxluxeny.com/about-1"
+          ],
+          "sources": [
+            {
+              "property": "",
+              "dataset": "meta",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": "696680110195978",
+              "update_time": "2026-10-12T00:00:00.000Z",
+              "confidence": 0.9098694920539856,
+              "between": null,
+              "provider": "meta",
+              "resource": "meta",
+              "version": "2026-10-12"
+            },
+            {
+              "property": "/properties/confidence",
+              "dataset": "Overture",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": null,
+              "update_time": "2026-10-15T18:00:21Z",
+              "confidence": null,
+              "between": null,
+              "provider": "overture",
+              "resource": "confidence_calculation",
+              "version": "2026-10-15"
+            },
+            {
+              "property": "/properties/operating_status",
+              "dataset": "Overture-signals",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": "095eb651-fefa-4d6e-a267-66ecb3d02f73",
+              "update_time": "2026-10-13T21:05:00Z",
+              "confidence": 1.0,
+              "between": null,
+              "provider": "overture",
+              "resource": "operating_status_signal",
+              "version": "2026-10-12"
+            }
+          ],
+          "operating_status": "open",
+          "confidence": 0.9722161889076233,
+          "lat": 40.720575103653076,
+          "lng": -73.9965301736953
+        }
+      ],
+      "excludedAddresses": []
+    },
+    {
+      "slug": "smacking-burger",
+      "street": "51-63 8th Ave",
+      "postcode": "10014",
+      "identityEvidenceUrl": "https://smackingburger.com/",
+      "disposition": "missing",
+      "candidates": [],
+      "excludedAddresses": []
+    },
+    {
+      "slug": "au-cheval",
+      "street": "33 Cortlandt Alley",
+      "postcode": "10013",
+      "identityEvidenceUrl": "https://www.auchevaldiner.com/nyc/about",
+      "disposition": "candidate",
+      "candidates": [
+        {
+          "id": "7824f725-6dfc-45a8-9a22-7319083c9229",
+          "version": 11,
+          "name": "Au Cheval",
+          "addresses": [
+            {
+              "freeform": "33 Cortlandt Alley",
+              "locality": "New York",
+              "postcode": "10013",
+              "region": "NY",
+              "country": "US"
+            }
+          ],
+          "websites": [
+            "https://www.auchevaldiner.com/nyc/home"
+          ],
+          "sources": [
+            {
+              "property": "",
+              "dataset": "meta",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": "836695073191182",
+              "update_time": "2026-10-12T00:00:00.000Z",
+              "confidence": 0.9656757712364197,
+              "between": null,
+              "provider": "meta",
+              "resource": "meta",
+              "version": "2026-10-12"
+            },
+            {
+              "property": "/properties/confidence",
+              "dataset": "Overture",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": null,
+              "update_time": "2026-10-15T18:00:21Z",
+              "confidence": null,
+              "between": null,
+              "provider": "overture",
+              "resource": "confidence_calculation",
+              "version": "2026-10-15"
+            },
+            {
+              "property": "/properties/operating_status",
+              "dataset": "Overture-signals",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": "73dca661-b34b-48d7-8dcc-1e44cc9135ff",
+              "update_time": "2026-10-13T21:05:00Z",
+              "confidence": 1.0,
+              "between": null,
+              "provider": "overture",
+              "resource": "operating_status_signal",
+              "version": "2026-10-12"
+            }
+          ],
+          "operating_status": "open",
+          "confidence": 0.97279953956604,
+          "lat": 40.71809496969686,
+          "lng": -74.00174975395204
+        }
+      ],
+      "excludedAddresses": []
+    },
+    {
+      "slug": "gotham-burger-social-club",
+      "street": "131 Essex St",
+      "postcode": "10002",
+      "identityEvidenceUrl": "https://www.gbsc.nyc/location/lower-east-side/",
+      "disposition": "candidate",
+      "candidates": [
+        {
+          "id": "350e4ab4-6c06-4a9c-93a8-2217568b6f52",
+          "version": 12,
+          "name": "Gotham Burger Social Club",
+          "addresses": [
+            {
+              "freeform": "131 Essex St",
+              "locality": "New York",
+              "postcode": "10002",
+              "region": "NY",
+              "country": "US"
+            }
+          ],
+          "websites": [
+            "http://gbsc.nyc/"
+          ],
+          "sources": [
+            {
+              "property": "",
+              "dataset": "meta",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": "1462395140698338",
+              "update_time": "2026-10-12T00:00:00.000Z",
+              "confidence": 0.971278727054596,
+              "between": null,
+              "provider": "meta",
+              "resource": "meta",
+              "version": "2026-10-12"
+            },
+            {
+              "property": "/properties/confidence",
+              "dataset": "Overture",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": null,
+              "update_time": "2026-10-15T18:00:21Z",
+              "confidence": null,
+              "between": null,
+              "provider": "overture",
+              "resource": "confidence_calculation",
+              "version": "2026-10-15"
+            },
+            {
+              "property": "/properties/operating_status",
+              "dataset": "Overture-signals",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": "d592fde6-33f3-4d7a-a9ef-db5ad0546359",
+              "update_time": "2026-10-13T21:05:00Z",
+              "confidence": 1.0,
+              "between": null,
+              "provider": "overture",
+              "resource": "operating_status_signal",
+              "version": "2026-10-12"
+            }
+          ],
+          "operating_status": "open",
+          "confidence": 0.9902192950248718,
+          "lat": 40.72003623,
+          "lng": -73.98753669
+        }
+      ],
+      "excludedAddresses": []
+    },
+    {
+      "slug": "minetta-tavern",
+      "street": "113 MacDougal St",
+      "postcode": "10012",
+      "identityEvidenceUrl": "https://www.minettatavernny.com/hours-and-location",
+      "disposition": "candidate",
+      "candidates": [
+        {
+          "id": "54ab7e35-3ad2-4ec6-91b0-a8c91f5ed307",
+          "version": 11,
+          "name": "Minetta Tavern",
+          "addresses": [
+            {
+              "freeform": "113 MacDougal St",
+              "locality": "New York",
+              "postcode": "10012",
+              "region": "NY",
+              "country": "US"
+            }
+          ],
+          "websites": [
+            "http://www.minettatavernny.com/"
+          ],
+          "sources": [
+            {
+              "property": "",
+              "dataset": "meta",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": "1360790310608741",
+              "update_time": "2026-10-12T00:00:00.000Z",
+              "confidence": 0.9740272164344788,
+              "between": null,
+              "provider": "meta",
+              "resource": "meta",
+              "version": "2026-10-12"
+            },
+            {
+              "property": "/properties/confidence",
+              "dataset": "Overture",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": null,
+              "update_time": "2026-10-15T18:00:21Z",
+              "confidence": null,
+              "between": null,
+              "provider": "overture",
+              "resource": "confidence_calculation",
+              "version": "2026-10-15"
+            },
+            {
+              "property": "/properties/operating_status",
+              "dataset": "Overture-signals",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": "56aa90b9-6ff9-43b6-9145-459c8d7bfc91",
+              "update_time": "2026-10-13T21:05:00Z",
+              "confidence": 1.0,
+              "between": null,
+              "provider": "overture",
+              "resource": "operating_status_signal",
+              "version": "2026-10-12"
+            }
+          ],
+          "operating_status": "open",
+          "confidence": 0.9902192950248718,
+          "lat": 40.73000953,
+          "lng": -74.00064852
+        }
+      ],
+      "excludedAddresses": [
+        "111 W 113th St"
+      ]
+    },
+    {
+      "slug": "7th-street-burger-east-village",
+      "street": "91 E 7th St",
+      "postcode": "10009",
+      "identityEvidenceUrl": "https://merch.7thstreetburger.com/pages/locations",
+      "disposition": "candidate",
+      "candidates": [
+        {
+          "id": "17ece59a-640c-4919-b6da-e94cfbe67160",
+          "version": 11,
+          "name": "7th Street Burger",
+          "addresses": [
+            {
+              "freeform": "91 E 7th St",
+              "locality": "New York",
+              "postcode": "10009",
+              "region": "NY",
+              "country": "US"
+            }
+          ],
+          "websites": [
+            "https://locations.7thstreetburger.com/locations/ny/new-york/91-e-7th-st"
+          ],
+          "sources": [
+            {
+              "property": "",
+              "dataset": "meta",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": "625627300644789",
+              "update_time": "2026-10-12T00:00:00.000Z",
+              "confidence": 0.9842904806137085,
+              "between": null,
+              "provider": "meta",
+              "resource": "meta",
+              "version": "2026-10-12"
+            },
+            {
+              "property": "/properties/confidence",
+              "dataset": "Overture",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": null,
+              "update_time": "2026-10-15T18:00:21Z",
+              "confidence": null,
+              "between": null,
+              "provider": "overture",
+              "resource": "confidence_calculation",
+              "version": "2026-10-15"
+            },
+            {
+              "property": "/properties/operating_status",
+              "dataset": "Overture-signals",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": "120d1cfc-39a8-461b-afd4-1b4034fa0183",
+              "update_time": "2026-10-13T21:05:00Z",
+              "confidence": 1.0,
+              "between": null,
+              "provider": "overture",
+              "resource": "operating_status_signal",
+              "version": "2026-10-12"
+            }
+          ],
+          "operating_status": "open",
+          "confidence": 0.9902192950248718,
+          "lat": 40.72689329,
+          "lng": -73.98537317
+        }
+      ],
+      "excludedAddresses": [
+        "107-22 Continental Ave",
+        "11 W 42nd St",
+        "112 Washington St",
+        "1276 Lexington Ave",
+        "17 Old Fulton St",
+        "171 W 23rd St",
+        "173 Orchard St",
+        "177 Bedford Ave",
+        "250 Mulberry St",
+        "27A W 125th St",
+        "35-02 30th Ave.",
+        "400 Jay St",
+        "485 7th Ave",
+        "80 Nassau St"
+      ]
+    },
+    {
+      "slug": "4-charles-prime-rib",
+      "street": "4 Charles St",
+      "postcode": "10014",
+      "identityEvidenceUrl": "https://www.nycprimerib.com/about",
+      "disposition": "candidate",
+      "candidates": [
+        {
+          "id": "f8b989d2-b102-4cb1-af01-7b5850fdd118",
+          "version": 10,
+          "name": "4 Charles Prime Rib",
+          "addresses": [
+            {
+              "freeform": "4 Charles St",
+              "locality": "New York",
+              "postcode": "10014",
+              "region": "NY",
+              "country": "US"
+            }
+          ],
+          "websites": [
+            "https://nycprimerib.com/"
+          ],
+          "sources": [
+            {
+              "property": "",
+              "dataset": "meta",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": "885277744922395",
+              "update_time": "2026-10-12T00:00:00.000Z",
+              "confidence": 0.990007758140564,
+              "between": null,
+              "provider": "meta",
+              "resource": "meta",
+              "version": "2026-10-12"
+            },
+            {
+              "property": "/properties/confidence",
+              "dataset": "Overture",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": null,
+              "update_time": "2026-10-15T18:00:21Z",
+              "confidence": null,
+              "between": null,
+              "provider": "overture",
+              "resource": "confidence_calculation",
+              "version": "2026-10-15"
+            },
+            {
+              "property": "/properties/operating_status",
+              "dataset": "Overture-signals",
+              "license": "CDLA-Permissive-2.0",
+              "record_id": "fa9efdd0-3a56-4edb-bf15-ffbc8ca86d83",
+              "update_time": "2026-10-13T21:05:00Z",
+              "confidence": 1.0,
+              "between": null,
+              "provider": "overture",
+              "resource": "operating_status_signal",
+              "version": "2026-10-12"
+            }
+          ],
+          "operating_status": "open",
+          "confidence": 0.9902192950248718,
+          "lat": 40.735144952599605,
+          "lng": -74.00066077636762
+        }
+      ],
+      "excludedAddresses": []
+    }
+  ]
+}

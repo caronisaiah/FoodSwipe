@@ -10,13 +10,16 @@ const require = createRequire(import.meta.url);
 const ts = require("typescript");
 
 // Source-level regression checks with isolated fixtures: no .env, network or DB.
-function harness(env, rows = [], dbAvailable = true) {
+function harness(env, rows = [], dbAvailable = true, policyResponses = {}) {
   const cache = new Map();
   const warnings = [];
+  const policyRequests = [];
+  let dbReads = 0;
   let failApiRead = false;
   const table = Object.fromEntries(["status", "market", "slug", "createdAt"].map((key) => [key, key]));
   const db = {
     select() {
+      dbReads++;
       if (dbAvailable === "error") throw new Error("simulated DB failure");
       let result = rows;
       const query = {
@@ -38,6 +41,8 @@ function harness(env, rows = [], dbAvailable = true) {
     }).outputText;
     function localRequire(name) {
       if (name === "server-only") return {};
+      if (name === "next/link") return { default: () => null };
+      if (name === "next/server") return { connection: async () => {} };
       if (name === "react/jsx-runtime") return require(name);
       if (name.startsWith("@/components/")) return { default: () => null };
       if (name === "drizzle-orm") return {
@@ -62,12 +67,20 @@ function harness(env, rows = [], dbAvailable = true) {
       }
       throw new Error(`Unexpected isolated dependency: ${relative}: ${name}`);
     }
-    runInNewContext(output, { module: compiledModule, exports: compiledModule.exports, require: localRequire,
-      process: { env }, console: { warn: (message) => warnings.push(message) }, URL, Response },
-    { filename: relative });
+    runInNewContext(output, {
+      module: compiledModule, exports: compiledModule.exports, require: localRequire,
+      process: { env }, console: { warn: (message) => warnings.push(message) }, AbortSignal, URL, Response,
+      fetch: async (url, options) => {
+        policyRequests.push(url);
+        assert.equal(options.redirect, "error");
+        const fixture = policyResponses[url] ?? [200, "text/html; charset=utf-8"];
+        if (fixture === "error" || fixture[0] === 302) throw new Error("simulated unavailable policy page");
+        return new Response("", { status: fixture[0], headers: { "content-type": fixture[1] } });
+      },
+    }, { filename: relative });
     return compiledModule.exports;
   }
-  return { load, warnings, failRead: () => { failApiRead = true; } };
+  return { load, warnings, policyRequests, dbReads: () => dbReads, failRead: () => { failApiRead = true; } };
 }
 
 const rows = [
@@ -115,5 +128,57 @@ for (const mode of ["demo", "mixed", "production"]) {
     equal(ids(await request(h)), []);
     equal(ids(await request(h, "?market=nyc")), []);
   }
+}
+
+const mapConfig = {
+  FOODSWIPE_MAP_ENABLED: "true",
+  GOOGLE_MAPS_BROWSER_KEY: "fixture-browser-key",
+  GOOGLE_MAPS_API_KEY: "fixture-server-key",
+  GOOGLE_MAPS_MAP_ID: "fixture-map-id",
+  FOODSWIPE_MAP_TERMS_URL: "https://example.test/terms",
+  FOODSWIPE_MAP_PRIVACY_URL: "https://example.test/privacy",
+};
+const mapRows = [
+  { ...rows[0], googlePlaceId: "dc-place" },
+  { ...rows[1], googlePlaceId: " nyc-place ", lat: 40.71, lng: -74.01 },
+  { ...rows[2], googlePlaceId: "hidden-place" },
+  { slug: "nyc-no-place", market: "nyc", status: "published", googlePlaceId: " " },
+];
+async function renderMap(h) {
+  const page = await h.load("components/GoogleMapPrototypePage.tsx").default();
+  return page.props.children.props.children[1];
+}
+for (const selectedMarket of [undefined, " ", " NYC ", "dc"]) {
+  const h = harness({ ...mapConfig, FOODSWIPE_DEFAULT_MARKET: selectedMarket, FOODSWIPE_CONTENT_MODE: "mixed" }, mapRows);
+  const market = selectedMarket === "dc" ? "dc" : "nyc";
+  const map = await renderMap(h);
+  equal(map.props.market, market);
+  equal(map.props.browserKey, mapConfig.GOOGLE_MAPS_BROWSER_KEY);
+  equal(map.props.targets, [{ slug: `${market}-visible`, placeId: `${market}-place` }]);
+  equal(h.policyRequests, [mapConfig.FOODSWIPE_MAP_TERMS_URL, mapConfig.FOODSWIPE_MAP_PRIVACY_URL]);
+  equal(h.dbReads(), 1);
+}
+for (const overrides of [
+  { FOODSWIPE_MAP_ENABLED: undefined },
+  { FOODSWIPE_DEFAULT_MARKET: "unsupported" },
+  { GOOGLE_MAPS_BROWSER_KEY: undefined },
+  { GOOGLE_MAPS_BROWSER_KEY: mapConfig.GOOGLE_MAPS_API_KEY },
+  { GOOGLE_MAPS_MAP_ID: undefined },
+  { GOOGLE_MAPS_MAP_ID: "DEMO_MAP_ID" },
+  { FOODSWIPE_MAP_TERMS_URL: undefined },
+  { FOODSWIPE_MAP_TERMS_URL: "https://example.test/map" },
+  { FOODSWIPE_MAP_PRIVACY_URL: "http://example.test/privacy" },
+  { FOODSWIPE_MAP_PRIVACY_URL: `${mapConfig.FOODSWIPE_MAP_TERMS_URL}#privacy` },
+]) {
+  const h = harness({ ...mapConfig, ...overrides }, mapRows);
+  const map = await renderMap(h);
+  equal(map.type, "div");
+  equal(h.policyRequests, []);
+  equal(h.dbReads(), 0);
+}
+for (const fixture of [[404, "text/html"], [200, "application/json"], [302, "text/html"], "error"]) {
+  const h = harness(mapConfig, mapRows, true, { [mapConfig.FOODSWIPE_MAP_PRIVACY_URL]: fixture });
+  equal((await renderMap(h)).type, "div");
+  equal(h.dbReads(), 0);
 }
 console.log(`Public market checks passed (${checks} assertions; isolated DB fixtures, no network).`);

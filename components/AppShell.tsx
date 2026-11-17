@@ -6,9 +6,9 @@ import BottomNav from "@/components/BottomNav";
  * with ambient glow on desktop) and pins the bottom nav. Used by the in-app
  * screens (feed / saved / profile); the onboarding landing renders standalone.
  */
-export default function AppShell({ children }: { children: ReactNode }) {
+export default function AppShell({ children, wide = false }: { children: ReactNode; wide?: boolean }) {
   return (
-    <div className="mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden border-white/5 bg-ink/40 md:border-x">
+    <div className={`mx-auto flex h-dvh w-full flex-col overflow-hidden border-white/5 bg-ink/40 md:border-x ${wide ? "max-w-5xl" : "max-w-md"}`}>
       {/* pad for the notch / status bar (0 on devices without one) */}
       <div className="flex min-h-0 flex-1 flex-col pt-[env(safe-area-inset-top)]">
         {children}

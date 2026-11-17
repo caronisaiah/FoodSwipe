@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useSwipes } from "@/lib/storage";
 import MaterialIcon from "@/components/MaterialIcon";
 
-// Three real destinations (no fake Activity/Profile tabs). "Discover" is the feed.
+// Discover groups the swipe feed and the restaurant map.
 const TABS = [
   { href: "/feed", label: "Discover", icon: "explore" },
   { href: "/saved", label: "Saved", icon: "bookmark" },
@@ -24,13 +24,13 @@ export default function BottomNav() {
           const active =
             tab.href === "/"
               ? pathname === "/"
-              : pathname.startsWith(tab.href);
+              : pathname.startsWith(tab.href) || (tab.href === "/feed" && pathname === "/map");
           const showBadge = tab.href === "/saved" && savedIds.length > 0;
           return (
             <Link
               key={tab.href}
               href={tab.href}
-              aria-current={active ? "page" : undefined}
+              aria-current={pathname === "/map" && tab.href === "/feed" ? "location" : active ? "page" : undefined}
               className={`relative flex flex-1 flex-col items-center gap-1 py-1 text-[11px] font-bold tracking-tight transition-all duration-300 ease-out ${
                 active
                   ? "scale-110 text-saffron"

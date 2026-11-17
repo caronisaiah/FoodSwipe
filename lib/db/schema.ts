@@ -7,6 +7,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -253,6 +254,41 @@ export const restaurants = pgTable("restaurants", {
 ]);
 
 export type RestaurantRow = typeof restaurants.$inferSelect;
+
+/** Independently sourced map points. Never publish location data from the legacy restaurant columns. */
+export const restaurantLocations = pgTable("restaurant_locations", {
+  restaurantId: text("restaurant_id").notNull().references(() => restaurants.id, { onDelete: "restrict" }),
+  overtureId: text("overture_id").notNull(),
+  release: text("release").notNull(),
+  featureVersion: integer("feature_version").notNull(),
+  lat: doublePrecision("lat").notNull(),
+  lng: doublePrecision("lng").notNull(),
+  // Original feature fields, including property-specific source records and raw address.
+  evidence: jsonb("evidence").notNull(),
+  identityEvidenceUrl: text("identity_evidence_url"),
+  displayName: text("display_name"),
+  displayArea: text("display_area"),
+  displayAddress: text("display_address"),
+  cuisine: text("cuisine"),
+  cuisineEvidenceUrl: text("cuisine_evidence_url"),
+  status: text("status", { enum: ["pending", "approved", "rejected"] }).notNull().default("pending"),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  reviewedBy: text("reviewed_by"),
+  reviewNote: text("review_note"),
+}, (t) => [
+  primaryKey({ columns: [t.restaurantId, t.overtureId, t.release] }),
+  uniqueIndex("restaurant_locations_approved_restaurant").on(t.restaurantId).where(sql`${t.status} = 'approved'`),
+  uniqueIndex("restaurant_locations_approved_place").on(t.overtureId).where(sql`${t.status} = 'approved'`),
+  check("restaurant_locations_valid_position", sql`${t.lat} between -85.051129 and 85.051129
+    and ${t.lng} between -180 and 180 and (${t.lat} <> 0 or ${t.lng} <> 0)`),
+  check("restaurant_locations_valid_status", sql`${t.status} in ('pending', 'approved', 'rejected')`),
+  check("restaurant_locations_review_required", sql`${t.status} = 'pending' or (
+    ${t.reviewedAt} is not null and coalesce(length(trim(${t.reviewedBy})), 0) > 0)`),
+  check("restaurant_locations_identity_required", sql`${t.status} <> 'approved' or (
+    coalesce(length(trim(${t.displayName})), 0) > 0 and coalesce(${t.identityEvidenceUrl}, '') like 'https://%')`),
+  check("restaurant_locations_cuisine_provenance", sql`${t.cuisine} is null or
+    coalesce(${t.cuisineEvidenceUrl}, '') like 'https://%'`),
+]);
 export type NewRestaurantRow = typeof restaurants.$inferInsert;
 
 /**
