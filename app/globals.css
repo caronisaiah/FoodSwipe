@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./editorial.css";
 
 .foodswipe-map-pin {
   display: grid;

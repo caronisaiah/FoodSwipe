@@ -12,39 +12,30 @@ const TABS = [
   { href: "/", label: "Tune", icon: "tune" },
 ] as const;
 
-/** Persistent glassy bottom navigation (Stitch direction). */
+/** Shared destination rail. Tune places it in the masthead at desktop widths. */
 export default function BottomNav() {
   const pathname = usePathname();
   const { savedIds } = useSwipes();
 
   return (
-    <nav className="sticky bottom-0 z-30 border-t border-white/10 bg-ink-2/85 shadow-[0_-4px_20px_rgba(255,184,111,0.05)] backdrop-blur-xl">
-      <div className="mx-auto flex max-w-md items-stretch justify-around px-2 pb-[max(env(safe-area-inset-bottom),0.75rem)] pt-3">
+    <nav className="foodswipe-nav" aria-label="Primary">
+      <div className="foodswipe-nav-links">
         {TABS.map((tab) => {
-          const active =
-            tab.href === "/"
-              ? pathname === "/"
-              : pathname.startsWith(tab.href) || (tab.href === "/feed" && pathname === "/map");
+          const inMap = pathname === "/map" && tab.href === "/feed";
+          const active = tab.href === "/" ? pathname === "/" : pathname.startsWith(tab.href) || inMap;
           const showBadge = tab.href === "/saved" && savedIds.length > 0;
           return (
             <Link
               key={tab.href}
               href={tab.href}
-              aria-current={pathname === "/map" && tab.href === "/feed" ? "location" : active ? "page" : undefined}
-              className={`relative flex flex-1 flex-col items-center gap-1 py-1 text-[11px] font-bold tracking-tight transition-all duration-300 ease-out ${
-                active
-                  ? "scale-110 text-saffron"
-                  : "text-tan/60 hover:text-saffron/80"
-              }`}
+              aria-current={inMap ? "location" : active ? "page" : undefined}
+              className="foodswipe-nav-link"
             >
-              <MaterialIcon name={tab.icon} className="text-[26px]" filled={active} />
-              {tab.label}
+              <MaterialIcon name={tab.icon} filled={active} />
+              <span>{tab.label}</span>
               {showBadge && (
-                <span
-                  aria-label={`${savedIds.length} saved`}
-                  className="absolute right-1/2 top-0 translate-x-4 rounded-full bg-saffron px-1.5 text-[10px] font-bold leading-4 text-saffron-ink"
-                >
-                  {savedIds.length}
+                <span className="foodswipe-nav-count">
+                  {savedIds.length}<span className="sr-only"> saved {savedIds.length === 1 ? "restaurant" : "restaurants"}</span>
                 </span>
               )}
             </Link>

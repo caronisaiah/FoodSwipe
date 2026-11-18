@@ -1,240 +1,148 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import type { Craving, Dietary, PriceLevel, Vibe } from "@/lib/types";
-import {
-  BUDGET_OPTIONS,
-  CRAVING_OPTIONS,
-  DIETARY_OPTIONS,
-  DISTANCE_OPTIONS,
-  VIBE_OPTIONS,
-} from "@/lib/options";
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
+import BottomNav from "@/components/BottomNav";
+import MaterialIcon from "@/components/MaterialIcon";
+import DiscoveryCity from "@/components/editorial/DiscoveryCity";
+import { PreferenceCheck, SegmentedPreference } from "@/components/editorial/PreferenceControls";
+import type { Market } from "@/lib/markets";
+import { BUDGET_OPTIONS, CRAVING_OPTIONS, VIBE_OPTIONS } from "@/lib/options";
 import { usePreferences } from "@/lib/storage";
+import type { Restaurant } from "@/lib/types";
 
-/**
- * Landing + onboarding. Edits persist live (this screen doubles as the "Tune"
- * settings screen), so the CTA just sends the user to the feed.
- */
-export default function PreferenceOnboarding() {
-  const router = useRouter();
-  const { preferences: draft, setPreferences: setDraft } = usePreferences();
+type OptionsState =
+  | { status: "loading" | "error" }
+  | { status: "ready"; restaurants: Restaurant[] };
 
-  function toggle<T>(list: T[], value: T): T[] {
-    return list.includes(value)
-      ? list.filter((v) => v !== value)
-      : [...list, value];
-  }
+function updateChoice<Value>(values: Value[], value: Value, checked: boolean) {
+  return checked ? [...values.filter((item) => item !== value), value] : values.filter((item) => item !== value);
+}
 
-  function start() {
-    router.push("/feed");
-  }
+export default function PreferenceOnboarding({ market }: { market: Market | null }) {
+  const { preferences, setPreferences } = usePreferences();
+  const [catalogue, setCatalogue] = useState<OptionsState>({ status: "loading" });
+  const [reload, setReload] = useState(0);
+  const preferenceSection = useRef<HTMLElement>(null);
+  const retryButton = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!market) return;
+    const controller = new AbortController();
+
+    async function loadOptions() {
+      try {
+        // Match the feed's default catalogue. An alternate-market read only works
+        // after the feed, Map and this screen share an effective market.
+        const response = await fetch("/api/restaurants", { cache: "no-store", signal: controller.signal });
+        if (!response.ok) throw new Error("Could not load the discovery catalogue.");
+        const { restaurants } = await response.json() as { restaurants?: Restaurant[] };
+        if (!Array.isArray(restaurants)) throw new Error("Missing discovery catalogue.");
+        if (!controller.signal.aborted) {
+          if (retryButton.current && retryButton.current === document.activeElement) {
+            preferenceSection.current?.focus({ preventScroll: true });
+          }
+          setCatalogue({ status: "ready", restaurants: restaurants.filter((restaurant) => restaurant.market === market) });
+        }
+      } catch {
+        if (!controller.signal.aborted) setCatalogue({ status: "error" });
+      }
+    }
+
+    void loadOptions();
+    return () => controller.abort();
+  }, [market, reload]);
+
+  const restaurants = catalogue.status === "ready" ? catalogue.restaurants : [];
+  const cuisines = CRAVING_OPTIONS.filter(({ value }) =>
+    value !== "halal" && value !== "vegan" && restaurants.some((place) => place.cuisineTags.includes(value)),
+  );
+  const occasions = VIBE_OPTIONS.filter(({ value }) => restaurants.some((place) => place.vibeTags.includes(value)));
+  const optionStatus = !market ? "Cuisine and occasion choices are unavailable."
+    : catalogue.status === "loading" ? "Loading cuisine and occasion choices…"
+      : catalogue.status === "error" ? "Cuisine and occasion choices couldn’t load."
+        : cuisines.length < 2 && occasions.length === 0 ? "Cuisine and occasion choices are unavailable for this market."
+          : null;
+  const canRetry = Boolean(market) && (catalogue.status === "error" || (catalogue.status === "loading" && reload > 0));
 
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col">
-      <div className="no-scrollbar flex-1 overflow-y-auto px-5 pb-40 pt-12">
-        {/* Hero */}
-        <header className="mb-8">
-          <p className="mb-3 inline-flex items-center gap-1.5 rounded-full bg-white/8 px-3 py-1 text-xs font-medium text-haze ring-1 ring-inset ring-white/10">
-            🎬 Powered by real food videos
-          </p>
-          <h1 className="font-display text-5xl font-bold leading-none tracking-tight">
-            <span className="text-gradient">Food</span>
-            <span className="text-cream">Swipe</span>
-          </h1>
-          <p className="mt-3 max-w-xs text-lg leading-snug text-haze">
-            Swipe through restaurants powered by real food-review videos.
-          </p>
-        </header>
+    <div className="editorial-canvas tune">
+      <a className="tune-skip" href="#tune-preferences">Skip to preferences</a>
+      <header className="tune-masthead">
+        <Link className="editorial-wordmark" href="/feed" prefetch={false} aria-label="FoodSwipe, Discover">
+          Food<span>Swipe</span>
+        </Link>
+        <BottomNav />
+      </header>
 
-        {/* Location */}
-        <Section title="Where are you?" hint="We start you in the District.">
-          <input
-            value={draft.location}
-            onChange={(e) => setDraft({ ...draft, location: e.target.value })}
-            className="w-full rounded-2xl bg-surface px-4 py-3 text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze focus:ring-saffron/60"
-            placeholder="Washington, DC"
-            aria-label="Location"
-          />
-        </Section>
+      <main className="tune-layout">
+        <DiscoveryCity market={market} />
+        <section ref={preferenceSection} className="tune-preferences" id="tune-preferences" tabIndex={-1} aria-labelledby="recommendations-heading">
+          <h2 id="recommendations-heading" className="editorial-section-title">Your recommendations</h2>
+          <p className="tune-description">These preferences guide what you see first. Other restaurants can still show up.</p>
 
-        {/* Distance */}
-        <Section title="How far will you go?">
-          <Segmented
-            options={DISTANCE_OPTIONS}
-            value={draft.maxDistanceMiles}
-            onChange={(v) => setDraft({ ...draft, maxDistanceMiles: v })}
-          />
-        </Section>
-
-        {/* Budget */}
-        <Section title="What's the budget?">
-          <Segmented
+          <SegmentedPreference
+            legend="Price preference"
+            description="Approximate price tier"
             options={BUDGET_OPTIONS}
-            value={draft.budget}
-            onChange={(v: PriceLevel) => setDraft({ ...draft, budget: v })}
-            renderHint={(o) => o.hint}
+            value={preferences.budget}
+            onChange={(budget) => setPreferences((previous) => ({ ...previous, budget }))}
           />
-        </Section>
-
-        {/* Cravings */}
-        <Section title="What are you craving?" hint="Pick as many as you like.">
-          <ChipGrid>
-            {CRAVING_OPTIONS.map((o) => (
-              <Chip
-                key={o.value}
-                active={draft.cravings.includes(o.value)}
-                onClick={() =>
-                  setDraft({ ...draft, cravings: toggle<Craving>(draft.cravings, o.value) })
-                }
-              >
-                {o.emoji} {o.label}
-              </Chip>
-            ))}
-          </ChipGrid>
-        </Section>
-
-        {/* Vibe */}
-        <Section title="Set the vibe">
-          <ChipGrid>
-            {VIBE_OPTIONS.map((o) => (
-              <Chip
-                key={o.value}
-                active={draft.vibes.includes(o.value)}
-                onClick={() =>
-                  setDraft({ ...draft, vibes: toggle<Vibe>(draft.vibes, o.value) })
-                }
-              >
-                {o.emoji} {o.label}
-              </Chip>
-            ))}
-          </ChipGrid>
-        </Section>
-
-        {/* Dietary */}
-        <Section title="Any dietary needs?" hint="Optional.">
-          <ChipGrid>
-            {DIETARY_OPTIONS.map((o) => (
-              <Chip
-                key={o.value}
-                active={draft.dietary.includes(o.value)}
-                onClick={() =>
-                  setDraft({ ...draft, dietary: toggle<Dietary>(draft.dietary, o.value) })
-                }
-              >
-                {o.emoji} {o.label}
-              </Chip>
-            ))}
-          </ChipGrid>
-        </Section>
-      </div>
-
-      {/* Sticky CTA */}
-      <div className="fixed inset-x-0 bottom-0 z-20 mx-auto max-w-md border-t border-white/10 bg-ink/85 px-5 pb-[max(env(safe-area-inset-bottom),1rem)] pt-4 backdrop-blur-lg">
-        <button
-          type="button"
-          onClick={start}
-          className="w-full rounded-full bg-brand-gradient py-4 text-center text-lg font-bold text-saffron-ink shadow-lg shadow-saffron/25 transition active:scale-[0.98]"
-        >
-          Start swiping →
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* ----- local presentational helpers ----- */
-
-function Section({
-  title,
-  hint,
-  children,
-}: {
-  title: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="mb-7">
-      <div className="mb-2.5">
-        <h2 className="font-display text-base font-semibold text-cream">{title}</h2>
-        {hint && <p className="text-xs text-haze">{hint}</p>}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function ChipGrid({ children }: { children: React.ReactNode }) {
-  return <div className="flex flex-wrap gap-2">{children}</div>;
-}
-
-function Chip({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={`rounded-full px-3.5 py-2 text-sm font-medium ring-1 ring-inset transition active:scale-95 ${
-        active
-          ? "bg-brand-gradient text-ink ring-transparent"
-          : "bg-surface text-cream/90 ring-white/10 hover:ring-white/25"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-/** Single-select segmented control for distance / budget. */
-function Segmented<
-  V extends string | number,
-  O extends { value: V; label: string; hint?: string },
->({
-  options,
-  value,
-  onChange,
-  renderHint,
-}: {
-  options: readonly O[];
-  value: V;
-  onChange: (v: V) => void;
-  renderHint?: (o: O) => string;
-}) {
-  return (
-    <div className="grid grid-cols-4 gap-2">
-      {options.map((o) => {
-        const active = o.value === value;
-        return (
-          <button
-            key={String(o.value)}
-            type="button"
-            onClick={() => onChange(o.value)}
-            aria-pressed={active}
-            className={`flex flex-col items-center rounded-2xl py-3 ring-1 ring-inset transition active:scale-95 ${
-              active
-                ? "bg-brand-gradient text-ink ring-transparent"
-                : "bg-surface text-cream/90 ring-white/10 hover:ring-white/25"
-            }`}
-          >
-            <span className="font-display text-base font-bold">{o.label}</span>
-            {renderHint && (
-              <span
-                className={`mt-0.5 text-[10px] ${active ? "text-ink/70" : "text-haze"}`}
-              >
-                {renderHint(o)}
-              </span>
-            )}
-          </button>
-        );
-      })}
+          {cuisines.length > 1 && (
+            <fieldset className="editorial-field">
+              <legend>Cuisine</legend>
+              <div className="editorial-checklist editorial-checklist-cuisine">
+                {cuisines.map(({ value, label }) => (
+                  <PreferenceCheck
+                    key={value}
+                    label={label}
+                    checked={preferences.cravings.includes(value)}
+                    onChange={(checked) => setPreferences((previous) => ({
+                      ...previous, cravings: updateChoice(previous.cravings, value, checked),
+                    }))}
+                  />
+                ))}
+              </div>
+            </fieldset>
+          )}
+          {occasions.length > 0 && (
+            <fieldset className="editorial-field">
+              <legend>Occasion &amp; vibe</legend>
+              <div className="editorial-checklist">
+                {occasions.map(({ value, label }) => (
+                  <PreferenceCheck
+                    key={value}
+                    label={label}
+                    checked={preferences.vibes.includes(value)}
+                    onChange={(checked) => setPreferences((previous) => ({
+                      ...previous, vibes: updateChoice(previous.vibes, value, checked),
+                    }))}
+                  />
+                ))}
+              </div>
+            </fieldset>
+          )}
+          <p className="tune-option-status" role="status" data-visible={optionStatus ? "" : undefined}>
+            {optionStatus ?? (reload > 0 ? <span className="sr-only">Preference choices loaded.</span> : null)}
+          </p>
+          {canRetry && (
+            <button
+              ref={retryButton}
+              className="editorial-action editorial-action-secondary"
+              type="button"
+              aria-disabled={catalogue.status === "loading" || undefined}
+              onClick={() => {
+                if (catalogue.status !== "error") return;
+                setCatalogue({ status: "loading" });
+                setReload((attempt) => attempt + 1);
+              }}
+            >{catalogue.status === "loading" ? "Retrying…" : "Retry"}</button>
+          )}
+          <Link className="editorial-action tune-explore" href="/feed" prefetch={false}>
+            Explore restaurants <MaterialIcon name="arrow_forward" />
+          </Link>
+        </section>
+      </main>
     </div>
   );
 }
