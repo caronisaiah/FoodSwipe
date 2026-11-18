@@ -38,11 +38,8 @@ const HERO_IMAGE_SETTLE_MAX_WAIT_MS = 5000;
 type ImagePrewarmStatus = "ready" | "error";
 
 interface OutgoingSwipe {
-  restaurantId: string;
-  restaurantName: string;
-  direction: SwipeDirection;
-  nextRestaurantId: string | null;
-  nextRestaurantName: string | null;
+  card: ScoredRestaurant;
+  nextCard: ScoredRestaurant | undefined;
 }
 
 interface SwipeDeckProps {
@@ -52,10 +49,10 @@ interface SwipeDeckProps {
   deckCycle: number;
   /** Ids already swiped — filtered out of the live queue. */
   swipedIds: string[];
-  onSwipe: (restaurantId: string, direction: SwipeDirection) => void;
+  onSwipe: (restaurantId: string, direction: SwipeDirection) => Promise<boolean>;
   /** Live count of saved restaurants, shown on the empty state. */
   savedCount: number;
-  /** Clear swipes + start the deck over. */
+  /** Clear discovery history for the active market. */
   onReset: () => void;
 }
 
@@ -78,13 +75,13 @@ export default function SwipeDeck({
     () => deck.filter((s) => !swipedSet.has(s.restaurant.id)),
     [deck, swipedSet],
   );
-  const top = queue[0];
-  const next = queue[1];
+  const [outgoingSwipe, setOutgoingSwipe] = useState<OutgoingSwipe | null>(null);
+  const top = outgoingSwipe ? outgoingSwipe.card : queue[0];
+  const next = outgoingSwipe ? outgoingSwipe.nextCard : queue[1];
   const topId = top?.restaurant.id ?? null;
   const nextId = next?.restaurant.id ?? null;
 
   const [announcement, setAnnouncement] = useState("");
-  const [outgoingSwipe, setOutgoingSwipe] = useState<OutgoingSwipe | null>(null);
   const outgoingSwipeRef = useRef<OutgoingSwipe | null>(null);
   const [heroMediaById, setHeroMediaById] = useState<Record<string, ClientHeroMedia | null>>({});
   const neededHeroIdsRef = useRef(new Set<string>());
@@ -93,7 +90,7 @@ export default function SwipeDeck({
   const heroPreparePromisesRef = useRef(new Map<string, Promise<void>>());
   const imagePrewarmPromisesRef = useRef(new Map<string, Promise<ImagePrewarmStatus>>());
   const imagePrewarmStatusRef = useRef(new Map<string, ImagePrewarmStatus | "pending">());
-  const isAdvancing = outgoingSwipe?.restaurantId === topId;
+  const isAdvancing = outgoingSwipe !== null;
 
   useEffect(() => {
     if (impressionCycleRef.current === deckCycle) return;
@@ -266,15 +263,10 @@ export default function SwipeDeck({
     [prepareHeroMedia],
   );
 
-  const outgoingId = outgoingSwipe?.restaurantId ?? null;
-  const outgoingNextId = outgoingSwipe?.nextRestaurantId ?? null;
-
   useEffect(() => {
     const keep = new Set<string>();
     if (topId) keep.add(topId);
     if (nextId) keep.add(nextId);
-    if (outgoingId) keep.add(outgoingId);
-    if (outgoingNextId) keep.add(outgoingNextId);
     neededHeroIdsRef.current = keep;
 
     for (const id of keep) void prepareHeroMedia(id);
@@ -302,7 +294,7 @@ export default function SwipeDeck({
       }
     }
 
-  }, [nextId, outgoingId, outgoingNextId, prepareHeroMedia, topId]);
+  }, [nextId, prepareHeroMedia, topId]);
 
   useEffect(() => {
     const controllers = heroFetchControllersRef.current;
@@ -322,49 +314,25 @@ export default function SwipeDeck({
 
   const handleSwipeAccepted = useCallback(
     (restaurantId: string, direction: SwipeDirection) => {
-      if (outgoingSwipeRef.current?.restaurantId !== top?.restaurant.id) {
-        outgoingSwipeRef.current = null;
-      }
       if (!top || top.restaurant.id !== restaurantId || outgoingSwipeRef.current) {
-        return false;
+        return null;
       }
-      const transition: OutgoingSwipe = {
-        restaurantId,
-        restaurantName: top.restaurant.name,
-        direction,
-        nextRestaurantId: next?.restaurant.id ?? null,
-        nextRestaurantName: next?.restaurant.name ?? null,
-      };
+      const transition: OutgoingSwipe = { card: top, nextCard: next };
       setTransition(transition);
-      if (transition.nextRestaurantId) void prepareHeroMedia(transition.nextRestaurantId);
-      return true;
-    },
-    [next, prepareHeroMedia, setTransition, top],
-  );
-
-  const handleCardLeftScreen = useCallback(
-    (restaurantId: string, direction: SwipeDirection) => {
-      const transition = outgoingSwipeRef.current;
-      if (
-        !transition ||
-        transition.restaurantId !== restaurantId ||
-        transition.direction !== direction
-      ) {
-        return;
-      }
-
-      void (async () => {
-        await waitForHeroReady(transition.nextRestaurantId);
-        const verb = direction === "right" ? "Saved" : "Skipped";
-        const upcoming = transition.nextRestaurantName
-          ? `Now showing ${transition.nextRestaurantName}.`
-          : "That was the last spot.";
-        setAnnouncement(`${verb} ${transition.restaurantName}. ${upcoming}`);
-        onSwipe(restaurantId, direction);
+      // Persist the accepted gesture even if navigation interrupts the animation.
+      // Keep the outgoing card rendered until the animation and media handoff finish.
+      const committed = onSwipe(restaurantId, direction);
+      if (next) void prepareHeroMedia(next.restaurant.id);
+      return async () => {
+        await waitForHeroReady(next?.restaurant.id ?? null);
+        if (await committed) {
+          const verb = direction === "right" ? "Saved" : "Skipped";
+          setAnnouncement(`${verb} ${top.restaurant.name}.`);
+        }
         setTransition(null);
-      })();
+      };
     },
-    [onSwipe, setTransition, waitForHeroReady],
+    [next, onSwipe, prepareHeroMedia, setTransition, top, waitForHeroReady],
   );
 
   const topHeroMedia = top ? heroMediaById[top.restaurant.id] ?? null : null;
@@ -381,58 +349,57 @@ export default function SwipeDeck({
     return () => window.removeEventListener("keydown", onKey);
   }, [isAdvancing, top]);
 
-  if (!top) {
-    return (
-      <EmptyState savedCount={savedCount} onReset={onReset} total={deck.length} />
-    );
-  }
-
   return (
     <div className="absolute inset-0 flex flex-col">
       {/* Screen-reader feedback + usage hint */}
       <p role="status" aria-live="polite" className="sr-only">
         {announcement}
       </p>
-      <p id="swipe-hint" className="sr-only">
-        Scroll down through each restaurant&apos;s profile. Swipe or drag left to
-        skip, right to save. You can also use the Left and Right arrow keys.
-      </p>
+      {top ? (
+        <>
+          <p id="swipe-hint" className="sr-only">
+            Scroll down through each restaurant&apos;s profile. Swipe or drag left to
+            skip, right to save. You can also use the Left and Right arrow keys.
+          </p>
 
-      {/* Deck area */}
-      <div
-        role="group"
-        aria-label="Restaurant swipe deck"
-        aria-describedby="swipe-hint"
-        className="isolate relative min-h-0 flex-1 overflow-hidden rounded-[28px] bg-ink-2"
-      >
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 z-0 rounded-[28px] bg-ink-2"
-        />
-        {next && (
-          // Lightweight peek behind the top card (no profile body / no video fetch).
-          // Explicit z-index keeps the stack to: backplate -> one peek -> active.
-          <motion.div
-            aria-hidden
-            inert
-            className="pointer-events-none absolute inset-0 z-10"
-            initial={false}
-            animate={{ scale: 0.955, y: 10, opacity: 1 }}
-            transition={{ type: "spring", stiffness: 260, damping: 30 }}
+          {/* Deck area */}
+          <div
+            role="group"
+            aria-label="Restaurant swipe deck"
+            aria-describedby="swipe-hint"
+            className="isolate relative min-h-0 flex-1 overflow-hidden rounded-[28px] bg-ink-2"
           >
-            <RestaurantCard scored={next} heroMedia={nextHeroMedia} />
-          </motion.div>
-        )}
-        <SwipeCard
-          ref={cardRef}
-          key={top.restaurant.id}
-          scored={top}
-          heroMedia={topHeroMedia}
-          isAdvancing={isAdvancing}
-          onSwipeAccepted={handleSwipeAccepted}
-          onCardLeftScreen={handleCardLeftScreen}
-        />
-      </div>
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0 z-0 rounded-[28px] bg-ink-2"
+            />
+            {next && (
+              // Lightweight peek behind the top card (no profile body / no video fetch).
+              // Explicit z-index keeps the stack to: backplate -> one peek -> active.
+              <motion.div
+                aria-hidden
+                inert
+                className="pointer-events-none absolute inset-0 z-10"
+                initial={false}
+                animate={{ scale: 0.955, y: 10, opacity: 1 }}
+                transition={{ type: "spring", stiffness: 260, damping: 30 }}
+              >
+                <RestaurantCard scored={next} heroMedia={nextHeroMedia} />
+              </motion.div>
+            )}
+            <SwipeCard
+              ref={cardRef}
+              key={top.restaurant.id}
+              scored={top}
+              heroMedia={topHeroMedia}
+              isAdvancing={isAdvancing}
+              onSwipeAccepted={handleSwipeAccepted}
+            />
+          </div>
+        </>
+      ) : (
+        <EmptyState savedCount={savedCount} onReset={onReset} total={deck.length} />
+      )}
     </div>
   );
 }
@@ -460,8 +427,7 @@ interface SwipeCardProps {
   scored: ScoredRestaurant;
   heroMedia: ClientHeroMedia | null;
   isAdvancing: boolean;
-  onSwipeAccepted: (restaurantId: string, direction: SwipeDirection) => boolean;
-  onCardLeftScreen: (restaurantId: string, direction: SwipeDirection) => void;
+  onSwipeAccepted: (restaurantId: string, direction: SwipeDirection) => (() => Promise<void>) | null;
 }
 
 /**
@@ -475,7 +441,7 @@ interface SwipeCardProps {
  */
 const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
   function SwipeCard(
-    { scored, heroMedia, isAdvancing, onSwipeAccepted, onCardLeftScreen },
+    { scored, heroMedia, isAdvancing, onSwipeAccepted },
     ref,
   ) {
     const r = scored.restaurant;
@@ -518,7 +484,8 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
     const leave = useCallback(
       async (direction: SwipeDirection) => {
         if (decided.current || isAdvancing) return;
-        if (!onSwipeAccepted(r.id, direction)) return;
+        const finishSwipe = onSwipeAccepted(r.id, direction);
+        if (!finishSwipe) return;
         decided.current = true;
         try {
           await controls.start({
@@ -528,10 +495,10 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
             transition: { duration: 0.34, ease: [0.22, 1, 0.36, 1] },
           });
         } finally {
-          onCardLeftScreen(r.id, direction);
+          await finishSwipe();
         }
       },
-      [controls, isAdvancing, onCardLeftScreen, onSwipeAccepted, r.id],
+      [controls, isAdvancing, onSwipeAccepted, r.id],
     );
 
     useImperativeHandle(ref, () => ({ swipe: leave }), [leave]);

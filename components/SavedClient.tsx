@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { SavedRestaurant } from "@/lib/types";
-import { useSwipes, useHydrated } from "@/lib/storage";
+import { useFavorites } from "@/lib/storage";
+import type { FavoriteRemoval } from "@/lib/discoveryState";
 import { priceLabel } from "@/lib/options";
 import { cuisineIcon } from "@/lib/emoji";
 import TagPill from "@/components/TagPill";
@@ -16,7 +17,7 @@ import {
 
 async function loadSavedRestaurants(savedIds: string[], signal: AbortSignal) {
   // A malformed legacy entry counts as unavailable without blocking other saves.
-  const ids = savedIds.filter((id) => id.length > 0 && id.length <= 256);
+  const ids = savedIds.filter((id) => id.length > 0 && id.length <= 256 && !id.includes("\0"));
   const restaurants: SavedRestaurant[] = [];
   for (let start = 0; start < ids.length; start += 25) {
     const query = new URLSearchParams(ids.slice(start, start + 25).map((id) => ["id", id]));
@@ -29,45 +30,78 @@ async function loadSavedRestaurants(savedIds: string[], signal: AbortSignal) {
   return new Map(restaurants.map((restaurant) => [restaurant.id, restaurant]));
 }
 
-/** Global saved restaurants (right swipes), newest first. */
+/** Global favorites, newest first. */
 export default function SavedClient() {
-  const isLoaded = useHydrated();
-  const { savedIds, removeSwipe } = useSwipes();
+  const { status, favorites, removeFavorite, undoRemoveFavorite, retry: retryStorage } = useFavorites();
+  const savedIds = favorites.map(({ restaurantId }) => restaurantId);
+  // IndexedDB returns fresh objects even when a tab only changed discovery history.
+  const savedIdsJSON = JSON.stringify(savedIds);
+  const [undo, setUndo] = useState<{ receipt: FavoriteRemoval; name: string } | null>(null);
+  const [feedback, setFeedback] = useState("");
+  const [restoring, setRestoring] = useState(false);
+  const undoButton = useRef<HTMLButtonElement>(null);
+  const focusUndo = useRef(false);
+
   const [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState<{
     ids: string[]; attempt: number; restaurants: Map<string, SavedRestaurant> | null;
   }>();
 
   useEffect(() => {
-    if (!savedIds.length) return;
+    if (undo && focusUndo.current) undoButton.current?.focus();
+  }, [undo]);
+
+  useEffect(() => {
+    const ids = JSON.parse(savedIdsJSON) as string[];
+    if (!ids.length) return;
     const controller = new AbortController();
-    void loadSavedRestaurants(savedIds, controller.signal).then(
+    void loadSavedRestaurants(ids, controller.signal).then(
       (restaurants) => {
-        if (!controller.signal.aborted) setResult({ ids: savedIds, attempt, restaurants });
+        if (!controller.signal.aborted) setResult({ ids, attempt, restaurants });
       },
       () => {
-        if (!controller.signal.aborted) setResult({ ids: savedIds, attempt, restaurants: null });
+        if (!controller.signal.aborted) setResult({ ids, attempt, restaurants: null });
       },
     );
     return () => controller.abort();
-  }, [savedIds, attempt]);
+  }, [savedIdsJSON, attempt]);
 
   const current = result?.attempt === attempt && savedIds.every((id) => result.ids.includes(id)) ? result : null;
-  const loading = !isLoaded || (savedIds.length > 0 && !current);
+  const loading = status === "loading" || (status === "ready" && savedIds.length > 0 && !current);
   const error = Boolean(savedIds.length && current?.restaurants === null);
   const saved = savedIds
     .map((id) => current?.restaurants?.get(id))
     .filter((restaurant): restaurant is SavedRestaurant => Boolean(restaurant));
   const missing = savedIds.length - saved.length;
 
-  const removeSavedRestaurant = (restaurant: SavedRestaurant) => {
-    // Every rendered item came from savedIds, so this is a real saved -> unsaved
-    // transition rather than a generic persistence notification.
-    removeSwipe(restaurant.id);
-    captureFoodSwipeEvent("restaurant_unsaved", {
-      ...restaurantAnalyticsContext(restaurant, "saved"),
-      unsaveSource: "saved_list",
-    });
+  const removeSavedRestaurant = async (restaurant: SavedRestaurant, focus: boolean) => {
+    try {
+      const receipt = await removeFavorite(restaurant.id);
+      if (!receipt) return;
+      focusUndo.current = focus;
+      setUndo({ receipt, name: restaurant.name });
+      setFeedback("");
+      captureFoodSwipeEvent("restaurant_unsaved", {
+        ...restaurantAnalyticsContext(restaurant, "saved"),
+        unsaveSource: "saved_list",
+      });
+    } catch {
+      setFeedback(`Couldn’t remove ${restaurant.name} from Saved.`);
+    }
+  };
+
+  const restore = async () => {
+    if (!undo || restoring) return;
+    setRestoring(true);
+    try {
+      const restored = await undoRemoveFavorite(undo.receipt);
+      setUndo((current) => current === undo ? null : current);
+      setFeedback(restored ? `Restored ${undo.name} to Saved.` : "That removal can no longer be undone.");
+    } catch {
+      setFeedback(`Couldn’t restore ${undo.name} to Saved.`);
+    } finally {
+      setRestoring(false);
+    }
   };
 
   return (
@@ -81,7 +115,24 @@ export default function SavedClient() {
         </p>
       </header>
 
-      {loading ? (
+      {undo && (
+        <div className="mb-4 flex flex-wrap items-center gap-3 text-sm text-tan">
+          <p role="status">Removed {undo.name} from Saved.</p>
+          <button type="button" ref={undoButton} onClick={() => void restore()} disabled={restoring || status !== "ready"}
+            className="rounded-full border border-line px-4 py-2 text-cream">
+            Undo
+          </button>
+        </div>
+      )}
+      {feedback && <p role="status" className="mb-4 text-sm text-tan">{feedback}</p>}
+      {status === "error" ? (
+        <div className="space-y-3 text-tan">
+          <p role="alert">Couldn’t access favorites on this device.</p>
+          <button className="rounded-full border border-line px-4 py-2" type="button" onClick={() => void retryStorage()}>
+            Retry
+          </button>
+        </div>
+      ) : loading ? (
         <div className="space-y-3">
           {[0, 1, 2].map((i) => (
             <div key={i} className="shimmer h-24 rounded-3xl" />
@@ -160,7 +211,7 @@ export default function SavedClient() {
 
                 <button
                   type="button"
-                  onClick={() => removeSavedRestaurant(r)}
+                  onClick={(event) => void removeSavedRestaurant(r, event.currentTarget === document.activeElement)}
                   aria-label={`Remove ${r.name} from saved`}
                   className="shrink-0 self-start rounded-full p-2 text-haze transition hover:bg-white/10 hover:text-saffron"
                 >

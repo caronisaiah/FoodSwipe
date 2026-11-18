@@ -6,12 +6,19 @@ import type {
   Dietary,
   ManualVideoEntry,
   PriceLevel,
-  SwipeAction,
   SwipeDirection,
   UserPreferences,
   Vibe,
 } from "./types";
 import { normalizeVideo } from "./video";
+import type { Market } from "./markets";
+import {
+  addFavorite, removeFavorite, undoFavorite, selectFavorites, selectSeen, restartMarket, recordSwipe,
+  type FavoriteRemoval,
+} from "./discoveryState";
+import {
+  getDiscoverySnapshot, INITIAL_DISCOVERY, refreshDiscovery, subscribeDiscovery, updateDiscovery,
+} from "./discoveryStorage";
 
 /**
  * Client-side persistence for MVP v0, built on `useSyncExternalStore` so that
@@ -21,12 +28,6 @@ import { normalizeVideo } from "./video";
  */
 
 const PREFS_KEY = "foodswipe.preferences.v1";
-// v2: bumped for the v1.7 launch-demo seed refresh so accumulated swipe history
-// (which referenced the pre-refresh restaurant set) starts clean and the full
-// refreshed deck reappears. NOTE: saves share this store, so this also resets
-// saved restaurants — accepted for the dataset refresh. A future version should
-// split seen/swiped from saved/favorites so a refresh needn't clear saves.
-const SWIPES_KEY = "foodswipe.swipes.v2";
 const MANUAL_VIDEOS_KEY = "foodswipe.manualVideos.v1";
 
 export const DEFAULT_PREFERENCES: UserPreferences = {
@@ -38,8 +39,7 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   dietary: [],
 };
 
-// Stable fallback references — required so server/empty snapshots don't loop.
-const EMPTY_SWIPES: SwipeAction[] = [];
+// Stable fallback references — required so server/empty snapshots don’t loop.
 const EMPTY_MANUAL: ManualVideoEntry[] = [];
 
 /*
@@ -68,20 +68,6 @@ function normalizePreferences(v: unknown): UserPreferences {
     vibes: asStringArray<Vibe>(o.vibes),
     dietary: asStringArray<Dietary>(o.dietary),
   };
-}
-
-function normalizeSwipes(v: unknown): SwipeAction[] {
-  if (!Array.isArray(v)) return EMPTY_SWIPES;
-  const valid = v.filter((s): s is SwipeAction => {
-    if (!s || typeof s !== "object") return false;
-    const r = s as Record<string, unknown>;
-    return (
-      typeof r.restaurantId === "string" &&
-      (r.direction === "left" || r.direction === "right") &&
-      typeof r.at === "number"
-    );
-  });
-  return valid.length === v.length && valid.length === 0 ? EMPTY_SWIPES : valid;
 }
 
 function normalizeManualVideos(v: unknown): ManualVideoEntry[] {
@@ -169,20 +155,6 @@ function useStoredValue<T>(
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }
 
-const noopSubscribe = () => () => {};
-
-/**
- * True once the client has hydrated. Lets screens defer localStorage-dependent
- * UI (e.g. the saved list) by one paint to avoid a flash of the empty state.
- */
-export function useHydrated(): boolean {
-  return useSyncExternalStore(
-    noopSubscribe,
-    () => true,
-    () => false,
-  );
-}
-
 /** Onboarding preferences. setPreferences persists immediately. */
 export function usePreferences() {
   const preferences = useStoredValue(
@@ -205,52 +177,53 @@ export function usePreferences() {
   return { preferences, setPreferences };
 }
 
-/** Swipe history. Right = saved, left = skipped. */
-export function useSwipes() {
-  const swipes = useStoredValue(SWIPES_KEY, EMPTY_SWIPES, normalizeSwipes);
+function useDiscoveryState() {
+  return useSyncExternalStore(subscribeDiscovery, getDiscoverySnapshot, () => INITIAL_DISCOVERY);
+}
 
-  const recordSwipe = useCallback(
-    (restaurantId: string, direction: SwipeDirection) => {
-      const prev = readCached(SWIPES_KEY, EMPTY_SWIPES, normalizeSwipes);
-      writeJSON(SWIPES_KEY, [
-        // a fresh decision replaces any prior one for this place
-        ...prev.filter((s) => s.restaurantId !== restaurantId),
-        { restaurantId, direction, at: Date.now() },
-      ]);
-    },
-    [],
-  );
-
-  const removeSwipe = useCallback((restaurantId: string) => {
-    const prev = readCached(SWIPES_KEY, EMPTY_SWIPES, normalizeSwipes);
-    writeJSON(
-      SWIPES_KEY,
-      prev.filter((s) => s.restaurantId !== restaurantId),
-    );
-  }, []);
-
-  const resetSwipes = useCallback(() => writeJSON(SWIPES_KEY, EMPTY_SWIPES), []);
-
-  const swipedIds = useMemo(() => swipes.map((s) => s.restaurantId), [swipes]);
-
-  // Saved = right swipes, most recent first.
-  const savedIds = useMemo(
-    () =>
-      [...swipes]
-        .filter((s) => s.direction === "right")
-        .sort((a, b) => b.at - a.at)
-        .map((s) => s.restaurantId),
-    [swipes],
-  );
-
+/** Device-local favorites, ordered newest first. */
+export function useFavorites() {
+  const { state, status } = useDiscoveryState();
+  const favorites = useMemo(() => selectFavorites(state), [state]);
   return {
-    swipes,
-    swipedIds,
-    savedIds,
-    recordSwipe,
-    removeSwipe,
-    resetSwipes,
+    status,
+    favorites,
+    retry: refreshDiscovery,
+    saveFavorite: saveRestaurantFavorite,
+    removeFavorite: removeRestaurantFavorite,
+    undoRemoveFavorite,
   };
+}
+
+function saveRestaurantFavorite(restaurantId: string) {
+  const at = Date.now();
+  return updateDiscovery((state) => addFavorite(state, restaurantId, at));
+}
+
+function removeRestaurantFavorite(restaurantId: string) {
+  return updateDiscovery((state) => removeFavorite(state, restaurantId));
+}
+
+function undoRemoveFavorite(receipt: FavoriteRemoval) {
+  return updateDiscovery((state) => undoFavorite(state, receipt));
+}
+
+export function useDiscoveryHistory(market: Market | null) {
+  const { state, status } = useDiscoveryState();
+  const seenIds = useMemo(() => market ? selectSeen(state, market) : [], [market, state]);
+
+  const swipe = useCallback((restaurantId: string, direction: SwipeDirection) => {
+    if (!market) return Promise.resolve(false);
+    const at = Date.now();
+    return updateDiscovery((current) => recordSwipe(current, market, restaurantId, direction, at));
+  }, [market]);
+
+  const restart = useCallback(() => {
+    if (!market) return Promise.resolve();
+    return updateDiscovery((current) => restartMarket(current, market));
+  }, [market]);
+
+  return { seenIds, status, retry: refreshDiscovery, recordSwipe: swipe, restart };
 }
 
 /**

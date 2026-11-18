@@ -239,14 +239,6 @@ export interface UserPreferences {
 
 export type SwipeDirection = "left" | "right";
 
-/** A recorded user decision on a card. Right = save, left = skip. */
-export interface SwipeAction {
-  restaurantId: string;
-  direction: SwipeDirection;
-  /** Epoch ms when the swipe happened. */
-  at: number;
-}
-
 /** Output of the ranking function: a restaurant plus why it surfaced. */
 export interface ScoredRestaurant {
   restaurant: Restaurant;

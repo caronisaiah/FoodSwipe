@@ -5,7 +5,7 @@ import type { SavedRestaurant } from "@/lib/types";
 export async function GET(req: Request): Promise<Response> {
   const ids = new URL(req.url).searchParams.getAll("id");
   const headers = { "Cache-Control": "no-store" };
-  if (!ids.length || ids.length > 25 || ids.some((id) => !id || id.length > 256)) {
+  if (!ids.length || ids.length > 25 || ids.some((id) => !id || id.length > 256 || id.includes("\0"))) {
     return Response.json({ error: "Invalid saved restaurant IDs." }, { status: 400, headers });
   }
 

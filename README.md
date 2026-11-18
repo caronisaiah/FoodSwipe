@@ -579,8 +579,8 @@ No schema/migration or market selector is needed.
   exact enabled catalogue with `?market=`; the unqualified API reads the cookie.
   See [shared discovery market](docs/shared-discovery-market.md).
 - **Saved.** Resolves saved public slugs across markets. Hidden restaurants
-  and seed-only IDs in production remain unavailable. Favorites still share
-  local swipe history pending the independent persistence migration.
+  and seed-only IDs in production remain unavailable. Favorites and market
+  discovery history persist independently. See [migration and Saved v2 contract](docs/favorites-storage.md).
 - **Profiles/admin audit (M2A).** Direct published `/restaurants/[id]` profiles
   remain market-independent; hidden rows fail public resolution. The launch
   default is discovery-only, not an access restriction. Admin candidate import,

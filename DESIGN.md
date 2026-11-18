@@ -60,9 +60,9 @@ Use 100 ms for press and surface feedback, 120 ms for a later editorial page han
 
 **Preferences and distance.** Existing browser storage persists price, cuisine, and occasion immediately. Make updates against the current stored value to preserve legacy fields. Hide cuisine when fewer than two real catalogue categories match and exclude dietary-looking tags. Occasion choices match the effective catalogue. Existing legacy location, radius, and dietary values remain readable by the current ranker. A future migration must define what to retain and how to retire hidden values. Name the fixed origin in distance copy. Decide origin, radius, and ranking versus eligibility on Swipe before exposing a radius.
 
-**Favorites.** Start Over currently clears the swipe history that also supplies favorites. Before redesigning Saved, separate favorites into independent records with stable ordering so Start Over clears discovery history only. Resolve favorite restaurant IDs across published markets and define unavailable venue handling. Preserve save order when restoring an item. Verify migration, retries, and existing favorites before enabling the featured most-recent save in production.
+**Favorites.** Saved v2 should consume the ordered favorites hook and the cross-market card lookup. Feature the first resolved favorite, retain unavailable items in the count, and use the removal receipt to restore original order on Undo. [Saved v2 engineering contract](docs/favorites-storage.md#saved-v2-contract)
 
-**Next step.** Tune v2 has visual approval. Coordinate shared market state and favorites persistence before shipping the Saved feature. [Engineering handoff](docs/tune-v2-engineering-handoff.md)
+**Next step.** Implement the approved Saved v2 layout against that contract. [Tune design handoff](docs/tune-v2-engineering-handoff.md)
 
 ## Future market atmosphere
 

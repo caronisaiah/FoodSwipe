@@ -42,8 +42,8 @@ of the market cookie, as does any future device location.
   and Map omit any DB record whose link would resolve to a seed. Hidden, missing, or
   seed-only records in production remain in browser storage, with an
   unavailable count in the UI. A fetch failure has a separate retry state.
-  This phase does not migrate data. Start Over still clears the swipe history
-  that currently supplies favorites.
+  The next engineering phase separated favorites from swipe history.
+  [Migration and Saved v2 contract](favorites-storage.md).
 
 For isolated local NYC/DC QA, run
 `FOODSWIPE_DEFAULT_MARKET=nyc FOODSWIPE_ENABLE_DC_DISCOVERY=true npm run dev -- --hostname 127.0.0.1`. Mixed

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { getMarketDisplayName, type Market } from "@/lib/markets";
 import { useDiscoveryCatalogue } from "@/lib/useDiscoveryCatalogue";
 import { rankRestaurants } from "@/lib/recommendations";
-import { usePreferences, useSwipes, useHydrated } from "@/lib/storage";
+import { usePreferences, useFavorites, useDiscoveryHistory } from "@/lib/storage";
 import SwipeDeck from "@/components/SwipeDeck";
 import MaterialIcon from "@/components/MaterialIcon";
 import {
@@ -21,11 +21,12 @@ import {
  * before rendering the deck so returning users don't see already-swiped cards.
  */
 export default function FeedClient({ market }: { market: Market | null }) {
-  const hydrated = useHydrated();
   const { preferences } = usePreferences();
-  const { recordSwipe, resetSwipes, savedIds, swipedIds } = useSwipes();
+  const { favorites } = useFavorites();
+  const { status: storageStatus, seenIds, recordSwipe, restart, retry: retryStorage } = useDiscoveryHistory(market);
   const { catalogue, retry } = useDiscoveryCatalogue(market);
   const [deckCycle, setDeckCycle] = useState(0);
+  const [actionError, setActionError] = useState<string | null>(null);
   const entryTrackedRef = useRef(false);
 
   const deck = useMemo(
@@ -45,18 +46,26 @@ export default function FeedClient({ market }: { market: Market | null }) {
   );
 
   useEffect(() => {
-    if (!hydrated || catalogue.status !== "ready" || entryTrackedRef.current) return;
+    if (storageStatus !== "ready" || catalogue.status !== "ready" || entryTrackedRef.current) return;
     entryTrackedRef.current = true;
     captureFeedStarted("entry");
-  }, [captureFeedStarted, catalogue.status, hydrated]);
+  }, [captureFeedStarted, catalogue.status, storageStatus]);
 
   const handleSwipe = useCallback(
-    (restaurantId: string, direction: "left" | "right") => {
+    async (restaurantId: string, direction: "left" | "right") => {
       const feedIndex = deck.findIndex((item) => item.restaurant.id === restaurantId);
       const scored = feedIndex >= 0 ? deck[feedIndex] : undefined;
 
-      recordSwipe(restaurantId, direction);
-      if (!scored) return;
+      if (!scored) return false;
+
+      let addedFavorite;
+      try {
+        addedFavorite = await recordSwipe(restaurantId, direction);
+      } catch {
+        const { name } = scored.restaurant;
+        setActionError(direction === "right" ? `Couldn’t save ${name}.` : `Couldn’t skip ${name}.`);
+        return false;
+      }
 
       const context = restaurantAnalyticsContext(
         scored.restaurant,
@@ -64,21 +73,31 @@ export default function FeedClient({ market }: { market: Market | null }) {
         feedIndex + 1,
       );
       captureFoodSwipeEvent("restaurant_swiped", { ...context, direction });
-      if (direction === "right") {
+      if (addedFavorite) {
         captureFoodSwipeEvent("restaurant_saved", {
           ...context,
           saveSource: "swipe",
         });
       }
+      return true;
     },
     [deck, recordSwipe],
   );
 
-  const handleReset = useCallback(() => {
-    resetSwipes();
-    setDeckCycle((cycle) => cycle + 1);
-    captureFeedStarted("restart");
-  }, [captureFeedStarted, resetSwipes]);
+  const handleReset = useCallback(async () => {
+    try {
+      await restart();
+      setDeckCycle((cycle) => cycle + 1);
+      captureFeedStarted("restart");
+    } catch {
+      setActionError("Couldn’t start over.");
+    }
+  }, [captureFeedStarted, restart]);
+
+  const handleStorageRetry = async () => {
+    await retryStorage();
+    setActionError(null);
+  };
 
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden bg-ink">
@@ -96,13 +115,22 @@ export default function FeedClient({ market }: { market: Market | null }) {
             </button>
           )}
         </div>
-      ) : hydrated && catalogue.status === "ready" ? (
+      ) : actionError || storageStatus === "error" ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 text-center">
+          <p role="alert" className="font-display text-xl font-bold text-cream">
+            {actionError ?? "Couldn’t access swipe history or favorites on this device."}
+          </p>
+          <button type="button" onClick={() => void handleStorageRetry()} className="rounded-full border border-line px-4 py-2 text-cream">
+            Retry
+          </button>
+        </div>
+      ) : storageStatus === "ready" && catalogue.status === "ready" ? (
         <SwipeDeck
           deck={deck}
           deckCycle={deckCycle}
-          swipedIds={swipedIds}
+          swipedIds={seenIds}
           onSwipe={handleSwipe}
-          savedCount={savedIds.length}
+          savedCount={favorites.length}
           onReset={handleReset}
         />
       ) : (
