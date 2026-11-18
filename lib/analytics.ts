@@ -137,7 +137,7 @@ export function captureFoodSwipeEvent<EventName extends FoodSwipeEventName>(
 }
 
 export function restaurantAnalyticsContext(
-  restaurant: Restaurant,
+  restaurant: Pick<Restaurant, "id" | "market" | "priceLevel" | "cuisineTags" | "vibeTags" | "videoCount">,
   surface: AnalyticsSurface,
   feedPosition?: number,
 ): RestaurantAnalyticsContext {

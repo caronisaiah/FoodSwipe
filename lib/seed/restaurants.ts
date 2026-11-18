@@ -770,5 +770,5 @@ export const RESTAURANTS_BY_ID: Record<string, Restaurant> = Object.fromEntries(
 );
 
 export function getRestaurantById(id: string): Restaurant | undefined {
-  return RESTAURANTS_BY_ID[id];
+  return Object.hasOwn(RESTAURANTS_BY_ID, id) ? RESTAURANTS_BY_ID[id] : undefined;
 }

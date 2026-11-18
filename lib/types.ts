@@ -206,6 +206,11 @@ export interface Restaurant {
   videos: [Video, ...Video[]];
 }
 
+/** Public fields needed for a saved card and its existing analytics context. */
+export type SavedRestaurant = Pick<Restaurant,
+  "id" | "name" | "market" | "neighborhood" | "priceLevel" | "cuisineTags" | "vibeTags" | "videoCount"
+>;
+
 /**
  * A restaurant identity photo resolved from Google Places (New) at request time.
  * Ephemeral by contract: `photoUri` is a short-lived Google URL that is NEVER

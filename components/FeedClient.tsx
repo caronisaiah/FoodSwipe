@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import type { Restaurant } from "@/lib/types";
+import { getMarketDisplayName, type Market } from "@/lib/markets";
+import { useDiscoveryCatalogue } from "@/lib/useDiscoveryCatalogue";
 import { rankRestaurants } from "@/lib/recommendations";
 import { usePreferences, useSwipes, useHydrated } from "@/lib/storage";
 import SwipeDeck from "@/components/SwipeDeck";
@@ -19,63 +20,35 @@ import {
  * top app bar floats over the hero as a glassy overlay. We wait for hydration
  * before rendering the deck so returning users don't see already-swiped cards.
  */
-export default function FeedClient({
-  initialRestaurants,
-}: {
-  initialRestaurants: Restaurant[];
-}) {
+export default function FeedClient({ market }: { market: Market | null }) {
   const hydrated = useHydrated();
   const { preferences } = usePreferences();
   const { recordSwipe, resetSwipes, savedIds, swipedIds } = useSwipes();
-
-  // Server decides whether seed fallback is allowed for this deployment. In
-  // production mode this starts empty and the API must provide DB-published rows.
-  const [restaurants, setRestaurants] = useState<Restaurant[]>(initialRestaurants);
-  const [restaurantsSettled, setRestaurantsSettled] = useState(false);
+  const { catalogue, retry } = useDiscoveryCatalogue(market);
   const [deckCycle, setDeckCycle] = useState(0);
   const entryTrackedRef = useRef(false);
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch("/api/restaurants");
-        const data = (await res.json()) as { restaurants?: Restaurant[] };
-        if (!cancelled && Array.isArray(data.restaurants)) {
-          setRestaurants(data.restaurants);
-        }
-      } catch {
-        // Keep the server-provided initial list. In production content mode that
-        // is intentionally empty rather than a seed fallback.
-      } finally {
-        if (!cancelled) setRestaurantsSettled(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const deck = useMemo(
-    () => rankRestaurants(restaurants, preferences),
-    [restaurants, preferences],
+    () => catalogue.status === "ready" ? rankRestaurants(catalogue.restaurants, preferences) : [],
+    [catalogue, preferences],
   );
 
   const captureFeedStarted = useCallback(
     (startReason: "entry" | "restart") => {
       captureFoodSwipeEvent("foodswipe_feed_started", {
-        market: deck[0]?.restaurant.market ?? "unknown",
+        market: market ?? "unknown",
         restaurantCount: deck.length,
         startReason,
       });
     },
-    [deck],
+    [deck, market],
   );
 
   useEffect(() => {
-    if (!hydrated || !restaurantsSettled || entryTrackedRef.current) return;
+    if (!hydrated || catalogue.status !== "ready" || entryTrackedRef.current) return;
     entryTrackedRef.current = true;
     captureFeedStarted("entry");
-  }, [captureFeedStarted, hydrated, restaurantsSettled]);
+  }, [captureFeedStarted, catalogue.status, hydrated]);
 
   const handleSwipe = useCallback(
     (restaurantId: string, direction: "left" | "right") => {
@@ -110,7 +83,20 @@ export default function FeedClient({
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden bg-ink">
       {/* Full-bleed discovery canvas — hero first, profile details below on scroll */}
-      {hydrated ? (
+      {!market || catalogue.status === "error" || (catalogue.status === "ready" && deck.length === 0) ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 text-center">
+          <p role="status" className="font-display text-xl font-bold text-cream">
+            {!market ? "Choose a discovery market in Tune." : catalogue.status === "error"
+              ? `Restaurants couldn’t load for ${getMarketDisplayName(market)}.`
+              : `No curated restaurants in ${getMarketDisplayName(market)} yet.`}
+          </p>
+          {market && catalogue.status === "error" && (
+            <button type="button" onClick={retry} className="rounded-full border border-line px-4 py-2 text-cream">
+              Retry
+            </button>
+          )}
+        </div>
+      ) : hydrated && catalogue.status === "ready" ? (
         <SwipeDeck
           deck={deck}
           deckCycle={deckCycle}
@@ -120,7 +106,9 @@ export default function FeedClient({
           onReset={handleReset}
         />
       ) : (
-        <div className="shimmer absolute inset-0" />
+        <div role="status" className="shimmer absolute inset-0">
+          <span className="sr-only">Loading restaurants for {getMarketDisplayName(market)}…</span>
+        </div>
       )}
 
       {/* Top app bar — floats over the hero. */}

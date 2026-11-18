@@ -2,6 +2,8 @@ import "server-only";
 import { and, asc, eq } from "drizzle-orm";
 import { OVERTURE_ATTRIBUTION_URL, type MapLocation, type MapNotice } from "@/lib/mapLocations";
 import type { Market } from "@/lib/markets";
+import { shouldIncludeSeedRestaurants } from "@/lib/contentMode";
+import { getRestaurantById } from "@/lib/seed/restaurants";
 import { getDb } from "./index";
 import { restaurantLocations, restaurants } from "./schema";
 import { getRealVideoCounts } from "./videos";
@@ -58,7 +60,10 @@ export async function getApprovedMapLocations(market: Market): Promise<MapLocati
       eq(restaurants.market, market),
     )).orderBy(asc(restaurantLocations.displayName));
 
+  const includeSeeds = shouldIncludeSeedRestaurants();
   const locations = rows.flatMap((row): Omit<MapLocation, "videoCount">[] => {
+    // A pin must link to the same profile that its slug resolves publicly.
+    if (includeSeeds && getRestaurantById(row.slug)) return [];
     const name = row.name?.trim();
     const notices = getNotices(row.evidence);
     if (!name || !notices || !Number.isFinite(row.lat) || !Number.isFinite(row.lng)

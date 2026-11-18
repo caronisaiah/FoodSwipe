@@ -35,7 +35,18 @@ const photos: Record<Market, {
 
 const markets = listMarkets();
 
-function MarketDisclosure({ market }: { market: Market }) {
+interface DiscoveryCityProps {
+  market: Market | null;
+  selectableMarkets: Market[];
+  resetSelection: boolean;
+  switching: boolean;
+  switchError: boolean;
+  onSelect: (market: Market, close: () => void) => void;
+}
+
+function MarketDisclosure({
+  market, selectableMarkets, resetSelection, switching, switchError, onSelect,
+}: DiscoveryCityProps) {
   const disclosure = useRef<HTMLDetailsElement>(null);
   const summary = useRef<HTMLElement>(null);
   const [open, setOpen] = useState(false);
@@ -77,7 +88,7 @@ function MarketDisclosure({ market }: { market: Market }) {
         <MaterialIcon name="location_on" />
         <span className="discovery-market-name">
           <small>Discovery market</small>
-          <strong>{getMarketDisplayName(market)}</strong>
+          <strong>{market ? getMarketDisplayName(market) : "Choose a market"}</strong>
         </span>
         <MaterialIcon name="expand_more" className="discovery-market-chevron" />
       </summary>
@@ -89,21 +100,48 @@ function MarketDisclosure({ market }: { market: Market }) {
           transition={{ duration: reduced ? 0 : 0.15, ease: [0.22, 1, 0.36, 1] }}
         >
           <ul aria-label="Discovery markets">
-            {orderedMarkets.map(({ id, displayName }) => (
-              <li key={id} className={id === market ? "discovery-market-current" : undefined}>
-                <span>{displayName}</span>
-                {id === market ? <span><MaterialIcon name="check" /> Current</span> : <span>Unavailable</span>}
-              </li>
-            ))}
+            {orderedMarkets.map(({ id, displayName }) => {
+              const current = id === market;
+              const selectable = selectableMarkets.includes(id) && (!current || resetSelection);
+              return (
+                <li key={id} className={current ? "discovery-market-current" : undefined}>
+                  {selectable ? (
+                    <button
+                      type="button"
+                      aria-label={`Use ${displayName}`}
+                      aria-disabled={switching || undefined}
+                      onClick={() => onSelect(id, () => {
+                        if (!disclosure.current?.open) return;
+                        summary.current?.focus({ preventScroll: true });
+                        disclosure.current.open = false;
+                      })}
+                    >
+                      <span>{displayName}</span>
+                      <span>Select</span>
+                    </button>
+                  ) : (
+                    <>
+                      <span>{displayName}</span>
+                      {current ? <span><MaterialIcon name="check" /> Current</span> : <span>Unavailable</span>}
+                    </>
+                  )}
+                </li>
+              );
+            })}
           </ul>
-          <p>Market switching is currently unavailable.</p>
+          {switching && <p role="status">Updating discovery market…</p>}
+          {switchError && <p role="alert">Couldn’t update the market. Try again.</p>}
+          {!switching && !switchError && market && !resetSelection && selectableMarkets.length === 1 && (
+            <p>Market switching is currently unavailable.</p>
+          )}
         </motion.div>
       )}
     </details>
   );
 }
 
-export default function DiscoveryCity({ market }: { market: Market | null }) {
+export default function DiscoveryCity(props: DiscoveryCityProps) {
+  const { market, resetSelection } = props;
   const photo = market ? photos[market] : null;
   return (
     <section className="discovery-city" aria-label="Discovery city">
@@ -129,11 +167,13 @@ export default function DiscoveryCity({ market }: { market: Market | null }) {
           <h1 className="editorial-page-title">Taste of the City</h1>
         </div>
       </div>
-      {market ? <MarketDisclosure market={market} /> : (
-        <div className="discovery-market-unavailable">
-          <MaterialIcon name="location_off" />
-          <strong>Discovery market unavailable</strong>
-        </div>
+      <MarketDisclosure {...props} />
+      {resetSelection && (
+        <p className="tune-option-status" role="status" data-visible="">
+          {market
+            ? `Your previous market is unavailable. Showing ${getMarketDisplayName(market)}.`
+            : "Your previous market is unavailable. Choose a market to continue."}
+        </p>
       )}
     </section>
   );

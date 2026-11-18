@@ -1,47 +1,30 @@
 import { getAllRestaurants } from "@/lib/db/restaurants";
 import { shouldIncludeSeedRestaurants } from "@/lib/contentMode";
 import { isAllowedMarket } from "@/lib/markets";
-import { getDefaultPublicMarket, getPublicSeedRestaurants } from "@/lib/publicMarket";
+import { getDiscoveryMarket, getDiscoveryMarketSettings } from "@/lib/discoveryMarket";
 
-/*
-  GET /api/restaurants  (public read)
-
-  Content mode controls whether code-managed seed restaurants are visible
-  alongside DB-published restaurants. The client fetches this and ranks locally.
-
-  Market (M2A): FOODSWIPE_DEFAULT_MARKET chooses default public discovery.
-  - no `?market`           → configured default (missing config = DC).
-  - `?market=dc`           → DC. demo/mixed: seed + published; production:
-                             published only, regardless of the default.
-  - `?market=nyc`          → NYC published rows ONLY (seed is the DC market, so it
-                             is never mixed in); honest empty list if none exist.
-  - invalid/garbage market → falls back to the configured default. This is a public,
-                             degrade-safe READ route (it already prefers a safe
-                             fallback over erroring), so we don't 400 here — unlike
-                             the admin WRITE import route, which rejects bad input.
-
-  Degrades safely for demo/mixed. Production never falls back to seeds, so an
-  empty/down DB stays an honest empty list instead of showing demo content.
-  `no-store` — published edits/promotions show on the next fetch.
-*/
+/** Public discovery catalogue, scoped to an enabled or explicitly selected market. */
 export async function GET(req: Request): Promise<Response> {
-  const raw = new URL(req.url).searchParams.get("market");
-  const m = raw ? raw.trim().toLowerCase() : "";
-  // Explicit supported markets win, even if the default env is misconfigured.
-  const market = isAllowedMarket(m) ? m : getDefaultPublicMarket();
-  if (!market) return noStore({ restaurants: [] });
-  const includeSeeds = shouldIncludeSeedRestaurants();
+  const params = new URL(req.url).searchParams.getAll("market");
+  const explicit = params[0];
+  if (params.length > 1 || (explicit !== undefined && !isAllowedMarket(explicit))) {
+    return noStore({ error: "Invalid discovery market." }, 400);
+  }
+
+  const market = explicit ?? (await getDiscoveryMarket()).market;
+  if (!market) return noStore({ error: "Discovery market unavailable." }, 503);
+  if (!getDiscoveryMarketSettings().selectableMarkets.includes(market)) {
+    return noStore({ error: "Discovery market unavailable." }, 403);
+  }
+
   try {
-    const restaurants = await getAllRestaurants(market, { includeSeeds });
-    return noStore({ restaurants });
+    const restaurants = await getAllRestaurants(market, { includeSeeds: shouldIncludeSeedRestaurants() });
+    return noStore({ market, restaurants }, 200);
   } catch {
-    // Last-resort safety net. Seed fallback is allowed only outside production.
-    return noStore({
-      restaurants: getPublicSeedRestaurants(market),
-    });
+    return noStore({ error: "Restaurants couldn’t load." }, 503);
   }
 }
 
-function noStore(body: unknown): Response {
-  return Response.json(body, { status: 200, headers: { "Cache-Control": "no-store" } });
+function noStore(body: unknown, status: number): Response {
+  return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }

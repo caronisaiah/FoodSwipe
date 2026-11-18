@@ -689,8 +689,7 @@ function EmptyState({
           You&apos;re all caught up
         </h2>
         <p className="mt-1 text-sm text-haze">
-          You went through all {total} spots near you
-          {savedCount > 0 ? ` and saved ${savedCount}.` : "."}
+          You went through all {total} spots in this market.
         </p>
       </div>
       <div className="flex flex-col items-stretch gap-3">

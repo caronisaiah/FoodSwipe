@@ -158,28 +158,22 @@ function rowToAdmin(row: RestaurantRow): PublishedRestaurantAdmin {
   };
 }
 
-/**
- * Published (visible) restaurants for the feed. Empty on no-DB/error (seed-safe).
- * An optional `market` filter narrows to one market; omitted = all markets
- * (current behavior). A1 keeps this backward-compatible — callers that pass
- * nothing are unchanged.
- */
-export async function getPublishedRestaurants(market?: Market): Promise<Restaurant[]> {
+async function readPublishedRestaurants(market: Market | undefined, requireDb = false): Promise<Restaurant[]> {
   const db = getDb();
-  if (!db) return [];
-  try {
-    const where = market
-      ? and(eq(restaurants.status, "published"), eq(restaurants.market, market))
-      : eq(restaurants.status, "published");
-    const rows = await db
-      .select()
-      .from(restaurants)
-      .where(where)
-      .orderBy(desc(restaurants.createdAt));
-    return rows.map(rowToRestaurant);
-  } catch {
-    return []; // never break the seed feed on a DB hiccup
+  if (!db) {
+    if (requireDb) throw new Error("Published restaurant store is unavailable.");
+    return [];
   }
+  const where = market
+    ? and(eq(restaurants.status, "published"), eq(restaurants.market, market))
+    : eq(restaurants.status, "published");
+  const rows = await db.select().from(restaurants).where(where).orderBy(desc(restaurants.createdAt));
+  return rows.map(rowToRestaurant);
+}
+
+/** Published restaurants for legacy callers that can degrade to an empty list. */
+export async function getPublishedRestaurants(market?: Market): Promise<Restaurant[]> {
+  return readPublishedRestaurants(market).catch(() => []);
 }
 
 /** A single PUBLISHED restaurant by its public slug (hidden ones are not served). */
@@ -529,20 +523,35 @@ export async function getAppRestaurantById(
   return getPublishedRestaurantBySlug(id);
 }
 
-/**
- * Public feed dataset: published DB restaurants plus optional code-managed seed.
- *
- * Backward-compatible by default (no `market` → seed + all published). The seed
- * is the DC market, so an explicit non-DC filter returns ONLY that market's
- * published rows (seed excluded) — honest, possibly empty if none exist yet. A
- * "dc" filter can include the seed when the caller allows it. Production public
- * reads pass includeSeeds=false so DB-published rows are the only source.
- */
-export async function getAllRestaurants(
-  market?: Market,
-  options: PublicRestaurantReadOptions = {},
+/** Resolve saved public slugs across markets, using the same visibility as profiles. */
+export async function getAppRestaurantsByIds(
+  ids: string[],
+  { includeSeeds = true }: PublicRestaurantReadOptions = {},
 ): Promise<Restaurant[]> {
-  const published = await getPublishedRestaurants(market);
-  const includeSeed = options.includeSeeds !== false && (!market || market === "dc");
-  return includeSeed ? [...RESTAURANTS, ...published] : published;
+  const seeds = includeSeeds ? RESTAURANTS.filter((restaurant) => ids.includes(restaurant.id)) : [];
+  const seedIds = new Set(seeds.map((restaurant) => restaurant.id));
+  const slugs = ids.filter((id) => !seedIds.has(id));
+  if (!slugs.length) return seeds;
+  const db = getDb();
+  if (!db) {
+    if (!includeSeeds) throw new Error("Published restaurant store is unavailable.");
+    return seeds;
+  }
+  const rows = await db.select().from(restaurants).where(and(
+    eq(restaurants.status, "published"),
+    inArray(restaurants.slug, slugs),
+  ));
+  return [...seeds, ...rows.map(rowToRestaurant)];
+}
+
+/** Public discovery dataset, keeping an empty market distinct from an unavailable store. */
+export async function getAllRestaurants(
+  market: Market,
+  { includeSeeds = true }: PublicRestaurantReadOptions = {},
+): Promise<Restaurant[]> {
+  const published = await readPublishedRestaurants(market, !includeSeeds);
+  if (!includeSeeds) return published;
+  // Public profiles resolve seed IDs first while seeds are enabled.
+  const unshadowed = published.filter((restaurant) => !getRestaurantById(restaurant.id));
+  return market === "dc" ? [...RESTAURANTS, ...unshadowed] : unshadowed;
 }

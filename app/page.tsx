@@ -1,7 +1,6 @@
 import type { Viewport } from "next";
-import { connection } from "next/server";
 import PreferenceOnboarding from "@/components/PreferenceOnboarding";
-import { getDefaultPublicMarket } from "@/lib/publicMarket";
+import { getDiscoveryMarket } from "@/lib/discoveryMarket";
 
 export const viewport: Viewport = {
   themeColor: "#f8f1e5",
@@ -13,6 +12,6 @@ export const viewport: Viewport = {
 };
 
 export default async function Home() {
-  await connection();
-  return <PreferenceOnboarding market={getDefaultPublicMarket()} />;
+  const discovery = await getDiscoveryMarket();
+  return <PreferenceOnboarding {...discovery} />;
 }

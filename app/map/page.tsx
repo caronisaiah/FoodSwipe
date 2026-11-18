@@ -1,18 +1,16 @@
-import { connection } from "next/server";
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import MapboxDiscovery from "@/components/MapboxDiscovery";
 import MaterialIcon from "@/components/MaterialIcon";
 import { getApprovedMapLocations } from "@/lib/db/restaurantLocations";
 import { getMarketDisplayName } from "@/lib/markets";
-import { getDefaultPublicMarket } from "@/lib/publicMarket";
+import { getDiscoveryMarket } from "@/lib/discoveryMarket";
 
 export const metadata = { title: "Restaurant map · FoodSwipe" };
 
 export default async function MapPage() {
-  await connection();
   const token = process.env.MAPBOX_PUBLIC_TOKEN?.trim();
-  const market = getDefaultPublicMarket(process.env.FOODSWIPE_DEFAULT_MARKET?.trim() || "nyc");
+  const { market } = await getDiscoveryMarket();
   const enabled = process.env.FOODSWIPE_MAP_ENABLED === "true"
     && token && /^pk\.[\w-]+\.[\w-]+$/.test(token) && market;
   const locations = enabled ? await getApprovedMapLocations(market).catch(() => null) : null;
@@ -30,7 +28,7 @@ export default async function MapPage() {
           </Link>
         </header>
         {enabled && locations?.length ? (
-          <MapboxDiscovery token={token} market={market} locations={locations} />
+          <MapboxDiscovery key={market} token={token} market={market} locations={locations} />
         ) : (
           <div className="grid flex-1 place-items-center px-6">
             <div className="max-w-xs text-center">

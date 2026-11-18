@@ -281,7 +281,8 @@ html:has(.tune) { scroll-padding-block: 12px calc(72px + env(safe-area-inset-bot
   background: var(--color-editorial-surface);
   box-shadow: 0 8px 14px #22382c18;
 }
-.discovery-market-panel li {
+.discovery-market-panel li,
+.discovery-market-panel li > button {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -291,7 +292,13 @@ html:has(.tune) { scroll-padding-block: 12px calc(72px + env(safe-area-inset-bot
   gap: 4px 8px;
   font-weight: 650;
 }
-.discovery-market-panel li > span:last-child {
+/* Selectable rows retain the existing disclosure's dimensions and typography. */
+.discovery-market-panel li:has(> button) { padding: 0; }
+.discovery-market-panel li > button { width: 100%; cursor: pointer; text-align: left; }
+.discovery-market-panel li > button[aria-disabled="true"] { cursor: wait; }
+.discovery-market-panel li > button:focus-visible { outline-offset: -2px; }
+.discovery-market-panel li > span:last-child,
+.discovery-market-panel li > button > span:last-child {
   display: inline-flex;
   align-items: center;
   gap: 4px;

@@ -10,10 +10,13 @@ const require = createRequire(import.meta.url);
 const ts = require("typescript");
 
 // Source-level regression checks with isolated fixtures: no .env, network or DB.
-function harness(env, rows = [], dbAvailable = true, policyResponses = {}) {
+function harness(env, rows = [], dbAvailable = true, policyResponses = {}, initialMarket, requestOrigin = "https://example.test") {
   const cache = new Map();
   const warnings = [];
   const policyRequests = [];
+  const locationReads = [];
+  const cookieWrites = [];
+  let storedMarket = initialMarket;
   let dbReads = 0;
   let failApiRead = false;
   const table = Object.fromEntries(["status", "market", "slug", "createdAt"].map((key) => [key, key]));
@@ -24,9 +27,11 @@ function harness(env, rows = [], dbAvailable = true, policyResponses = {}) {
       let result = rows;
       const query = {
         from: () => query,
+        innerJoin: () => query,
         where: (predicate) => { result = result.filter(predicate); return query; },
         orderBy: async () => result,
         limit: async (count) => result.slice(0, count),
+        then: (resolve) => resolve(result),
       };
       return query;
     },
@@ -42,6 +47,16 @@ function harness(env, rows = [], dbAvailable = true, policyResponses = {}) {
     function localRequire(name) {
       if (name === "server-only") return {};
       if (name === "next/link") return { default: () => null };
+      if (name === "next/headers") return {
+        headers: async () => ({ get: (key) => key === "origin" ? requestOrigin : null }),
+        cookies: async () => ({
+          get: () => storedMarket === undefined ? undefined : { value: storedMarket },
+          set: (key, value, options) => {
+            cookieWrites.push({ key, options });
+            storedMarket = value;
+          },
+        }),
+      };
       if (name === "next/server") return { connection: async () => {} };
       if (name === "react/jsx-runtime") return require(name);
       if (name.startsWith("@/components/")) return { default: () => null };
@@ -49,12 +64,28 @@ function harness(env, rows = [], dbAvailable = true, policyResponses = {}) {
         eq: (key, value) => (row) => row[key] === value,
         and: (...conditions) => (row) => conditions.every((condition) => condition(row)),
         desc: (key) => key,
+        asc: (key) => key,
+        inArray: (key, values) => (row) => values.includes(row[key]),
       };
       if (relative === "lib/db/restaurants.ts") {
         if (name === "./index") return { getDb: () => dbAvailable ? db : null };
         if (name === "./schema") return { restaurants: table };
         if (["./candidates", "./heroMediaSelections", "@/lib/candidateReadiness"].includes(name)) return {};
       }
+      if (relative === "lib/db/restaurantLocations.ts") {
+        if (name === "./index") return { getDb: () => dbAvailable ? db : null };
+        if (name === "./schema") return {
+          restaurants: table,
+          restaurantLocations: { restaurantId: "restaurantId", status: "locationStatus" },
+        };
+        if (name === "./videos") return { getRealVideoCounts: async () => new Map() };
+      }
+      if (name === "@/lib/db/restaurantLocations") return {
+        getApprovedMapLocations: async (market) => {
+          locationReads.push(market);
+          return market === "nyc" ? [{ slug: "nyc-visible" }] : [];
+        },
+      };
       if (name.startsWith("@/lib/")) {
         const value = load(`${name.slice(2)}.ts`);
         if (name === "@/lib/db/restaurants" && relative === "app/api/restaurants/route.ts") {
@@ -80,13 +111,16 @@ function harness(env, rows = [], dbAvailable = true, policyResponses = {}) {
     }, { filename: relative });
     return compiledModule.exports;
   }
-  return { load, warnings, policyRequests, dbReads: () => dbReads, failRead: () => { failApiRead = true; } };
+  return { load, warnings, policyRequests, cookieWrites, locationReads, dbReads: () => dbReads, failRead: () => { failApiRead = true; } };
 }
 
 const rows = [
   { slug: "dc-visible", name: "DC", market: "dc", status: "published" },
-  { slug: "nyc-visible", name: "NYC", market: "nyc", status: "published" },
+  { slug: "nyc-visible", name: "NYC", market: "nyc", status: "published",
+    googlePlaceId: "fixture-place-id", address: "fixture street", lat: 40.7, lng: -74,
+  },
   { slug: "nyc-hidden", name: "Hidden", market: "nyc", status: "hidden" },
+  { slug: "nyc-draft", name: "Draft", market: "nyc", status: "draft" },
 ];
 let checks = 0;
 const equal = (actual, expected) => {
@@ -95,39 +129,143 @@ const equal = (actual, expected) => {
   checks++;
 };
 const ids = (restaurants) => restaurants.map((restaurant) => restaurant.id);
-async function request(h, query = "") {
+async function request(h, query = "", status = 200) {
   const res = await h.load("app/api/restaurants/route.ts").GET(new Request(`https://example.test/api/restaurants${query}`));
-  equal(res.status, 200);
+  equal(res.status, status);
   equal(res.headers.get("cache-control"), "no-store");
-  return (await res.json()).restaurants;
+  return res.json();
 }
+
 for (const mode of ["demo", "mixed", "production"]) {
-  for (const configured of [undefined, "", " dc ", " NYC ", "unsupported"]) {
-    const h = harness({ FOODSWIPE_CONTENT_MODE: mode, FOODSWIPE_DEFAULT_MARKET: configured }, rows);
-    const market = configured === " NYC " ? "nyc" : configured === "unsupported" ? null : "dc";
-    equal(h.load("lib/publicMarket.ts").getDefaultPublicMarket(), market);
+  for (const [configured, allowDC, expectedMarket] of [
+    [undefined, undefined, "nyc"], ["", undefined, "nyc"], [" NYC ", undefined, "nyc"],
+    [" dc ", "true", "dc"], ["dc", undefined, null], ["unsupported", "true", null],
+  ]) {
+    const h = harness({
+      NODE_ENV: "development",
+      FOODSWIPE_CONTENT_MODE: mode,
+      FOODSWIPE_DEFAULT_MARKET: configured,
+      FOODSWIPE_ENABLE_DC_DISCOVERY: allowDC,
+    }, rows);
+    const states = h.load("lib/discoveryMarket.ts");
     const seeds = ids(h.load("lib/seed/restaurants.ts").RESTAURANTS);
     const dc = mode === "production" ? ["dc-visible"] : [...seeds, "dc-visible"];
-    const expected = market === "nyc" ? ["nyc-visible"] : market === "dc" ? dc : [];
-    for (const query of ["", "?market=garbage", "?market="]) equal(ids(await request(h, query)), expected);
-    equal(ids(await request(h, "?market=dc")), dc);
-    equal(ids(await request(h, "?market=nyc")), ["nyc-visible"]);
-    const seedIds = mode !== "production" && market === "dc" ? seeds : [];
-    equal(ids(h.load("app/feed/page.tsx").default().props.children.props.initialRestaurants), seedIds);
-    equal(ids(h.load("app/saved/page.tsx").default().props.children.props.seedRestaurants), seedIds);
+    equal(await states.getDiscoveryMarket(), {
+      market: expectedMarket, resetSelection: false, selectableMarkets: allowDC ? ["nyc", "dc"] : ["nyc"],
+    });
+    const tune = await h.load("app/page.tsx").default();
+    const feed = await h.load("app/feed/page.tsx").default();
+    equal(tune.props.market, expectedMarket);
+    equal(feed.props.children.props.market, expectedMarket);
+    if (expectedMarket) {
+      const result = await request(h);
+      equal(result.market, expectedMarket);
+      equal(ids(result.restaurants), expectedMarket === "nyc" ? ["nyc-visible"] : dc);
+    } else await request(h, "", 503);
+
+    for (const query of ["?market=garbage", "?market=", "?market=nyc&market=dc"]) await request(h, query, 400);
+    if (allowDC) equal(ids((await request(h, "?market=dc")).restaurants), dc);
+    else await request(h, "?market=dc", 403);
+    equal(ids((await request(h, "?market=nyc")).restaurants), ["nyc-visible"]);
+
     const reads = h.load("lib/db/restaurants.ts");
     equal((await reads.getAppRestaurantById("dc-visible", { includeSeeds: false })).id, "dc-visible");
     equal(await reads.getAppRestaurantById("nyc-hidden", { includeSeeds: false }), null);
     equal(await reads.getAppRestaurantById(seeds[0], { includeSeeds: false }), null);
+    const lookup = await h.load("app/api/restaurants/saved/route.ts").GET(new Request(
+      `https://example.test/api/restaurants/saved?id=dc-visible&id=nyc-visible&id=nyc-hidden&id=nyc-draft&id=${seeds[0]}&id=dc-visible`,
+    ));
+    equal(lookup.status, 200);
+    equal(lookup.headers.get("cache-control"), "no-store");
+    const { restaurants: savedCards } = await lookup.json();
+    equal(Object.keys(savedCards.find((row) => row.id === "nyc-visible")).sort(),
+      ["id", "name", "market", "neighborhood", "priceLevel", "cuisineTags", "vibeTags", "videoCount"].sort());
+    equal(ids(savedCards).sort(),
+      (mode === "production" ? ["dc-visible", "nyc-visible"] : ["dc-visible", "nyc-visible", seeds[0]]).sort());
     h.failRead();
-    equal(ids(await request(h)), seedIds);
-    if (market === null) equal(h.warnings.length, 1);
+    await request(h, "?market=nyc", 503);
   }
-  for (const availability of [false, "error"]) {
-    const h = harness({ FOODSWIPE_CONTENT_MODE: mode, FOODSWIPE_DEFAULT_MARKET: "nyc" }, [], availability);
-    equal(ids(await request(h)), []);
-    equal(ids(await request(h, "?market=nyc")), []);
+  for (const availability of [false, "error", true]) {
+    const h = harness({ FOODSWIPE_CONTENT_MODE: mode }, [], availability);
+    const empty = availability === true || (availability === false && mode !== "production");
+    const response = await request(h, "", empty ? 200 : 503);
+    if (empty) equal(ids(response.restaurants), []);
   }
+}
+
+const dcQA = { FOODSWIPE_ENABLE_DC_DISCOVERY: "true", NODE_ENV: "development" };
+for (const stored of ["garbage", "dc", "NYC", "vancouver"]) {
+  const h = harness({}, rows, true, {}, stored);
+  equal(await h.load("lib/discoveryMarket.ts").getDiscoveryMarket(), {
+    market: "nyc", selectableMarkets: ["nyc"], resetSelection: true,
+  });
+  equal((await request(h)).market, "nyc");
+  equal(await h.load("app/discoveryMarketActions.ts").selectDiscoveryMarket(stored), false);
+  equal(h.cookieWrites, []);
+}
+
+const switching = harness(dcQA, rows);
+const select = switching.load("app/discoveryMarketActions.ts").selectDiscoveryMarket;
+for (const id of [null, {}, "vancouver"]) equal(await select(id), false);
+for (const market of ["nyc", "dc", "nyc"]) {
+  equal(await select(market), true);
+  equal((await request(switching)).market, market);
+}
+equal(switching.cookieWrites[0].options.secure, false);
+
+for (const mode of ["demo", "mixed", "production"]) {
+  const deployed = harness({ ...dcQA, NODE_ENV: "production", FOODSWIPE_CONTENT_MODE: mode }, rows, true, {}, "dc");
+  equal(await deployed.load("lib/discoveryMarket.ts").getDiscoveryMarket(), {
+    market: "nyc", selectableMarkets: ["nyc"], resetSelection: true,
+  });
+  await request(deployed, "?market=dc", 403);
+  const choose = deployed.load("app/discoveryMarketActions.ts").selectDiscoveryMarket;
+  equal(await choose("dc"), false);
+  equal(deployed.cookieWrites, []);
+  equal(await choose("nyc"), true);
+  equal(deployed.cookieWrites[0], {
+    key: "foodswipe.discovery-market.v1",
+    options: { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 31536000 },
+  });
+}
+const missingOrigin = harness(dcQA, rows, true, {}, undefined, null);
+equal(await missingOrigin.load("app/discoveryMarketActions.ts").selectDiscoveryMarket("dc"), false);
+equal(missingOrigin.cookieWrites, []);
+
+const seedId = "le-diplomate";
+const collisionRows = [{ slug: seedId, market: "nyc", status: "published", name: "Imported duplicate" }];
+for (const allowSeeds of [true, false]) {
+  const mode = allowSeeds ? "mixed" : "production";
+  const h = harness({ ...dcQA, FOODSWIPE_CONTENT_MODE: mode }, collisionRows);
+  const reads = h.load("lib/db/restaurants.ts");
+  equal(await reads.getAppRestaurantById("constructor"), null);
+  equal((await reads.getAppRestaurantById(seedId, { includeSeeds: allowSeeds })).market, allowSeeds ? "dc" : "nyc");
+  equal((await reads.getAppRestaurantsByIds([seedId], { includeSeeds: allowSeeds }))[0].market, allowSeeds ? "dc" : "nyc");
+  equal(ids((await request(h, "?market=nyc")).restaurants), allowSeeds ? [] : [seedId]);
+  const dc = (await request(h, "?market=dc")).restaurants;
+  equal(dc.filter((row) => row.id === seedId).length, allowSeeds ? 1 : 0);
+
+  const locationFixture = (row, locationStatus = "approved") => ({
+    ...row, area: "", address: "", cuisine: null, lat: 40.7, lng: -74,
+    evidence: { sources: [{ dataset: "foursquare" }] }, locationStatus,
+  });
+  const mapDB = harness({ FOODSWIPE_CONTENT_MODE: mode }, [
+    locationFixture(collisionRows[0]), locationFixture(rows[0]), locationFixture(rows[1]),
+    locationFixture(rows[2]), locationFixture(rows[3]), locationFixture({ ...rows[1], slug: "pending" }, "pending"),
+  ]);
+  const locations = await mapDB.load("lib/db/restaurantLocations.ts").getApprovedMapLocations("nyc");
+  equal(locations.map(({ slug }) => slug).sort(), allowSeeds ? ["nyc-visible"] : [seedId, "nyc-visible"].sort());
+}
+
+for (const market of ["nyc", "dc"]) {
+  const h = harness({
+    ...dcQA, MAPBOX_PUBLIC_TOKEN: "pk.fixture.token", FOODSWIPE_MAP_ENABLED: "true",
+  }, rows, true, {}, market);
+  const map = await h.load("app/map/page.tsx").default();
+  const content = map.props.children.props.children[1];
+  equal(h.locationReads, [market]);
+  if (market === "nyc") equal(content.props.locations, [{ slug: "nyc-visible" }]);
+  else equal(content.type, "div");
 }
 
 const mapConfig = {

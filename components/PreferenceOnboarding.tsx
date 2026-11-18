@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState, useTransition } from "react";
+import { selectDiscoveryMarket } from "@/app/discoveryMarketActions";
 import BottomNav from "@/components/BottomNav";
 import MaterialIcon from "@/components/MaterialIcon";
 import DiscoveryCity from "@/components/editorial/DiscoveryCity";
@@ -9,49 +10,25 @@ import { PreferenceCheck, SegmentedPreference } from "@/components/editorial/Pre
 import type { Market } from "@/lib/markets";
 import { BUDGET_OPTIONS, CRAVING_OPTIONS, VIBE_OPTIONS } from "@/lib/options";
 import { usePreferences } from "@/lib/storage";
-import type { Restaurant } from "@/lib/types";
-
-type OptionsState =
-  | { status: "loading" | "error" }
-  | { status: "ready"; restaurants: Restaurant[] };
+import { useDiscoveryCatalogue } from "@/lib/useDiscoveryCatalogue";
 
 function updateChoice<Value>(values: Value[], value: Value, checked: boolean) {
   return checked ? [...values.filter((item) => item !== value), value] : values.filter((item) => item !== value);
 }
 
-export default function PreferenceOnboarding({ market }: { market: Market | null }) {
+export default function PreferenceOnboarding({ market, selectableMarkets, resetSelection }: {
+  market: Market | null;
+  selectableMarkets: Market[];
+  resetSelection: boolean;
+}) {
   const { preferences, setPreferences } = usePreferences();
-  const [catalogue, setCatalogue] = useState<OptionsState>({ status: "loading" });
-  const [reload, setReload] = useState(0);
   const preferenceSection = useRef<HTMLElement>(null);
   const retryButton = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!market) return;
-    const controller = new AbortController();
-
-    async function loadOptions() {
-      try {
-        // Match the feed's default catalogue. An alternate-market read only works
-        // after the feed, Map and this screen share an effective market.
-        const response = await fetch("/api/restaurants", { cache: "no-store", signal: controller.signal });
-        if (!response.ok) throw new Error("Could not load the discovery catalogue.");
-        const { restaurants } = await response.json() as { restaurants?: Restaurant[] };
-        if (!Array.isArray(restaurants)) throw new Error("Missing discovery catalogue.");
-        if (!controller.signal.aborted) {
-          if (retryButton.current && retryButton.current === document.activeElement) {
-            preferenceSection.current?.focus({ preventScroll: true });
-          }
-          setCatalogue({ status: "ready", restaurants: restaurants.filter((restaurant) => restaurant.market === market) });
-        }
-      } catch {
-        if (!controller.signal.aborted) setCatalogue({ status: "error" });
-      }
-    }
-
-    void loadOptions();
-    return () => controller.abort();
-  }, [market, reload]);
+  const { catalogue, retry, retried } = useDiscoveryCatalogue(market, () => {
+    if (retryButton.current === document.activeElement) preferenceSection.current?.focus({ preventScroll: true });
+  });
+  const [switching, startSwitch] = useTransition();
+  const [switchError, setSwitchError] = useState(false);
 
   const restaurants = catalogue.status === "ready" ? catalogue.restaurants : [];
   const cuisines = CRAVING_OPTIONS.filter(({ value }) =>
@@ -63,7 +40,7 @@ export default function PreferenceOnboarding({ market }: { market: Market | null
       : catalogue.status === "error" ? "Cuisine and occasion choices couldn’t load."
         : cuisines.length < 2 && occasions.length === 0 ? "Cuisine and occasion choices are unavailable for this market."
           : null;
-  const canRetry = Boolean(market) && (catalogue.status === "error" || (catalogue.status === "loading" && reload > 0));
+  const canRetry = Boolean(market) && (catalogue.status === "error" || (catalogue.status === "loading" && retried));
 
   return (
     <div className="editorial-canvas tune">
@@ -76,7 +53,28 @@ export default function PreferenceOnboarding({ market }: { market: Market | null
       </header>
 
       <main className="tune-layout">
-        <DiscoveryCity market={market} />
+        <DiscoveryCity
+          market={market}
+          selectableMarkets={selectableMarkets}
+          resetSelection={resetSelection}
+          switching={switching}
+          switchError={switchError}
+          onSelect={(next, close) => {
+            if (switching) return;
+            setSwitchError(false);
+            startSwitch(async () => {
+              try {
+                if (await selectDiscoveryMarket(next)) {
+                  close();
+                  return;
+                }
+              } catch {
+                // The existing selected market remains in place on failure.
+              }
+              setSwitchError(true);
+            });
+          }}
+        />
         <section ref={preferenceSection} className="tune-preferences" id="tune-preferences" tabIndex={-1} aria-labelledby="recommendations-heading">
           <h2 id="recommendations-heading" className="editorial-section-title">Your recommendations</h2>
           <p className="tune-description">These preferences guide what you see first. Other restaurants can still show up.</p>
@@ -123,7 +121,7 @@ export default function PreferenceOnboarding({ market }: { market: Market | null
             </fieldset>
           )}
           <p className="tune-option-status" role="status" data-visible={optionStatus ? "" : undefined}>
-            {optionStatus ?? (reload > 0 ? <span className="sr-only">Preference choices loaded.</span> : null)}
+            {optionStatus ?? (retried ? <span className="sr-only">Preference choices loaded.</span> : null)}
           </p>
           {canRetry && (
             <button
@@ -132,13 +130,17 @@ export default function PreferenceOnboarding({ market }: { market: Market | null
               type="button"
               aria-disabled={catalogue.status === "loading" || undefined}
               onClick={() => {
-                if (catalogue.status !== "error") return;
-                setCatalogue({ status: "loading" });
-                setReload((attempt) => attempt + 1);
+                if (catalogue.status === "error") retry();
               }}
             >{catalogue.status === "loading" ? "Retrying…" : "Retry"}</button>
           )}
-          <Link className="editorial-action tune-explore" href="/feed" prefetch={false}>
+          <Link
+            className="editorial-action tune-explore"
+            href="/feed"
+            prefetch={false}
+            aria-disabled={switching || !market || undefined}
+            onClick={(event) => { if (switching || !market) event.preventDefault(); }}
+          >
             Explore restaurants <MaterialIcon name="arrow_forward" />
           </Link>
         </section>
