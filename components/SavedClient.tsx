@@ -1,227 +1,230 @@
 "use client";
 
+import { motion, useReducedMotion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { SavedRestaurant } from "@/lib/types";
 import { useFavorites } from "@/lib/storage";
 import type { FavoriteRemoval } from "@/lib/discoveryState";
-import { priceLabel } from "@/lib/options";
-import { cuisineIcon } from "@/lib/emoji";
-import TagPill from "@/components/TagPill";
-import HeroMedia from "@/components/HeroMedia";
+import EditorialHeader from "@/components/editorial/EditorialHeader";
+import SavedRestaurantItem from "@/components/editorial/SavedRestaurantItem";
 import MaterialIcon from "@/components/MaterialIcon";
-import {
-  captureFoodSwipeEvent,
-  restaurantAnalyticsContext,
-} from "@/lib/analytics";
+import { captureFoodSwipeEvent, restaurantAnalyticsContext } from "@/lib/analytics";
 
-async function loadSavedRestaurants(savedIds: string[], signal: AbortSignal) {
-  // A malformed legacy entry counts as unavailable without blocking other saves.
+const SAVED_BATCH_SIZE = 25;
+
+async function loadSavedBatch(savedIds: string[], signal: AbortSignal) {
+  // Malformed legacy IDs stay in favorites and appear as unavailable.
   const ids = savedIds.filter((id) => id.length > 0 && id.length <= 256 && !id.includes("\0"));
-  const restaurants: SavedRestaurant[] = [];
-  for (let start = 0; start < ids.length; start += 25) {
-    const query = new URLSearchParams(ids.slice(start, start + 25).map((id) => ["id", id]));
-    const response = await fetch(`/api/restaurants/saved?${query}`, { signal });
-    if (!response.ok) throw new Error("Saved details couldn’t load.");
-    const data = await response.json() as { restaurants?: SavedRestaurant[] };
-    if (!Array.isArray(data.restaurants)) throw new Error("Missing saved restaurant details.");
-    restaurants.push(...data.restaurants);
+  const restaurants = new Map<string, SavedRestaurant | null>(savedIds.map((id) => [id, null]));
+  if (!ids.length) return restaurants;
+  const query = new URLSearchParams(ids.map((id) => ["id", id]));
+  const response = await fetch(`/api/restaurants/saved?${query}`, { signal });
+  if (!response.ok) throw new Error("Saved details couldn’t load.");
+  const data = await response.json() as { restaurants?: SavedRestaurant[] };
+  if (!Array.isArray(data.restaurants)) throw new Error("Missing saved restaurant details.");
+  for (const restaurant of data.restaurants) {
+    if (ids.includes(restaurant.id)) restaurants.set(restaurant.id, restaurant);
   }
-  return new Map(restaurants.map((restaurant) => [restaurant.id, restaurant]));
+  return restaurants;
 }
 
-/** Global favorites, newest first. */
+type Removal = { receipt: FavoriteRemoval; id: string; name: string };
+type Notice = { text: string; undo?: Removal };
+type FocusRequest = { target: "undo" | "heading" } | { target: "record"; id: string };
+
+function stillHasActionFocus(button: HTMLButtonElement) {
+  return document.activeElement === button || document.activeElement === document.body;
+}
+
 export default function SavedClient() {
   const { status, favorites, removeFavorite, undoRemoveFavorite, retry: retryStorage } = useFavorites();
-  const savedIds = favorites.map(({ restaurantId }) => restaurantId);
-  // IndexedDB returns fresh objects even when a tab only changed discovery history.
-  const savedIdsJSON = JSON.stringify(savedIds);
-  const [undo, setUndo] = useState<{ receipt: FavoriteRemoval; name: string } | null>(null);
+  const reduceMotion = useReducedMotion() ?? false;
+  const [catalogue, setCatalogue] = useState(new Map<string, SavedRestaurant | null>());
+  const [failedRequest, setFailedRequest] = useState<string>();
+  const [notice, setNotice] = useState<Notice>();
   const [feedback, setFeedback] = useState("");
-  const [restoring, setRestoring] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const page = useRef<HTMLDivElement>(null);
+  const navigation = useRef<HTMLDivElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
   const undoButton = useRef<HTMLButtonElement>(null);
-  const focusUndo = useRef(false);
-
-  const [attempt, setAttempt] = useState(0);
-  const [result, setResult] = useState<{
-    ids: string[]; attempt: number; restaurants: Map<string, SavedRestaurant> | null;
-  }>();
+  const removeButtons = useRef(new Map<string, HTMLButtonElement>());
+  const focusRequest = useRef<FocusRequest>(null);
 
   useEffect(() => {
-    if (undo && focusUndo.current) undoButton.current?.focus();
-  }, [undo]);
+    const container = page.current;
+    const rail = navigation.current;
+    if (!container || !rail) return;
+    const observer = new ResizeObserver(() => {
+      container.style.setProperty("--saved-footer-height", `${rail.offsetHeight}px`);
+    });
+    observer.observe(rail);
+    return () => observer.disconnect();
+  }, []);
+
+  // The store can replace favorite objects when only discovery history changed.
+  const request = JSON.stringify(favorites.filter(({ restaurantId }) => !catalogue.has(restaurantId))
+    .slice(0, SAVED_BATCH_SIZE)
+    .map(({ restaurantId }) => restaurantId));
+  const catalogueError = request !== "[]" && request === failedRequest;
 
   useEffect(() => {
-    const ids = JSON.parse(savedIdsJSON) as string[];
-    if (!ids.length) return;
+    if (status !== "ready" || request === "[]" || request === failedRequest) return;
     const controller = new AbortController();
-    void loadSavedRestaurants(ids, controller.signal).then(
+    void loadSavedBatch(JSON.parse(request) as string[], controller.signal).then(
       (restaurants) => {
-        if (!controller.signal.aborted) setResult({ ids, attempt, restaurants });
+        if (!controller.signal.aborted) setCatalogue((current) => new Map([...current, ...restaurants]));
       },
       () => {
-        if (!controller.signal.aborted) setResult({ ids, attempt, restaurants: null });
+        if (!controller.signal.aborted) setFailedRequest(request);
       },
     );
     return () => controller.abort();
-  }, [savedIdsJSON, attempt]);
+  }, [failedRequest, request, status]);
 
-  const current = result?.attempt === attempt && savedIds.every((id) => result.ids.includes(id)) ? result : null;
-  const loading = status === "loading" || (status === "ready" && savedIds.length > 0 && !current);
-  const error = Boolean(savedIds.length && current?.restaurants === null);
-  const saved = savedIds
-    .map((id) => current?.restaurants?.get(id))
-    .filter((restaurant): restaurant is SavedRestaurant => Boolean(restaurant));
-  const missing = savedIds.length - saved.length;
+  useEffect(() => {
+    const focus = focusRequest.current;
+    if (!focus) return;
+    focusRequest.current = null;
+    const target = focus.target === "undo" ? undoButton.current
+      : focus.target === "record" ? removeButtons.current.get(focus.id) : heading.current;
+    (target ?? heading.current)?.focus();
+  }, [notice]);
 
-  const removeSavedRestaurant = async (restaurant: SavedRestaurant, focus: boolean) => {
+  useEffect(() => {
+    if (!notice || notice.undo) return;
+    const timeout = window.setTimeout(() => setNotice(undefined), 3500);
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
+
+  async function remove(id: string, restaurant: SavedRestaurant | null, button: HTMLButtonElement) {
+    if (busy || status !== "ready") return;
+    const focused = document.activeElement === button;
+    const name = restaurant?.name ?? "unavailable restaurant";
+    setBusy(true);
+    setFeedback("");
     try {
-      const receipt = await removeFavorite(restaurant.id);
-      if (!receipt) return;
-      focusUndo.current = focus;
-      setUndo({ receipt, name: restaurant.name });
-      setFeedback("");
-      captureFoodSwipeEvent("restaurant_unsaved", {
+      const receipt = await removeFavorite(id);
+      if (!receipt) {
+        if (focused && stillHasActionFocus(button)) heading.current?.focus();
+        setFeedback("This restaurant was already removed from Saved.");
+        return;
+      }
+      if (focused && stillHasActionFocus(button)) focusRequest.current = { target: "undo" };
+      setNotice({ text: `Removed ${name} from Saved.`, undo: { receipt, name, id } });
+      if (restaurant) captureFoodSwipeEvent("restaurant_unsaved", {
         ...restaurantAnalyticsContext(restaurant, "saved"),
         unsaveSource: "saved_list",
       });
     } catch {
-      setFeedback(`Couldn’t remove ${restaurant.name} from Saved.`);
+      setFeedback(`Couldn’t remove ${name} from Saved.`);
+    } finally {
+      setBusy(false);
     }
-  };
+  }
 
-  const restore = async () => {
-    if (!undo || restoring) return;
-    setRestoring(true);
+  async function restore(button: HTMLButtonElement) {
+    const undo = notice?.undo;
+    if (!undo || busy || status !== "ready") return;
+    const focused = document.activeElement === button;
+    setBusy(true);
+    setFeedback("");
     try {
       const restored = await undoRemoveFavorite(undo.receipt);
-      setUndo((current) => current === undo ? null : current);
-      setFeedback(restored ? `Restored ${undo.name} to Saved.` : "That removal can no longer be undone.");
+      if (focused && stillHasActionFocus(button)) {
+        focusRequest.current = restored ? { target: "record", id: undo.id } : { target: "heading" };
+      }
+      setNotice({ text: restored ? `Restored ${undo.name} to Saved.` : "That removal can no longer be undone." });
     } catch {
       setFeedback(`Couldn’t restore ${undo.name} to Saved.`);
     } finally {
-      setRestoring(false);
+      setBusy(false);
     }
-  };
+  }
+
+  const featuredIndex = favorites.findIndex(({ restaurantId }) => catalogue.get(restaurantId));
+  const featured = favorites[featuredIndex];
+  const ordered = featured ? [featured, ...favorites.filter((favorite) => favorite !== featured)] : favorites;
+  const featureLabel = featured?.savedAt === null ? "Saved restaurant"
+    : featuredIndex === 0 ? "Most recent save"
+    : favorites.slice(0, featuredIndex).every(({ restaurantId }) => catalogue.get(restaurantId) === null)
+      ? "Most recent available save" : "Available save";
+  const shown = ordered.filter(({ restaurantId }) => catalogue.has(restaurantId));
+  const count = favorites.length;
+
+  const actionNotice = (notice || feedback) && (
+    <motion.div className="saved-notice" initial={reduceMotion ? false : { opacity: 0.9, y: 4 }}
+      animate={{ opacity: 1, y: 0 }} transition={{ duration: reduceMotion ? 0 : 0.15, ease: [0.22, 1, 0.36, 1] }}>
+      <div>
+        {notice && <p>{notice.text}</p>}
+        {feedback && <p>{feedback}</p>}
+      </div>
+      {notice?.undo && <button ref={undoButton} type="button" aria-disabled={busy || status !== "ready" || undefined}
+        onClick={(event) => void restore(event.currentTarget)}>Undo</button>}
+    </motion.div>
+  );
 
   return (
-    <div className="no-scrollbar flex-1 overflow-y-auto px-4 pb-8 pt-6">
-      <header className="mb-5">
-        <h1 className="font-display text-3xl font-bold text-cream">Saved</h1>
-        <p className="mt-1 text-sm text-tan">
-          {loading ? "Loading…" : saved.length > 0
-            ? `${saved.length} ${saved.length === 1 ? "spot" : "spots"} you're into`
-            : savedIds.length === 0 ? "Right-swipe a spot to save it here." : null}
-        </p>
-      </header>
+    <div ref={page} className="editorial-canvas saved-page">
+      <EditorialHeader skipTo="saved-title" skipLabel="Skip to saved places" notice={actionNotice} navigationRef={navigation} />
+      <main className="saved-layout">
+        <header className="saved-header">
+          <h1 id="saved-title" ref={heading} tabIndex={-1} className="editorial-page-title">Saved for later</h1>
+          {(status === "ready" || count > 0) && <span>{count} {count === 1 ? "place" : "places"}</span>}
+        </header>
 
-      {undo && (
-        <div className="mb-4 flex flex-wrap items-center gap-3 text-sm text-tan">
-          <p role="status">Removed {undo.name} from Saved.</p>
-          <button type="button" ref={undoButton} onClick={() => void restore()} disabled={restoring || status !== "ready"}
-            className="rounded-full border border-line px-4 py-2 text-cream">
-            Undo
-          </button>
-        </div>
-      )}
-      {feedback && <p role="status" className="mb-4 text-sm text-tan">{feedback}</p>}
-      {status === "error" ? (
-        <div className="space-y-3 text-tan">
-          <p role="alert">Couldn’t access favorites on this device.</p>
-          <button className="rounded-full border border-line px-4 py-2" type="button" onClick={() => void retryStorage()}>
-            Retry
-          </button>
-        </div>
-      ) : loading ? (
-        <div className="space-y-3">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="shimmer h-24 rounded-3xl" />
-          ))}
-        </div>
-      ) : error ? (
-        <div className="space-y-3 text-tan">
-          <p role="status">Saved restaurant details couldn’t load. Your saves are still stored on this device.</p>
-          <button className="rounded-full border border-line px-4 py-2" type="button" onClick={() => setAttempt((n) => n + 1)}>
-            Retry
-          </button>
-        </div>
-      ) : savedIds.length === 0 ? (
-        <div className="mt-20 flex flex-col items-center gap-4 text-center">
-          <span className="flex h-16 w-16 items-center justify-center rounded-full bg-surface ring-1 ring-inset ring-line">
-            <MaterialIcon name="bookmark" className="text-3xl text-saffron" />
-          </span>
-          <p className="max-w-[14rem] text-tan">
-            Nothing saved yet. Find spots you love in the feed.
-          </p>
-          <Link
-            href="/feed"
-            className="rounded-full bg-brand-gradient px-6 py-3 font-semibold text-saffron-ink shadow-lg shadow-saffron/20"
-          >
-            Start swiping →
-          </Link>
-        </div>
-      ) : (
-        <>
-          {missing > 0 && (
-            <p role="status" className="mb-4 text-sm text-tan">
-              {missing === 1 ? "One saved restaurant is" : `${missing} saved restaurants are`} currently unavailable.
-              {" "}Your saves are still stored on this device.
-            </p>
-          )}
-          <ul className="space-y-3">
-            {saved.map((r) => (
-              <li
-                key={r.id}
-                className="flex items-stretch gap-3 rounded-3xl bg-surface p-3 ring-1 ring-inset ring-white/5"
-              >
-                {/* Identity image when available -> logo -> placeholder + cuisine icon */}
-                <Link
-                  href={`/restaurants/${encodeURIComponent(r.id)}`}
-                  aria-label={`Open ${r.name}`}
-                  className="relative h-20 w-20 shrink-0 overflow-hidden rounded-2xl ring-1 ring-inset ring-white/5"
-                >
-                  <HeroMedia
-                    key={r.id}
-                    compact
-                    restaurantId={r.id}
-                    name={r.name}
-                    posterIcon={cuisineIcon(r.cuisineTags)}
-                  />
-                </Link>
+        {status === "error" ? (
+          <section className="saved-state">
+            <h2 className="editorial-section-title">Couldn’t access favorites</h2>
+            <p role="alert">Saved favorites couldn’t be read on this device.</p>
+            <button type="button" className="editorial-action editorial-action-secondary" onClick={() => {
+              heading.current?.focus();
+              void retryStorage();
+            }}>Retry device storage</button>
+          </section>
+        ) : catalogueError ? (
+          <section className="saved-state">
+            <h2 className="editorial-section-title">Restaurant details couldn’t load</h2>
+            <p role="alert">Your favorites are still saved on this device.</p>
+            <button type="button" className="editorial-action editorial-action-secondary" onClick={() => {
+              heading.current?.focus();
+              setFailedRequest(undefined);
+            }}>Retry restaurant details</button>
+          </section>
+        ) : status === "loading" || request !== "[]" ? (
+          <p className="saved-loading" role="status">{status === "loading" ? "Loading saved places…" : "Loading restaurant details…"}</p>
+        ) : count === 0 ? (
+          <section className="saved-state">
+            <MaterialIcon name="bookmark_border" />
+            <h2 className="editorial-section-title">No saved places yet</h2>
+            <p>Save somewhere you’d like to try while you explore.</p>
+            <Link className="editorial-action" href="/feed">Explore restaurants <MaterialIcon name="arrow_forward" /></Link>
+          </section>
+        ) : null}
 
-                <div className="flex min-w-0 flex-1 flex-col justify-center">
-                  <Link href={`/restaurants/${encodeURIComponent(r.id)}`} className="min-w-0">
-                    <h2 className="truncate font-display text-lg font-semibold text-cream">
-                      {r.name}
-                    </h2>
-                  </Link>
-                  <p className="flex items-center gap-1 truncate text-xs text-tan">
-                    <MaterialIcon name="location_on" className="text-[14px] text-haze" />
-                    {r.neighborhood} ·{" "}
-                    <span className="font-semibold text-saffron">{priceLabel(r.priceLevel)}</span>
-                  </p>
-                  <div className="mt-1.5 flex flex-wrap gap-1">
-                    {r.cuisineTags.slice(0, 2).map((t) => (
-                      <TagPill key={t} variant="cuisine">
-                        {t}
-                      </TagPill>
-                    ))}
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={(event) => void removeSavedRestaurant(r, event.currentTarget === document.activeElement)}
-                  aria-label={`Remove ${r.name} from saved`}
-                  className="shrink-0 self-start rounded-full p-2 text-haze transition hover:bg-white/10 hover:text-saffron"
-                >
-                  <MaterialIcon name="close" className="text-xl" />
-                </button>
-              </li>
-            ))}
+        {shown.length > 0 && (
+          <ul className="saved-list" aria-label="Saved restaurants">
+            {shown.map(({ restaurantId }) => {
+              const restaurant = catalogue.get(restaurantId) ?? null;
+              return <SavedRestaurantItem
+                key={restaurantId}
+                id={restaurantId}
+                restaurant={restaurant}
+                featureLabel={featured?.restaurantId === restaurantId ? featureLabel : undefined}
+                reduceMotion={reduceMotion}
+                busy={busy || status !== "ready"}
+                removeRef={(button) => {
+                  if (button) removeButtons.current.set(restaurantId, button);
+                  else removeButtons.current.delete(restaurantId);
+                }}
+                onRemove={(button) => void remove(restaurantId, restaurant, button)}
+              />;
+            })}
           </ul>
-        </>
-      )}
+        )}
+        <p className="sr-only" role="status">{feedback || notice?.text || ""}</p>
+      </main>
     </div>
   );
 }

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRef, useState, useTransition } from "react";
 import { selectDiscoveryMarket } from "@/app/discoveryMarketActions";
-import BottomNav from "@/components/BottomNav";
+import EditorialHeader from "@/components/editorial/EditorialHeader";
 import MaterialIcon from "@/components/MaterialIcon";
 import DiscoveryCity from "@/components/editorial/DiscoveryCity";
 import { PreferenceCheck, SegmentedPreference } from "@/components/editorial/PreferenceControls";
@@ -44,13 +44,7 @@ export default function PreferenceOnboarding({ market, selectableMarkets, resetS
 
   return (
     <div className="editorial-canvas tune">
-      <a className="tune-skip" href="#tune-preferences">Skip to preferences</a>
-      <header className="tune-masthead">
-        <Link className="editorial-wordmark" href="/feed" prefetch={false} aria-label="FoodSwipe, Discover">
-          Food<span>Swipe</span>
-        </Link>
-        <BottomNav />
-      </header>
+      <EditorialHeader skipTo="tune-preferences" skipLabel="Skip to preferences" />
 
       <main className="tune-layout">
         <DiscoveryCity
