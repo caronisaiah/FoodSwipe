@@ -1,6 +1,6 @@
 import { getPlacePhoto, getPlacePhotoByOrdinal, type PlacePhotoStatus } from "@/lib/places";
 import { logoUrl } from "@/lib/logos";
-import type { PlacePhoto } from "@/lib/types";
+import type { PlacePhoto } from "@/lib/placePhoto";
 
 /**
  * Server-only shared hero-media resolver — the single source of truth for the

@@ -72,9 +72,9 @@ function cleanPlaceId(value: unknown): string | null {
 }
 
 export function validHeroPhotoOrdinal(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  const n = Math.trunc(value);
-  return n >= 1 && n <= 10 ? n : null;
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 10
+    ? value
+    : null;
 }
 
 function rowToSelection(row: RestaurantHeroMediaSelectionRow): HeroMediaSelection {
@@ -94,7 +94,7 @@ function rowToSelection(row: RestaurantHeroMediaSelectionRow): HeroMediaSelectio
       ? row.relationship
       : "exact_location",
     sourcePlaceId: row.sourcePlaceId,
-    selectedPhotoOrdinal: validHeroPhotoOrdinal(row.selectedPhotoOrdinal) ?? 1,
+    selectedPhotoOrdinal: row.selectedPhotoOrdinal,
     approvalState: inSet(HERO_SELECTION_APPROVAL_STATES, row.approvalState)
       ? row.approvalState
       : "cleared",

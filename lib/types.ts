@@ -211,18 +211,8 @@ export type SavedRestaurant = Pick<Restaurant,
   "id" | "name" | "market" | "neighborhood" | "priceLevel" | "cuisineTags" | "vibeTags" | "videoCount"
 >;
 
-/**
- * A restaurant identity photo resolved from Google Places (New) at request time.
- * Ephemeral by contract: `photoUri` is a short-lived Google URL that is NEVER
- * downloaded, stored, or rehosted (see `lib/places.ts`). `attributions` MUST be
- * displayed wherever the photo is shown (Google Places policy).
- */
-export interface PlacePhoto {
-  /** Ephemeral googleusercontent image URL (contains no API key). Do NOT persist. */
-  photoUri: string;
-  /** Required photo author attribution(s): a display name and an optional link. */
-  attributions: { displayName: string; uri?: string }[];
-}
+/** @deprecated Legacy component props. Use PlacePhoto from "@/lib/placePhoto" for complete attribution. */
+export type PlacePhoto = Pick<import("./placePhoto").PlacePhoto, "photoUri" | "attributions">;
 
 /** User-selected discovery preferences captured during onboarding. */
 export interface UserPreferences {

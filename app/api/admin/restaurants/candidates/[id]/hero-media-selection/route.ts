@@ -26,6 +26,8 @@ function errorForStatus(status: PlacePhotoStatus): string {
   if (status === "place-details-failed") return "Google Place Details request failed.";
   if (status === "no-photos") return "Google returned no photos for this exact Place ID.";
   if (status === "invalid-photo-ordinal") return "Selected photo ordinal is unavailable for this Place ID.";
+  if (status === "missing-photo-source") return "Selected photo lacks a safe individual Google Maps photo link.";
+  if (status === "invalid-photo-attributions") return "Selected photo has incomplete or unsafe author credits.";
   if (status === "photo-media-failed") return "Google photo media request failed.";
   return "Google selected-photo lookup failed.";
 }
