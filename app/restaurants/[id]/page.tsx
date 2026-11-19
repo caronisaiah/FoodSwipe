@@ -1,17 +1,17 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { cache } from "react";
 import AppShell from "@/components/AppShell";
 import RestaurantProfile from "@/components/RestaurantProfile";
-import { RESTAURANTS } from "@/lib/seed/restaurants";
 import { getAppRestaurantById } from "@/lib/db/restaurants";
 import { shouldIncludeSeedRestaurants } from "@/lib/contentMode";
 
-// Pre-render seed restaurants only when content mode allows seeds. Published DB
-// restaurants are not listed here, so their pages render on demand.
-export function generateStaticParams() {
-  if (!shouldIncludeSeedRestaurants()) return [];
-  return RESTAURANTS.map((r) => ({ id: r.id }));
-}
+// Publication status can change between requests. Metadata and the page share
+// one visibility check within a request.
+export const dynamic = "force-dynamic";
+const getProfile = cache((id: string) =>
+  getAppRestaurantById(id, { includeSeeds: shouldIncludeSeedRestaurants() }),
+);
 
 export async function generateMetadata({
   params,
@@ -19,9 +19,7 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await params;
-  const r = await getAppRestaurantById(id, {
-    includeSeeds: shouldIncludeSeedRestaurants(),
-  });
+  const r = await getProfile(id);
   if (!r) return { title: "Restaurant not found · FoodSwipe" };
   return {
     title: `${r.name} · FoodSwipe`,
@@ -35,10 +33,7 @@ export default async function RestaurantPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  // Seed resolution is gated by content mode; published DB rows still render on demand.
-  const restaurant = await getAppRestaurantById(id, {
-    includeSeeds: shouldIncludeSeedRestaurants(),
-  });
+  const restaurant = await getProfile(id);
   if (!restaurant) notFound();
 
   return (

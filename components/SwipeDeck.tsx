@@ -432,10 +432,9 @@ interface SwipeCardProps {
 
 /**
  * The active feed card — a Hinge-style scrollable restaurant profile. The
- * `motion.div` owns HORIZONTAL drag (save/skip); a native scroll container inside
- * owns VERTICAL scroll (the profile body). `touch-action: pan-y` on both lets the
- * browser route vertical pans to native scroll and horizontal pans to framer, so
- * they coexist without fighting. The hero fades on scroll via `useScroll` on the
+ * motion wrapper handles horizontal save/skip drags. The browser handles
+ * vertical scrolling and pinch zoom, including inside the drag surface where
+ * Motion sets an inline touch action. The hero fades via `useScroll` on the
  * card's own scroll container. The first scroll viewport is the hero card; the
  * profile body begins below it and appears only after a vertical scroll.
  */
@@ -539,7 +538,7 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
 
     return (
       <motion.div
-        className={`absolute inset-0 z-20 cursor-grab touch-pan-y overflow-hidden rounded-[28px] bg-ink-2 ring-1 ring-white/10 shadow-2xl shadow-black/60 will-change-transform active:cursor-grabbing ${
+        className={`absolute inset-0 z-20 cursor-grab [touch-action:pan-y_pinch-zoom]! overflow-hidden rounded-[28px] bg-ink-2 ring-1 ring-white/10 shadow-2xl shadow-black/60 will-change-transform active:cursor-grabbing ${
           isAdvancing ? "pointer-events-none" : ""
         }`}
         style={{ x, rotate }}
@@ -567,10 +566,10 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
         }}
       >
         {/* Vertical scroll container — the profile body + the scroll source.
-            touch-action: pan-y keeps horizontal pans free for the card drag. */}
+            Allow browser pinch zoom alongside vertical scrolling. */}
         <div
           ref={scrollRef}
-          className="no-scrollbar h-full min-h-0 overflow-y-auto overscroll-contain [overflow-anchor:none] [touch-action:pan-y]"
+          className="no-scrollbar h-full min-h-0 overflow-y-auto overscroll-contain [overflow-anchor:none] [touch-action:pan-y_pinch-zoom]"
         >
           <RestaurantProfileView
             restaurant={r}

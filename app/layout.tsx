@@ -25,7 +25,6 @@ export const viewport: Viewport = {
   themeColor: "#0e0e0e",
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
   // let the app paint into the iOS safe-area / notch region
   viewportFit: "cover",
 };
