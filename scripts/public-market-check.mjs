@@ -262,7 +262,8 @@ for (const market of ["nyc", "dc"]) {
     ...dcQA, MAPBOX_PUBLIC_TOKEN: "pk.fixture.token", FOODSWIPE_MAP_ENABLED: "true",
   }, rows, true, {}, market);
   const map = await h.load("app/map/page.tsx").default();
-  const content = map.props.children.props.children[1];
+  // Map v2 page: <div canvas>[EditorialHeader, <main>{map or unavailable state}</main>]
+  const content = map.props.children[1].props.children;
   equal(h.locationReads, [market]);
   if (market === "nyc") equal(content.props.locations, [{ slug: "nyc-visible" }]);
   else equal(content.type, "div");

@@ -11,6 +11,7 @@
     "test:photo-reliability": "node scripts/photo-reliability-check.mjs",
     "test:photo-gallery": "node scripts/photo-gallery-check.mjs",
     "test:gallery-ui": "node scripts/gallery-ui-check.mjs",
+    "test:map-v2": "node scripts/map-v2-check.mjs",
     "content:audit": "node scripts/content-audit.mjs",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",

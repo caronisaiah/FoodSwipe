@@ -1,11 +1,24 @@
 type Position = [number, number];
-type MapboxMap = {
-  once(name: "load", callback: () => void): void;
+export type MapboxMap = {
+  once(name: "load" | "moveend", callback: () => void): void;
+  on(name: "load" | "moveend" | "movestart" | "idle", callback: () => void): void;
   on(name: "error", callback: (event: { error?: { status?: number } }) => void): void;
-  on(name: "moveend", callback: () => void): void;
   project(position: Position): { x: number; y: number };
   fitBounds(bounds: [Position, Position], options: { padding: number; maxZoom: number; duration: number }): void;
-  jumpTo(options: { center: Position }): void;
+  easeTo(options: { center: Position; zoom?: number; duration: number }): void;
+  jumpTo(options: { center: Position; zoom?: number }): void;
+  panBy(offset: [number, number], options: { duration: number }): void;
+  zoomIn(options: { duration: number }): void;
+  zoomOut(options: { duration: number }): void;
+  getZoom(): number;
+  setZoom(zoom: number): void;
+  getCenter(): { lng: number; lat: number };
+  getLayer(id: string): unknown;
+  getStyle(): { layers: { id: string; type: string }[] };
+  setPaintProperty(layer: string, property: string, value: unknown): void;
+  setLayoutProperty(layer: string, property: string, value: unknown): void;
+  areTilesLoaded(): boolean;
+  touchZoomRotate: { disableRotation(): void };
   addControl(control: unknown, position: "top-right"): void;
   resize(): void;
   remove(): void;
@@ -29,7 +42,7 @@ type MapboxGL = {
     dragRotate: false;
     pitchWithRotate: false;
     touchPitch: false;
-    config: { basemap: Record<string, string | boolean> };
+    fadeDuration: number;
   }) => MapboxMap;
   Marker: new (options: { element: HTMLButtonElement; anchor: "center" }) => Marker;
   NavigationControl: new (options: { showCompass: false }) => unknown;

@@ -1,35 +1,6 @@
 @import "tailwindcss";
 @import "./editorial.css";
 
-.foodswipe-map-pin {
-  display: grid;
-  width: 36px;
-  height: 36px;
-  place-items: center;
-  cursor: pointer;
-  border-radius: 50%;
-  background: transparent;
-}
-
-.foodswipe-map-pin::before {
-  content: "";
-  width: 19px;
-  height: 19px;
-  border: 2px solid #2a2019;
-  border-radius: 50%;
-  background: #fbbf64;
-  box-shadow: 0 1px 6px #000a;
-}
-
-.foodswipe-map-pin[aria-pressed="true"] {
-  z-index: 1;
-}
-
-.foodswipe-map-pin[aria-pressed="true"]::before,
-.foodswipe-map-pin:focus-visible::before {
-  box-shadow: 0 0 0 3px #fcdfaa, 0 1px 6px #000a;
-}
-
 /*
   FoodSwipe design system — "dark immersive, video-first".
   Tailwind v4 CSS-first config: tokens declared here generate utilities

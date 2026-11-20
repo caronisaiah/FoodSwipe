@@ -3,12 +3,14 @@ import Link from "next/link";
 import BottomNav from "@/components/BottomNav";
 
 export default function EditorialHeader({
-  skipTo, skipLabel, notice, navigationRef,
+  skipTo, skipLabel, notice, navigationRef, trailing,
 }: {
   skipTo: string;
   skipLabel: string;
   notice?: ReactNode;
   navigationRef?: Ref<HTMLDivElement>;
+  /** Optional link after the navigation (Map uses it for "Swipe view"). */
+  trailing?: ReactNode;
 }) {
   return (
     <>
@@ -21,6 +23,7 @@ export default function EditorialHeader({
           {notice}
           <BottomNav />
         </div>
+        {trailing}
       </header>
     </>
   );
