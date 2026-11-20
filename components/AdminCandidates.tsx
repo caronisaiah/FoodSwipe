@@ -2,7 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import type { PlacePhoto } from "@/lib/types";
+import { normalizePlacePhoto, type PlacePhoto } from "@/lib/placePhoto";
+import type { PlacePhotoCandidate as HeroPhotoCandidate } from "@/lib/places";
+import { normalizeClientHeroMedia, type ClientHeroMedia } from "@/lib/clientHeroMedia";
+import PlacePhotoAttribution, { usePlacePhotoImage } from "@/components/PlacePhotoAttribution";
 import { listMarkets } from "@/lib/markets";
 import {
   computeCandidateReadiness,
@@ -105,28 +108,6 @@ interface EvidenceMeta {
 interface CandidateVideoMeta {
   total: number;
   approvedOrAttached: number;
-}
-
-interface HeroPhotoCandidate {
-  ordinal: number;
-  widthPx: number | null;
-  heightPx: number | null;
-  aspectRatio: number | null;
-  photoUri: string | null;
-  attributions: PlacePhoto["attributions"];
-  hasAttribution: boolean;
-  sourceProvider: "google_places";
-  relationship: "exact_location";
-  status: "ok" | "photo-media-failed";
-  httpStatus?: number;
-  googleStatus?: string;
-  heuristicFlags: {
-    highResolution: boolean;
-    cropFriendly: boolean;
-    veryWide: boolean;
-    lowResolution: boolean;
-    possibleLogoOrTextHeavy: "unknown";
-  };
 }
 
 interface HeroPhotoCandidatesDiagnostics {
@@ -1714,7 +1695,7 @@ function HeroPhotoCandidatesPanel({
   const detailsCount = diagnostics?.detailsPhotoCount ?? candidates.length;
 
   async function saveSelection(candidate: HeroPhotoCandidate) {
-    if (!googlePlaceId || savingOrdinal !== null || clearing) return;
+    if (!googlePlaceId || savingOrdinal !== null || clearing || candidate.status !== "ok" || !normalizePlacePhoto(candidate)) return;
     setSavingOrdinal(candidate.ordinal);
     setActionMessage(null);
     try {
@@ -1852,7 +1833,7 @@ function HeroPhotoCandidatesPanel({
             <div className="grid min-w-0 grid-cols-1 gap-2.5 sm:grid-cols-2">
               {candidates.map((candidate) => (
                 <HeroPhotoCandidateCard
-                  key={candidate.ordinal}
+                  key={`${candidateId}:${candidate.ordinal}`}
                   candidate={candidate}
                   restaurantName={name}
                   selected={selection?.selectedPhotoOrdinal === candidate.ordinal}
@@ -1884,6 +1865,9 @@ function HeroPhotoCandidateCard({
   disabled: boolean;
   onUse: () => void;
 }) {
+  const image = usePlacePhotoImage(candidate.status === "ok" ? normalizePlacePhoto(candidate) : null);
+  const subject = `${restaurantName}, candidate ${candidate.ordinal}`;
+  const unavailable = photoUnavailableMessage(candidate.status);
   const dimensions = candidate.widthPx && candidate.heightPx
     ? `${candidate.widthPx} x ${candidate.heightPx}`
     : "dimensions unknown";
@@ -1891,41 +1875,42 @@ function HeroPhotoCandidateCard({
   return (
     <article className="min-w-0 overflow-hidden rounded-lg bg-surface ring-1 ring-inset ring-white/10">
       <div className="relative aspect-[9/16] min-h-[320px] overflow-hidden bg-ink">
-        {candidate.photoUri ? (
+        {image.photo ? (
           <>
             {/* eslint-disable-next-line @next/next/no-img-element -- ephemeral Google
                 Place Photo loaded directly from Google; never downloaded/rehosted. */}
             <img
-              src={candidate.photoUri}
+              key={image.key}
+              {...image.imageProps}
+              src={image.photo.photoUri}
               alt={`${restaurantName} Google place photo candidate ${candidate.ordinal}`}
               className="absolute inset-0 h-full w-full object-cover"
               loading="lazy"
-              referrerPolicy="no-referrer"
             />
-            <PreviewAttribution attributions={candidate.attributions} />
           </>
         ) : (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 p-4 text-center text-haze">
             <MaterialIcon name="broken_image" className="text-3xl" />
-            <span className="text-[11px]">Preview URL unavailable</span>
+            <span className="text-[11px]">{unavailable}</span>
           </div>
         )}
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent p-2 text-white">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <p className="text-[11px] font-semibold">#{candidate.ordinal} Exact Google place photo</p>
+            <p className="text-[11px] font-semibold">Photo candidate #{candidate.ordinal}</p>
             {selected && (
               <span className="rounded-full bg-mint px-1.5 py-0.5 text-[9px] font-bold text-ink">
                 Selected
               </span>
             )}
           </div>
-          <p className="text-[10px] text-white/75">Resolves fresh at public request time</p>
+          {image.displayed && <p className="text-[10px] text-white/75">Resolves fresh at public request time</p>}
         </div>
       </div>
       <div className="space-y-1.5 p-2">
+        {image.displayed && <PlacePhotoAttribution photo={image.displayed} subject={subject} />}
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-1.5">
           <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-tan ring-1 ring-inset ring-white/10">
-            {candidate.status === "ok" ? "preview ready" : "media failed"}
+            {image.displayed ? "Preview ready" : image.photo ? "Loading preview…" : "Preview unavailable"}
           </span>
           <span className="text-[10px] text-haze">google_places / exact_location</span>
         </div>
@@ -1933,11 +1918,10 @@ function HeroPhotoCandidateCard({
           {dimensions} - aspect {candidate.aspectRatio?.toFixed(2) ?? "unknown"}
         </p>
         <PhotoCandidateBadges candidate={candidate} />
-        <PhotoCandidateAttribution attributions={candidate.attributions} />
         <button
           type="button"
           onClick={onUse}
-          disabled={disabled || selected}
+          disabled={disabled || selected || !image.displayed}
           className={`inline-flex w-full items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-bold transition active:scale-[0.98] disabled:opacity-45 ${
             selected
               ? "bg-mint/15 text-mint ring-1 ring-inset ring-mint/25"
@@ -1980,38 +1964,10 @@ function PhotoCandidateBadges({ candidate }: { candidate: HeroPhotoCandidate }) 
   );
 }
 
-function PhotoCandidateAttribution({ attributions }: { attributions: PlacePhoto["attributions"] }) {
-  const items = attributions.filter((a) => a.displayName.trim().length > 0);
-  if (items.length === 0) {
-    return (
-      <p className="break-words text-[10px] text-haze [overflow-wrap:anywhere]">
-        Attribution unavailable from Google.
-      </p>
-    );
-  }
-
-  return (
-    <p className="break-words text-[10px] text-haze [overflow-wrap:anywhere]">
-      Photo attribution:{" "}
-      {items.map((item, index) => (
-        <span key={`${item.displayName}-${index}`}>
-          {index > 0 ? ", " : ""}
-          {item.uri ? (
-            <a
-              href={item.uri}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-saffron underline-offset-2 hover:underline"
-            >
-              {item.displayName}
-            </a>
-          ) : (
-            <span className="text-tan">{item.displayName}</span>
-          )}
-        </span>
-      ))}
-    </p>
-  );
+function photoUnavailableMessage(status?: string) {
+  if (status === "missing-photo-source") return "Individual photo source unavailable.";
+  if (status === "invalid-photo-attributions") return "Photo author details could not be verified.";
+  return "Photo unavailable.";
 }
 
 /* ----- candidate photo (lazy: only mounts when a row is expanded) ----- */
@@ -2025,92 +1981,56 @@ function CandidatePhoto({
   secret: string;
   name: string;
 }) {
-  const [photo, setPhoto] = useState<PlacePhoto | null>(null);
-  const [logo, setLogo] = useState<string | null>(null);
-  const [resolved, setResolved] = useState(false);
-  const [logoFailed, setLogoFailed] = useState(false);
+  const [result, setResult] = useState<ClientHeroMedia | null>(null);
+  const [failedLogo, setFailedLogo] = useState<string>();
+  const media = result?.restaurantId === candidateId ? result : null;
+  const image = usePlacePhotoImage(media?.photo);
+  const logo = media?.logoUrl !== failedLogo ? media?.logoUrl : null;
 
   useEffect(() => {
-    // Mounts only when the row is expanded, so Google photo cost is bounded to
-    // candidates the reviewer actually opens. setState only after the await.
-    let cancelled = false;
-    void (async () => {
+    const controller = new AbortController();
+    async function load() {
+      let data: unknown = null;
       try {
         const res = await fetch(`/api/admin/restaurants/candidates/${candidateId}/photo`, {
-          headers: { "x-foodswipe-admin-secret": secret },
+          headers: { "x-foodswipe-admin-secret": secret }, signal: controller.signal,
         });
-        const data = (await res.json()) as { photo?: PlacePhoto | null; logoUrl?: string | null };
-        if (cancelled) return;
-        const p = data.photo;
-        setPhoto(
-          p && typeof p.photoUri === "string" && p.photoUri.length > 0
-            ? { photoUri: p.photoUri, attributions: Array.isArray(p.attributions) ? p.attributions : [] }
-            : null,
-        );
-        setLogo(typeof data.logoUrl === "string" && data.logoUrl.length > 0 ? data.logoUrl : null);
-        setResolved(true);
+        if (res.ok) data = await res.json();
       } catch {
-        if (!cancelled) setResolved(true);
+        // Show the unavailable state if the preview request fails.
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+      if (!controller.signal.aborted) setResult(normalizeClientHeroMedia(candidateId, data));
+    }
+    void load();
+    return () => controller.abort();
   }, [candidateId, secret]);
 
-  const showLogo = !photo && resolved && Boolean(logo) && !logoFailed;
-
   return (
-    <div className="relative aspect-[4/3] w-full overflow-hidden rounded-lg bg-ink-2 ring-1 ring-inset ring-white/5">
-      {photo ? (
-        <>
-          {/* eslint-disable-next-line @next/next/no-img-element -- ephemeral Google
-              Place Photo loaded directly from Google; never downloaded/rehosted. */}
-          <img
-            src={photo.photoUri}
-            alt={`${name} — photo via Google`}
-            className="absolute inset-0 h-full w-full object-cover"
-            loading="lazy"
-            referrerPolicy="no-referrer"
-          />
-          <PreviewAttribution attributions={photo.attributions} />
-        </>
-      ) : showLogo && logo ? (
-        <div className="absolute inset-0 flex items-center justify-center p-3">
-          <div className="flex h-full max-h-16 items-center justify-center rounded-md bg-white p-2">
-            {/* eslint-disable-next-line @next/next/no-img-element -- Logo.dev CDN
-                image loaded directly; never downloaded/rehosted. */}
-            <img
-              src={logo}
-              alt={`${name} logo`}
-              className="h-full w-full object-contain"
-              loading="lazy"
-              referrerPolicy="no-referrer"
-              onError={() => setLogoFailed(true)}
-            />
+    <div>
+      <div className="relative aspect-[4/3] w-full overflow-hidden rounded-lg bg-ink-2 ring-1 ring-inset ring-white/5">
+        {image.photo ? (
+          // eslint-disable-next-line @next/next/no-img-element -- Direct ephemeral Places image.
+          <img key={image.key} {...image.imageProps} src={image.photo.photoUri} alt={`${name} restaurant preview`}
+            className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
+        ) : logo ? (
+          <div className="absolute inset-0 flex items-center justify-center p-3">
+            <div className="flex h-full max-h-16 items-center justify-center rounded-md bg-white p-2">
+              {/* eslint-disable-next-line @next/next/no-img-element -- Direct provider logo. */}
+              <img src={logo} alt={`${name} logo`} className="h-full w-full object-contain"
+                loading="lazy" referrerPolicy="no-referrer" onError={() => setFailedLogo(logo)} />
+            </div>
           </div>
-        </div>
-      ) : (
-        <div className="absolute inset-0 flex items-center justify-center gap-1.5 text-haze">
-          <MaterialIcon name="storefront" className="text-2xl" />
-          <span className="text-[11px]">{resolved ? "No photo" : "Loading…"}</span>
-        </div>
+        ) : (
+          <div className="absolute inset-0 grid place-content-center p-2 text-center text-xs text-haze">
+            {media ? photoUnavailableMessage(media.status) : "Loading…"}
+          </div>
+        )}
+      </div>
+      {image.displayed && <PlacePhotoAttribution photo={image.displayed} subject={name} />}
+      {!image.photo && logo && media?.status && ["missing-photo-source", "invalid-photo-attributions"].includes(media.status) && (
+        <p className="mt-1 text-xs text-haze">{photoUnavailableMessage(media.status)}</p>
       )}
     </div>
-  );
-}
-
-function PreviewAttribution({ attributions }: { attributions: PlacePhoto["attributions"] }) {
-  const items = attributions.filter((a) => a.displayName.trim().length > 0);
-  return (
-    <span className="absolute left-1.5 top-1.5 inline-flex max-w-[90%] items-center gap-1 rounded-full bg-black/55 px-2 py-0.5 text-[10px] text-white/90 ring-1 ring-inset ring-white/15 backdrop-blur-md">
-      <MaterialIcon name="photo_camera" className="text-[11px]" />
-      <span className="truncate">
-        {items.length > 0
-          ? `Photo: ${items.map((a) => a.displayName).join(", ")} via Google`
-          : "Photo via Google"}
-      </span>
-    </span>
   );
 }
 

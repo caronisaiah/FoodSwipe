@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import PlacePhotoAttribution, { usePlacePhotoImage } from "@/components/PlacePhotoAttribution";
 import MaterialIcon from "@/components/MaterialIcon";
 import { normalizeClientHeroMedia, type ClientHeroMedia } from "@/lib/clientHeroMedia";
 import { getMarketDisplayName } from "@/lib/markets";
@@ -64,9 +65,9 @@ export default function SavedRestaurantItem({
 }) {
   const featured = Boolean(featureLabel);
   const { frame, media } = useSavedMedia(restaurant, featured);
-  const [failedPhoto, setFailedPhoto] = useState<string>();
+  const image = usePlacePhotoImage(media?.photo);
   const [failedLogo, setFailedLogo] = useState<string>();
-  const photo = media?.photo?.photoUri !== failedPhoto ? media?.photo : null;
+  const photo = image.photo;
   const logo = media?.logoUrl !== failedLogo ? media?.logoUrl : null;
   const name = restaurant?.name ?? "Restaurant unavailable";
   const href = restaurant ? `/restaurants/${encodeURIComponent(restaurant.id)}` : undefined;
@@ -80,8 +81,7 @@ export default function SavedRestaurantItem({
       <div ref={frame} className="saved-photo">
         {photo ? (
           // eslint-disable-next-line @next/next/no-img-element -- Google Place photos must load from their original URL.
-          <img src={photo.photoUri} alt="" loading={featured ? "eager" : "lazy"} decoding="async" referrerPolicy="no-referrer"
-            onError={() => setFailedPhoto(photo.photoUri)} />
+          <img key={image.key} {...image.imageProps} src={photo.photoUri} alt="" loading={featured ? "eager" : "lazy"} decoding="async" />
         ) : logo ? (
           // eslint-disable-next-line @next/next/no-img-element -- Logo.dev assets load directly from their original URL.
           <img className="saved-logo" src={logo} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer"
@@ -108,17 +108,8 @@ export default function SavedRestaurantItem({
           {href && featured && <Link className="saved-profile-link" href={href} prefetch={false}>
             View profile <MaterialIcon name="arrow_forward" />
           </Link>}
-          {photo && photo.attributions.length > 0 && (
-            <p className="saved-credit">
-              Photo: {photo.attributions.map((author, index) => (
-                <span key={index}>
-                  {index > 0 && ", "}
-                  {author.uri ? <a href={author.uri} target="_blank" rel="noopener noreferrer">{author.displayName}</a> : author.displayName}
-                </span>
-              ))} via Google
-            </p>
-          )}
         </div>
+        {image.displayed && <PlacePhotoAttribution photo={image.displayed} subject={name} light />}
       </div>
       <button
         ref={removeRef}

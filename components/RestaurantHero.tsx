@@ -3,8 +3,9 @@
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { motion, type MotionStyle } from "framer-motion";
-import type { PlacePhoto, PriceLevel, Video } from "@/lib/types";
-import type { ClientHeroMedia } from "@/lib/clientHeroMedia";
+import type { PriceLevel, Video } from "@/lib/types";
+import { normalizeClientHeroMedia, type ClientHeroMedia } from "@/lib/clientHeroMedia";
+import PlacePhotoAttribution, { usePlacePhotoImage } from "@/components/PlacePhotoAttribution";
 import { priceLabel } from "@/lib/options";
 import VideoEmbed from "@/components/VideoEmbed";
 import MaterialIcon from "@/components/MaterialIcon";
@@ -24,11 +25,6 @@ import MaterialIcon from "@/components/MaterialIcon";
  * scrollable card as well as the standalone /restaurants/[id] page. A YouTube
  * thumbnail is NEVER used as a restaurant hero.
  */
-interface PhotoApiResponse {
-  photo?: PlacePhoto | null;
-  logoUrl?: string | null;
-}
-
 export default function RestaurantHero({
   restaurantId,
   fallbackVideo,
@@ -41,7 +37,6 @@ export default function RestaurantHero({
   variant = "page",
   feedHeroFullscreen = false,
   badges,
-  onPhotoAttributions,
   heroMedia,
   onScrollToProfile,
 }: {
@@ -62,155 +57,127 @@ export default function RestaurantHero({
   feedHeroFullscreen?: boolean;
   /** Compact status/ranking badges shown above the restaurant name. */
   badges?: ReactNode;
-  /** Feed cards move required Google author credit below the first viewport. */
-  onPhotoAttributions?: (attributions: PlacePhoto["attributions"]) => void;
   /** Feed deck can provide in-memory media so preview/active use the same URL. */
   heroMedia?: ClientHeroMedia | null;
   /** Feed-only affordance: scroll the card below the hero. */
   onScrollToProfile?: () => void;
 }) {
-  const [fetchedPhoto, setFetchedPhoto] = useState<PlacePhoto | null>(null);
-  const [fetchedLogoSrc, setFetchedLogoSrc] = useState<string | null>(null);
-  const [resolved, setResolved] = useState(false);
-  const [failedPhotoUrl, setFailedPhotoUrl] = useState<string | null>(null);
+  const [fetched, setFetched] = useState<ClientHeroMedia | null>(null);
   const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null);
-
   useEffect(() => {
     if (heroMedia !== undefined) return;
-    let cancelled = false;
-    void (async () => {
+    const controller = new AbortController();
+    async function load() {
+      let data: unknown = null;
       try {
-        const res = await fetch(`/api/restaurants/${restaurantId}/photo`);
-        const data = (await res.json()) as PhotoApiResponse;
-        const p = data.photo;
-        const nextPhoto: PlacePhoto | null =
-          p && typeof p.photoUri === "string" && p.photoUri.length > 0
-            ? {
-                photoUri: p.photoUri,
-                attributions: Array.isArray(p.attributions) ? p.attributions : [],
-              }
-            : null;
-        const nextLogo =
-          typeof data.logoUrl === "string" && data.logoUrl.length > 0
-            ? data.logoUrl
-            : null;
-        if (!cancelled) {
-          setFetchedPhoto(nextPhoto);
-          setFetchedLogoSrc(nextLogo);
-          setResolved(true);
-        }
+        const response = await fetch(`/api/restaurants/${encodeURIComponent(restaurantId)}/photo`, { signal: controller.signal });
+        if (response.ok) data = await response.json();
       } catch {
-        if (!cancelled) {
-          setFetchedPhoto(null);
-          setFetchedLogoSrc(null);
-          setResolved(true);
-        }
+        // The existing media ladder handles failed lookups.
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+      if (!controller.signal.aborted) setFetched(normalizeClientHeroMedia(restaurantId, data));
+    }
+    void load();
+    return () => controller.abort();
   }, [restaurantId, heroMedia]);
 
-  const controlledMedia =
-    heroMedia !== undefined && heroMedia?.restaurantId === restaurantId ? heroMedia : null;
-  const rawPhoto = heroMedia !== undefined ? controlledMedia?.photo ?? null : fetchedPhoto;
-  const rawLogoSrc =
-    heroMedia !== undefined ? controlledMedia?.logoUrl ?? null : fetchedLogoSrc;
-  const mediaResolved = heroMedia !== undefined ? controlledMedia !== null : resolved;
-  const photo = rawPhoto?.photoUri === failedPhotoUrl ? null : rawPhoto;
-  const logoSrc = rawLogoSrc && rawLogoSrc !== failedLogoUrl ? rawLogoSrc : null;
-
-  useEffect(() => {
-    onPhotoAttributions?.(photo?.attributions ?? []);
-  }, [onPhotoAttributions, photo]);
-
-  // Logo tier: only once the fetch resolved with no photo, a logo URL exists, and
-  // the logo image hasn't errored out.
-  const showLogo = !photo && mediaResolved && Boolean(logoSrc);
+  const candidate = heroMedia === undefined ? fetched : heroMedia;
+  const media = candidate?.restaurantId === restaurantId ? candidate : null;
+  const image = usePlacePhotoImage(media?.photo);
+  const photo = image.photo;
+  const logoSrc = media?.logoUrl !== failedLogoUrl ? media?.logoUrl : null;
   const isFeed = variant === "feed";
 
   return (
-    <motion.div
-      style={heroStyle}
-      className={
-        variant === "feed"
-          ? feedHeroFullscreen
-            ? "relative h-full min-h-full max-h-full w-full overflow-hidden"
-            : "relative aspect-[4/5] w-full overflow-hidden"
-          : "relative mx-4 mt-1 aspect-[4/5] overflow-hidden rounded-[28px] ring-1 ring-white/10"
-      }
-    >
-      {isFeed && <FeedHeroBackdrop />}
-      {photo ? (
-        <>
-          {/* eslint-disable-next-line @next/next/no-img-element -- Google's Place
-              Photo is an ephemeral URL that must be loaded directly from Google
-              and never downloaded/rehosted. next/image would proxy it through
-              /_next/image (effectively caching/rehosting), which Google's policy
-              forbids, so a plain <img> is the correct, legal-safe choice here. */}
-          <img
-            src={photo.photoUri}
-            alt={`${name} — photo via Google`}
-            className="absolute inset-0 h-full w-full object-cover"
-            loading={isFeed ? "eager" : "lazy"}
-            fetchPriority={isFeed ? "high" : "auto"}
-            decoding="async"
-            referrerPolicy="no-referrer"
-            onError={() => setFailedPhotoUrl(photo.photoUri)}
-          />
-          {!isFeed && <PhotoAttribution attributions={photo.attributions} />}
-        </>
-      ) : showLogo && logoSrc ? (
-        <LogoCard
-          src={logoSrc}
-          name={name}
-          eager={isFeed}
-          onError={() => setFailedLogoUrl(logoSrc)}
-        />
-      ) : isFeed ? (
-        <FeedHeroFallback label={mediaResolved ? `${name} image unavailable` : `Loading ${name} photo`} />
-      ) : (
-        <VideoEmbed video={fallbackVideo} posterEmoji={posterEmoji} fill />
-      )}
-
-      <div
-        className={`pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-4 pt-16 ${
-          isFeed ? "pb-20" : ""
-        }`}
+    <div className={isFeed && feedHeroFullscreen ? "flex h-full min-h-0 flex-col" : undefined}>
+      <motion.div
+        style={heroStyle}
+        className={
+          variant === "feed"
+            ? feedHeroFullscreen
+              ? "relative min-h-0 w-full flex-1 overflow-hidden"
+              : "relative aspect-[4/5] w-full overflow-hidden"
+            : "relative mx-4 mt-1 aspect-[4/5] overflow-hidden rounded-[28px] ring-1 ring-white/10"
+        }
       >
-        {badges && <div className="mb-2 flex max-w-full flex-wrap gap-1.5">{badges}</div>}
-        <h1 className="font-display text-3xl font-bold leading-tight text-white drop-shadow">
-          {name}
-        </h1>
-        <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-white/85">
-          <span className="inline-flex items-center gap-1">
-            <MaterialIcon name="location_on" className="text-[15px]" /> {neighborhood}
-          </span>
-          <span aria-hidden>·</span>
-          <span>{distanceMiles.toFixed(1)} mi away</span>
-          <span aria-hidden>·</span>
-          <span className="font-semibold text-saffron">{priceLabel(priceLevel)}</span>
-        </p>
-      </div>
+        {isFeed && <FeedHeroBackdrop />}
+        {photo ? (
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element -- Google's Place
+                Photo is an ephemeral URL that must be loaded directly from Google
+                and never downloaded/rehosted. next/image would proxy it through
+                /_next/image (effectively caching/rehosting), which Google's policy
+                forbids, so a plain <img> is the correct, legal-safe choice here. */}
+            <img
+              key={image.key}
+              {...image.imageProps}
+              src={photo.photoUri}
+              alt={`${name} restaurant photo`}
+              draggable={isFeed ? false : undefined}
+              className="absolute inset-0 h-full w-full object-cover"
+              loading={isFeed ? "eager" : "lazy"}
+              fetchPriority={isFeed ? "high" : "auto"}
+              decoding="async"
+            />
+          </>
+        ) : logoSrc ? (
+          <LogoCard
+            src={logoSrc}
+            name={name}
+            eager={isFeed}
+            onError={() => setFailedLogoUrl(logoSrc)}
+          />
+        ) : isFeed ? (
+          <FeedHeroFallback label={media ? `${name} image unavailable` : `Loading ${name} photo`} />
+        ) : (
+          <VideoEmbed video={fallbackVideo} posterEmoji={posterEmoji} fill />
+        )}
 
-      {isFeed && onScrollToProfile && (
-        <button
-          type="button"
-          onClick={onScrollToProfile}
-          onPointerDown={(e) => e.stopPropagation()}
-          aria-label={`Scroll for ${name}'s full profile`}
-          className="absolute inset-x-0 bottom-4 z-20 mx-auto flex w-fit flex-col items-center gap-1 border-0 bg-transparent px-3 py-1 text-white/85 opacity-70 transition hover:opacity-95 active:scale-95"
+        <div
+          className={`pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-4 pt-16 ${
+            isFeed ? "pb-20" : ""
+          }`}
         >
-          <span className="bounce-subtle flex flex-col items-center gap-1">
-            <MaterialIcon name="keyboard_arrow_up" className="text-[22px] text-white/75" />
-            <span className="text-[11px] font-bold uppercase tracking-[0.25em]">
-              Swipe up for the full profile
+          {badges && <div className="mb-2 flex max-w-full flex-wrap gap-1.5">{badges}</div>}
+          <h1 className="font-display text-3xl font-bold leading-tight text-white drop-shadow">
+            {name}
+          </h1>
+          <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-white/85">
+            <span className="inline-flex items-center gap-1">
+              <MaterialIcon name="location_on" className="text-[15px]" /> {neighborhood}
             </span>
-          </span>
-        </button>
+            <span aria-hidden>·</span>
+            <span>{distanceMiles.toFixed(1)} mi away</span>
+            <span aria-hidden>·</span>
+            <span className="font-semibold text-saffron">{priceLabel(priceLevel)}</span>
+          </p>
+        </div>
+
+        {isFeed && onScrollToProfile && (
+          <button
+            type="button"
+            onClick={onScrollToProfile}
+            onPointerDown={(e) => e.stopPropagation()}
+            aria-label={`Scroll for ${name}'s full profile`}
+            className="absolute inset-x-0 bottom-4 z-20 mx-auto flex w-fit flex-col items-center gap-1 border-0 bg-transparent px-3 py-1 text-white/85 opacity-70 transition hover:opacity-95 active:scale-95"
+          >
+            <span className="bounce-subtle flex flex-col items-center gap-1">
+              <MaterialIcon name="keyboard_arrow_up" className="text-[22px] text-white/75" />
+              <span className="text-[11px] font-bold uppercase tracking-[0.25em]">
+                Swipe up for the full profile
+              </span>
+            </span>
+          </button>
+        )}
+      </motion.div>
+      {image.displayed && (
+        <div className={isFeed
+          ? "max-h-[32%] shrink-0 overflow-y-auto bg-ink-2 px-3"
+          : "mx-4 mt-1"}>
+          <PlacePhotoAttribution photo={image.displayed} subject={name} />
+        </div>
       )}
-    </motion.div>
+    </div>
   );
 }
 
@@ -267,6 +234,7 @@ function LogoCard({
               object-contain is the correct, policy-safe choice here. */}
           <img
             src={src}
+            draggable={eager ? false : undefined}
             alt={`${name} logo`}
             className="h-full w-full object-contain"
             loading={eager ? "eager" : "lazy"}
@@ -278,46 +246,5 @@ function LogoCard({
         </div>
       </div>
     </div>
-  );
-}
-
-/**
- * Required Google Place Photo attribution. Google's policy: if a photo has author
- * attributions, they must be shown wherever the image appears.
- */
-function PhotoAttribution({
-  attributions,
-}: {
-  attributions: PlacePhoto["attributions"];
-}) {
-  const items = attributions.filter((a) => a.displayName.trim().length > 0);
-  if (items.length === 0) return null;
-
-  return (
-    <span className="absolute left-3 top-3 z-10 inline-flex max-w-[80%] items-center gap-1 rounded-full bg-black/55 px-2.5 py-1 text-[11px] font-medium text-white/90 backdrop-blur-md ring-1 ring-white/15">
-      <MaterialIcon name="photo_camera" className="text-[13px]" />
-      <span className="truncate">
-        Photo:{" "}
-        {items.map((a, i) => (
-          <span key={`${a.displayName}-${i}`}>
-            {i > 0 && ", "}
-            {a.uri ? (
-              <a
-                href={a.uri}
-                target="_blank"
-                rel="noopener noreferrer"
-                onPointerDown={(e) => e.stopPropagation()}
-                className="underline decoration-white/40 underline-offset-2 hover:decoration-white"
-              >
-                {a.displayName}
-              </a>
-            ) : (
-              a.displayName
-            )}
-          </span>
-        ))}{" "}
-        via Google
-      </span>
-    </span>
   );
 }

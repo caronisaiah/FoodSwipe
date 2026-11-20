@@ -570,14 +570,6 @@ html:has(.tune) { scroll-padding-block: 12px calc(72px + env(safe-area-inset-bot
   text-underline-offset: 3px;
 }
 .saved-profile-link .material-symbols-outlined { font-size: 17px; }
-.saved-credit { color: var(--color-editorial-muted); font-size: var(--text-editorial-credit); }
-.saved-credit a {
-  display: inline-block;
-  min-height: 24px;
-  padding-block: 4px;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
 .saved-remove { color: var(--color-editorial-muted); }
 .saved-remove .material-symbols-outlined { font-size: 20px; }
 .saved-remove[aria-disabled="true"] { opacity: .65; }

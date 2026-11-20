@@ -1,14 +1,13 @@
 import type { ScoredRestaurant } from "@/lib/types";
 import type { ClientHeroMedia } from "@/lib/clientHeroMedia";
 import { priceLabel } from "@/lib/options";
-import { cuisineIcon } from "@/lib/emoji";
 import { getMarketShortName } from "@/lib/markets";
 import HeroMedia from "@/components/HeroMedia";
 import MaterialIcon from "@/components/MaterialIcon";
 
 /**
  * Lightweight peek preview shown behind the active feed card. Identity only —
- * hero (Place Photo -> logo -> neutral fallback) + name/neighborhood/cuisine/price
+ * hero (logo or neutral fallback) + name/neighborhood/cuisine/price
  * and compact status badges. Deliberately does NOT render the profile body or
  * review videos, so background cards never trigger video fetches. The active card
  * lives inside SwipeDeck's nested SwipeCard; this component is only the next-card
@@ -22,21 +21,12 @@ export default function RestaurantCard({
   heroMedia?: ClientHeroMedia | null;
 }) {
   const r = scored.restaurant;
-  const poster = cuisineIcon(r.cuisineTags);
   const trending = r.trendScore >= 75;
   const topChoice = r.vibeScore >= 90;
 
   return (
     <article className="absolute inset-0 overflow-hidden rounded-[28px] bg-ink-2 ring-1 ring-white/10">
-      {/* Identity hero: Google Place Photo -> logo -> FoodSwipe placeholder */}
-      <HeroMedia
-        restaurantId={r.id}
-        name={r.name}
-        posterIcon={poster}
-        fallbackMode="neutral"
-        eager
-        heroMedia={heroMedia}
-      />
+      <HeroMedia key={r.id} name={r.name} logoSrc={heroMedia?.restaurantId === r.id ? heroMedia.logoUrl : null} />
 
       {/* Scrims for legibility */}
       <div className="crave-gradient pointer-events-none absolute inset-0 z-10" />

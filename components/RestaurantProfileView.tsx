@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useState, type Ref } from "react";
+import type { Ref } from "react";
 import type { MotionStyle } from "framer-motion";
-import type { PlacePhoto, Restaurant } from "@/lib/types";
+import type { Restaurant } from "@/lib/types";
 import type { ClientHeroMedia } from "@/lib/clientHeroMedia";
 import { cuisineEmoji } from "@/lib/emoji";
 import { getMarketShortName } from "@/lib/markets";
@@ -51,11 +51,6 @@ export default function RestaurantProfileView({
 }) {
   const isFeed = variant === "feed";
   const poster = cuisineEmoji(r.cuisineTags);
-  const [photoAttributions, setPhotoAttributions] = useState<PlacePhoto["attributions"]>([]);
-  const updatePhotoAttributions = useCallback(
-    (items: PlacePhoto["attributions"]) => setPhotoAttributions(items),
-    [],
-  );
   const clipPosters = [...new Set(r.cuisineTags.map((t) => cuisineEmoji([t])))];
   const profileVideos = useRestaurantProfileVideos({
     restaurantId: r.id,
@@ -115,7 +110,6 @@ export default function RestaurantProfileView({
       variant={variant}
       feedHeroFullscreen={feedHeroFullscreen}
       badges={isFeed ? <HeroStatusBadges restaurant={r} /> : null}
-      onPhotoAttributions={isFeed ? updatePhotoAttributions : undefined}
       heroMedia={heroMedia}
       onScrollToProfile={isFeed ? onScrollToProfile : undefined}
     />
@@ -233,7 +227,6 @@ export default function RestaurantProfileView({
             sectionRef={goThereRef}
           />
 
-          {isFeed && <PhotoCreditRow attributions={photoAttributions} />}
         </div>
       </div>
     </>
@@ -303,36 +296,6 @@ function ReviewClipSection({
         analytics={{ restaurant: analyticsContext, videoPosition }}
       />
     </section>
-  );
-}
-
-function PhotoCreditRow({ attributions }: { attributions: PlacePhoto["attributions"] }) {
-  const items = attributions.filter((a) => a.displayName.trim().length > 0);
-  if (items.length === 0) return null;
-
-  return (
-    <p className="mt-2 border-t border-white/10 pt-3 text-[10.5px] leading-relaxed text-haze">
-      Photo:{" "}
-      {items.map((a, i) => (
-        <span key={`${a.displayName}-${i}`}>
-          {i > 0 && ", "}
-          {a.uri ? (
-            <a
-              href={a.uri}
-              target="_blank"
-              rel="noopener noreferrer"
-              onPointerDown={(e) => e.stopPropagation()}
-              className="underline decoration-haze/40 underline-offset-2 hover:text-tan hover:decoration-tan"
-            >
-              {a.displayName}
-            </a>
-          ) : (
-            a.displayName
-          )}
-        </span>
-      ))}{" "}
-      via Google
-    </p>
   );
 }
 
