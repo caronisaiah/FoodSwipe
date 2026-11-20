@@ -102,7 +102,7 @@ function photoRoute(options = {}) {
         return { photo: photo("one"), photoStatus: "ok", logoUrl: "https://logos.example/one.png" };
       },
     },
-  }, { Response });
+  }, { Response, URL });
   const get = (id) => route.GET(new Request(`https://example.test/api/restaurants/${id}/photo`), {
     params: Promise.resolve({ id }),
   });

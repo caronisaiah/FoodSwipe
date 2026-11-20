@@ -49,6 +49,12 @@ export interface PlacePhotoResult {
   httpStatus?: number;
   /** Google's error enum (e.g. "PERMISSION_DENIED") — never the message text. */
   googleStatus?: string;
+  /**
+   * Upper bound (0-3) on the distinct, eligible photos this place offers, counted
+   * from the Details metadata already fetched. It costs no extra request and does
+   * not prove each photo's media will resolve; the gallery response is authoritative.
+   */
+  galleryCount?: number;
 }
 
 // --- Minimal shapes of the Places (New) responses we actually read ---
@@ -111,22 +117,34 @@ async function readPhotoList(response: Response): Promise<(PlaceDetailsPhoto | n
   return Array.isArray(details?.photos) ? details.photos : [];
 }
 
-/** Resolve the resource, image and attribution from the same Details entry. */
-async function resolveDetailsPhoto(
-  photo: PlaceDetailsPhoto | null | undefined,
-  id: string,
-  key: string,
-): Promise<PlacePhotoResult> {
+/** The most photos a public gallery ever shows, and how far into Google's list it looks. */
+export const GALLERY_MAX_PHOTOS = 3;
+const DETAILS_PHOTO_WINDOW = 10;
+
+type InspectedPhoto =
+  | { ok: true; reference: string; resourceName: string; metadata: Omit<PlacePhoto, "photoUri"> }
+  | { ok: false; status: PlacePhotoStatus };
+
+/** Validate one Details entry's resource, source link and credits without any media request. */
+function inspectDetailsPhoto(photo: PlaceDetailsPhoto | null | undefined, id: string): InspectedPhoto {
   const segments = typeof photo?.name === "string" ? photo.name.split("/") : [];
   const [places, place, photos, reference] = segments;
   if (segments.length !== 4 || places !== "places" || place !== id || photos !== "photos" ||
       !reference || reference === "." || reference === "..") {
-    return { photo: null, status: "invalid-photo-ordinal" };
+    return { ok: false, status: "invalid-photo-ordinal" };
   }
-
   const result = readPhotoMetadata(photo?.googleMapsUri, photo?.authorAttributions);
-  if (!result.ok) return { photo: null, status: result.status };
+  if (!result.ok) return { ok: false, status: result.status };
+  return { ok: true, reference, resourceName: `places/${id}/photos/${reference}`, metadata: result.metadata };
+}
 
+/** Request one fresh, ephemeral image URL for an already validated photo. */
+async function fetchPhotoMedia(
+  id: string,
+  reference: string,
+  metadata: Omit<PlacePhoto, "photoUri">,
+  key: string,
+): Promise<PlacePhotoResult> {
   const mediaUrl = `${PLACES_BASE}/places/${encodeURIComponent(id)}/photos/${encodeURIComponent(reference)}/media` +
     `?maxWidthPx=${MAX_WIDTH_PX}&skipHttpRedirect=true`;
   const mediaRes = await fetch(mediaUrl, {
@@ -147,7 +165,45 @@ async function resolveDetailsPhoto(
   const media = (await mediaRes.json()) as PhotoMediaResponse;
   const photoUri = safeHttpsUrl(media?.photoUri);
   if (!photoUri) return { photo: null, status: "photo-media-failed" };
-  return { status: "ok", photo: { ...result.metadata, photoUri } };
+  return { status: "ok", photo: { ...metadata, photoUri } };
+}
+
+/** Resolve the resource, image and attribution from the same Details entry. */
+async function resolveDetailsPhoto(
+  photo: PlaceDetailsPhoto | null | undefined,
+  id: string,
+  key: string,
+): Promise<PlacePhotoResult> {
+  const inspected = inspectDetailsPhoto(photo, id);
+  if (!inspected.ok) return { photo: null, status: inspected.status };
+  return fetchPhotoMedia(id, inspected.reference, inspected.metadata, key);
+}
+
+interface EligiblePhoto {
+  /** 1-based position in Google's list. */
+  ordinal: number;
+  reference: string;
+  metadata: Omit<PlacePhoto, "photoUri">;
+}
+
+/**
+ * Distinct photos with a valid resource, source link and credits, in Google's order.
+ * Identity is the photo resource name; a second entry that repeats the resource or
+ * the same Maps link is a duplicate. Metadata only: nothing here touches the network.
+ */
+function eligiblePhotos(photos: (PlaceDetailsPhoto | null)[], id: string): EligiblePhoto[] {
+  const seenResources = new Set<string>();
+  const seenSources = new Set<string>();
+  const eligible: EligiblePhoto[] = [];
+  photos.slice(0, DETAILS_PHOTO_WINDOW).forEach((photo, index) => {
+    const inspected = inspectDetailsPhoto(photo, id);
+    if (!inspected.ok) return;
+    if (seenResources.has(inspected.resourceName) || seenSources.has(inspected.metadata.googleMapsUri)) return;
+    seenResources.add(inspected.resourceName);
+    seenSources.add(inspected.metadata.googleMapsUri);
+    eligible.push({ ordinal: index + 1, reference: inspected.reference, metadata: inspected.metadata });
+  });
+  return eligible;
 }
 
 async function resolvePlacePhoto(placeId: string, ordinal?: number): Promise<PlacePhotoResult> {
@@ -165,25 +221,141 @@ async function resolvePlacePhoto(placeId: string, ordinal?: number): Promise<Pla
       };
     }
     const photos = await readPhotoList(detailsRes);
-    if (!photos.length) return { photo: null, status: "no-photos" };
-    if (ordinal !== undefined) return await resolveDetailsPhoto(photos[ordinal - 1], id, key);
+    if (!photos.length) return { photo: null, status: "no-photos", galleryCount: 0 };
+    const galleryCount = Math.min(GALLERY_MAX_PHOTOS, eligiblePhotos(photos, id).length);
+    if (ordinal !== undefined) {
+      return { ...(await resolveDetailsPhoto(photos[ordinal - 1], id, key)), galleryCount };
+    }
     const first = photos.find((p) => typeof p?.name === "string" && p.name.length > 0);
-    if (!first) return { photo: null, status: "no-photos" };
-    return await resolveDetailsPhoto(first, id, key);
+    if (!first) return { photo: null, status: "no-photos", galleryCount };
+    return { ...(await resolveDetailsPhoto(first, id, key)), galleryCount };
   } catch {
     return { photo: null, status: "error" };
   }
 }
 
-export function getPlacePhoto(placeId: string): Promise<PlacePhotoResult> {
+/** The established result shape, without the gallery count added in Phase 13B. */
+function withoutGalleryCount({ galleryCount: _count, ...result }: PlacePhotoResult): PlacePhotoResult {
+  void _count;
+  return result;
+}
+
+export async function getPlacePhoto(placeId: string): Promise<PlacePhotoResult> {
+  return withoutGalleryCount(await resolvePlacePhoto(placeId));
+}
+
+export async function getPlacePhotoByOrdinal(placeId: string, ordinal: number): Promise<PlacePhotoResult> {
+  return withoutGalleryCount(await getPlacePhotoByOrdinalWithGalleryCount(placeId, ordinal));
+}
+
+/** Same lookup as `getPlacePhoto`, plus `galleryCount` taken from the same Details response. */
+export function getPlacePhotoWithGalleryCount(placeId: string): Promise<PlacePhotoResult> {
   return resolvePlacePhoto(placeId);
 }
 
-export function getPlacePhotoByOrdinal(placeId: string, ordinal: number): Promise<PlacePhotoResult> {
+export function getPlacePhotoByOrdinalWithGalleryCount(placeId: string, ordinal: number): Promise<PlacePhotoResult> {
   if (!Number.isInteger(ordinal) || ordinal < 1 || ordinal > 10) {
     return Promise.resolve({ photo: null, status: "invalid-photo-ordinal" });
   }
   return resolvePlacePhoto(placeId, ordinal);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Public gallery (Phase 13B)                                                 */
+/* -------------------------------------------------------------------------- */
+
+export interface PlaceGalleryResult {
+  /** At most three distinct photos, each with its own source link and credits. */
+  photos: PlacePhoto[];
+  /** Upper bound on eligible photos for this place (0-3), from Details metadata. */
+  galleryCount: number;
+  /** Source link of the hero this gallery is built around, so a caller can check it
+   *  is still the hero it is showing. Null when the place has no eligible photo. */
+  heroSourceUri: string | null;
+  /** True when `photos[0]` is the hero, with its own fresh image. */
+  includesHero: boolean;
+  /**
+   * True only when the caller asked for `skipHero`: the hero was left out on purpose
+   * and never requested. Together with `includesHero`:
+   *   includesHero true                      the hero is `photos[0]`;
+   *   includesHero false, heroSkipped true   intentional omission, nothing failed;
+   *   includesHero false, heroSkipped false  the hero's image could not be resolved
+   *                                          (or the place has no eligible photo).
+   */
+  heroSkipped: boolean;
+  status: PlacePhotoStatus;
+  httpStatus?: number;
+  googleStatus?: string;
+}
+
+/**
+ * Resolve up to three distinct photos for one place: the hero first, then the next
+ * eligible photos in Google's order. One Details request plus at most one media
+ * request per photo (two when `skipHero` is set, because the caller already holds
+ * the hero). A photo whose media fails is dropped rather than replaced, so the
+ * number of upstream requests never grows. Each photo keeps the source link and
+ * credits from its own Details entry; nothing is persisted.
+ *
+ * @param heroOrdinal 1-based ordinal of the approved hero, or null for none.
+ */
+export async function getPlaceGallery(
+  placeId: string,
+  options: { heroOrdinal?: number | null; skipHero?: boolean } = {},
+): Promise<PlaceGalleryResult> {
+  const empty = (status: PlacePhotoStatus, extra: Partial<PlaceGalleryResult> = {}): PlaceGalleryResult => ({
+    photos: [], galleryCount: 0, heroSourceUri: null, includesHero: false, heroSkipped: false, status, ...extra,
+  });
+  const key = apiKey();
+  if (!key) return empty("missing-api-key");
+  const id = typeof placeId === "string" ? placeId.trim() : "";
+  if (!id) return empty("missing-google-place-id");
+
+  try {
+    const detailsRes = await fetchPhotoDetails(id, key);
+    if (!detailsRes.ok) {
+      return empty("place-details-failed", {
+        httpStatus: detailsRes.status, googleStatus: await safeGoogleError(detailsRes),
+      });
+    }
+    const list = await readPhotoList(detailsRes);
+    if (!list.length) return empty("no-photos");
+    const eligible = eligiblePhotos(list, id);
+    if (!eligible.length) {
+      // Nothing usable: report why the first entry was rejected, as the single-photo path does.
+      const first = inspectDetailsPhoto(list.find((p) => p) ?? null, id);
+      return empty(first.ok ? "no-photos" : first.status);
+    }
+
+    // The approved hero if it is usable, otherwise the first usable photo.
+    const ordinal = options.heroOrdinal;
+    const hero = (typeof ordinal === "number" ? eligible.find((p) => p.ordinal === ordinal) : undefined) ?? eligible[0];
+    const extras = eligible.filter((p) => p !== hero).slice(0, GALLERY_MAX_PHOTOS - 1);
+    const wanted = options.skipHero ? extras : [hero, ...extras];
+    const galleryCount = Math.min(GALLERY_MAX_PHOTOS, eligible.length);
+
+    const results = await Promise.all(wanted.map(async (photo): Promise<PlacePhotoResult> => {
+      try {
+        return await fetchPhotoMedia(id, photo.reference, photo.metadata, key);
+      } catch {
+        return { photo: null, status: "photo-media-failed" };
+      }
+    }));
+    const photos = results.flatMap((r) => (r.photo ? [r.photo] : []));
+    const failed = results.find((r) => !r.photo);
+    const includesHero = !options.skipHero && Boolean(results[0]?.photo);
+    return {
+      photos,
+      galleryCount,
+      heroSourceUri: hero.metadata.googleMapsUri,
+      includesHero,
+      heroSkipped: options.skipHero === true,
+      // Partial results are still "ok"; a status only describes a gallery with nothing to show.
+      status: photos.length > 0 || (options.skipHero && !failed) ? "ok" : (failed?.status ?? "no-photos"),
+      ...(photos.length ? {} : { httpStatus: failed?.httpStatus, googleStatus: failed?.googleStatus }),
+    };
+  } catch {
+    return empty("error");
+  }
 }
 
 /* -------------------------------------------------------------------------- */

@@ -1,4 +1,10 @@
-import { getPlacePhoto, getPlacePhotoByOrdinal, type PlacePhotoStatus } from "@/lib/places";
+import {
+  getPlaceGallery,
+  getPlacePhotoByOrdinalWithGalleryCount,
+  getPlacePhotoWithGalleryCount,
+  type PlaceGalleryResult,
+  type PlacePhotoStatus,
+} from "@/lib/places";
 import { logoUrl } from "@/lib/logos";
 import type { PlacePhoto } from "@/lib/placePhoto";
 
@@ -36,6 +42,8 @@ export interface HeroMedia {
   httpStatus?: number;
   /** Google's error enum (e.g. "PERMISSION_DENIED") — never the message text. */
   googleStatus?: string;
+  /** Upper bound (0-3) on gallery photos, from the Details response already fetched. */
+  galleryCount?: number;
 }
 
 /**
@@ -62,7 +70,7 @@ export async function resolveHeroMedia(input: {
     };
   }
 
-  const result = await getPlacePhoto(placeId);
+  const result = await getPlacePhotoWithGalleryCount(placeId);
   return {
     tier: result.photo ? "photo" : logo ? "logo" : "placeholder",
     photo: result.photo,
@@ -70,6 +78,7 @@ export async function resolveHeroMedia(input: {
     photoStatus: result.status,
     httpStatus: result.httpStatus,
     googleStatus: result.googleStatus,
+    galleryCount: result.galleryCount,
   };
 }
 
@@ -96,7 +105,7 @@ export async function resolveHeroMediaWithSelection(input: {
   const ordinal = input.selectedHero?.selectedPhotoOrdinal;
 
   if (placeId && sourcePlaceId && sourcePlaceId === placeId && typeof ordinal === "number") {
-    const selected = await getPlacePhotoByOrdinal(sourcePlaceId, ordinal);
+    const selected = await getPlacePhotoByOrdinalWithGalleryCount(sourcePlaceId, ordinal);
     if (selected.photo) {
       return {
         tier: "photo",
@@ -105,6 +114,7 @@ export async function resolveHeroMediaWithSelection(input: {
         photoStatus: selected.status,
         httpStatus: selected.httpStatus,
         googleStatus: selected.googleStatus,
+        galleryCount: selected.galleryCount,
       };
     }
   }
@@ -113,4 +123,31 @@ export async function resolveHeroMediaWithSelection(input: {
     googlePlaceId: input.googlePlaceId,
     websiteDomain: input.websiteDomain,
   });
+}
+
+/**
+ * Resolve the public gallery: the approved hero first, then up to two more distinct
+ * photos. The approved selection counts only when it was approved for this exact
+ * Place ID, as for the single hero. `skipHero` omits the hero's media request for a
+ * caller that already holds it. Returns the same safe diagnostics as the hero path.
+ */
+export async function resolveGalleryWithSelection(input: {
+  googlePlaceId?: string | null;
+  selectedHero?: {
+    sourcePlaceId: string | null;
+    selectedPhotoOrdinal: number | null;
+  } | null;
+  skipHero?: boolean;
+}): Promise<PlaceGalleryResult> {
+  const placeId = typeof input.googlePlaceId === "string" ? input.googlePlaceId.trim() : "";
+  const sourcePlaceId =
+    typeof input.selectedHero?.sourcePlaceId === "string"
+      ? input.selectedHero.sourcePlaceId.trim()
+      : "";
+  const ordinal = input.selectedHero?.selectedPhotoOrdinal;
+  const heroOrdinal =
+    placeId && sourcePlaceId === placeId && typeof ordinal === "number" && Number.isInteger(ordinal) && ordinal >= 1 && ordinal <= 10
+      ? ordinal
+      : null;
+  return getPlaceGallery(placeId, { heroOrdinal, skipHero: input.skipHero === true });
 }

@@ -219,7 +219,7 @@ test("public route returns only the published lookup's approved photo, with no-s
   const res = await get("public");
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("cache-control"), "no-store");
-  assert.deepEqual(await res.json(), { photo: expected("two", credits), status: "ok", logoUrl: null });
+  assert.deepEqual(await res.json(), { photo: expected("two", credits), status: "ok", logoUrl: null, galleryCount: 2 });
 });
 
 test("admin preview/approval retains original ordinals and only persists a validated exact selection", async () => {
