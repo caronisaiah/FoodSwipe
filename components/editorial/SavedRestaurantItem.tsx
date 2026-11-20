@@ -16,6 +16,8 @@ function useSavedMedia(restaurant: SavedRestaurant | null, featured: boolean) {
   const [media, setMedia] = useState<ClientHeroMedia | null>(null);
   const id = restaurant?.id;
   const shouldLoad = featured || nearViewport;
+  // A photo fetched for another restaurant is never used, even if this row is reused for a new one.
+  const current = media?.restaurantId === id ? media : null;
 
   useEffect(() => {
     if (!id || shouldLoad || !frame.current) return;
@@ -29,7 +31,7 @@ function useSavedMedia(restaurant: SavedRestaurant | null, featured: boolean) {
   }, [id, shouldLoad]);
 
   useEffect(() => {
-    if (!id || !shouldLoad || media) return;
+    if (!id || !shouldLoad || current) return;
     const controller = new AbortController();
     void (async () => {
       try {
@@ -41,9 +43,9 @@ function useSavedMedia(restaurant: SavedRestaurant | null, featured: boolean) {
       }
     })();
     return () => controller.abort();
-  }, [id, media, shouldLoad]);
+  }, [id, current, shouldLoad]);
 
-  return { frame, media };
+  return { frame, media: current };
 }
 
 export default function SavedRestaurantItem({
@@ -69,6 +71,10 @@ export default function SavedRestaurantItem({
   const [failedLogo, setFailedLogo] = useState<string>();
   const photo = image.photo;
   const logo = media?.logoUrl !== failedLogo ? media?.logoUrl : null;
+  // Until its photo has been looked up (or an unavailable favorite has nothing to look up) the
+  // frame stays neutral. Then a slow, failed or missing photo shows the logo or placeholder, and
+  // a photo that loads replaces them. The photo is never hidden behind a blank frame.
+  const showFallback = (media !== null || !restaurant) && image.showFallback;
   const name = restaurant?.name ?? "Restaurant unavailable";
   const href = restaurant ? `/restaurants/${encodeURIComponent(restaurant.id)}` : undefined;
 
@@ -79,18 +85,24 @@ export default function SavedRestaurantItem({
       className={`saved-item ${featured ? "saved-feature" : "saved-row"}`}
     >
       <div ref={frame} className="saved-photo">
-        {photo ? (
+        {photo && (
+          // The photo stays in the frame's flow, not clipped behind the fallback, so a lazy image still loads.
           // eslint-disable-next-line @next/next/no-img-element -- Google Place photos must load from their original URL.
           <img key={image.key} {...image.imageProps} src={photo.photoUri} alt="" loading={featured ? "eager" : "lazy"} decoding="async" />
-        ) : logo ? (
-          // eslint-disable-next-line @next/next/no-img-element -- Logo.dev assets load directly from their original URL.
-          <img className="saved-logo" src={logo} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer"
-            onError={() => setFailedLogo(logo)} />
-        ) : (
-          <span className="saved-photo-placeholder">
-            <MaterialIcon name={restaurant ? "restaurant" : "hide_image"} />
-            {featured && media && <span>Photo unavailable</span>}
-          </span>
+        )}
+        {showFallback && (
+          <div className="saved-photo-fallback">
+            {logo ? (
+              // eslint-disable-next-line @next/next/no-img-element -- Logo.dev assets load directly from their original URL.
+              <img className="saved-logo" src={logo} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer"
+                onError={() => setFailedLogo(logo)} />
+            ) : (
+              <span className="saved-photo-placeholder">
+                <MaterialIcon name={restaurant ? "restaurant" : "hide_image"} />
+                {featured && media && !photo && <span>Photo unavailable</span>}
+              </span>
+            )}
+          </div>
         )}
       </div>
       <div className="saved-item-copy">

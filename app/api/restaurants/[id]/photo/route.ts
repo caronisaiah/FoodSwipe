@@ -19,50 +19,56 @@ import { resolveHeroMediaWithSelection } from "@/lib/heroMedia";
   the admin candidate photo route). Response shape is unchanged:
   `{ photo, status, logoUrl, httpStatus?, googleStatus? }`.
 
-  Caching: NONE. Google Places policy forbids caching the photo `name` (it can
-  expire), and we never persist the ephemeral `photoUri` or attribution, so the
-  response is explicitly `no-store` — every request resolves fresh. (See README:
-  "Caching decision".) The handler never throws; failures degrade to null.
+  Caching: NONE, on every response. Google Places policy forbids caching the
+  photo `name` (it can expire), and we never persist the ephemeral `photoUri` or
+  attribution, so the response is explicitly `no-store` — every request resolves
+  fresh. (See README: "Caching decision".) That includes the 404 for an unknown,
+  hidden or unpublished restaurant and the 503 for an unexpected failure: a
+  cached "not found" must never outlive a change in publication status. The 404
+  is identical for all three cases so it does not reveal that a hidden
+  restaurant exists. Failures degrade to a response the client already handles.
 */
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  const { id } = await params;
-  // Resolve seed only when content mode allows it; DB-published rows always work.
-  const restaurant = await getAppRestaurantById(id, {
-    includeSeeds: shouldIncludeSeedRestaurants(),
-  });
-  if (!restaurant) {
-    return Response.json({ error: "Unknown restaurant." }, { status: 404 });
+  try {
+    const { id } = await params;
+    // Resolve seed only when content mode allows it; DB-published rows always work.
+    const restaurant = await getAppRestaurantById(id, {
+      includeSeeds: shouldIncludeSeedRestaurants(),
+    });
+    if (!restaurant) return noStoreJson({ error: "Unknown restaurant." }, 404);
+
+    // DB-published rows may have an explicit approved exact-location selection.
+    // Seed-only rows have no DB selection and keep the existing ladder unchanged.
+    const selection = await getApprovedHeroSelectionForRestaurantSlug(id);
+    const media = await resolveHeroMediaWithSelection({
+      googlePlaceId: restaurant.googlePlaceId,
+      websiteDomain: restaurant.websiteDomain,
+      selectedHero: selection
+        ? {
+            sourcePlaceId: selection.sourcePlaceId,
+            selectedPhotoOrdinal: selection.selectedPhotoOrdinal,
+          }
+        : null,
+    });
+
+    return noStoreJson({
+      photo: media.photo,
+      status: media.photoStatus,
+      logoUrl: media.logoUrl,
+      httpStatus: media.httpStatus,
+      googleStatus: media.googleStatus,
+    });
+  } catch {
+    return noStoreJson({ error: "Photo temporarily unavailable." }, 503);
   }
-
-  // DB-published rows may have an explicit approved exact-location selection.
-  // Seed-only rows have no DB selection and keep the existing ladder unchanged.
-  const selection = await getApprovedHeroSelectionForRestaurantSlug(id);
-  const media = await resolveHeroMediaWithSelection({
-    googlePlaceId: restaurant.googlePlaceId,
-    websiteDomain: restaurant.websiteDomain,
-    selectedHero: selection
-      ? {
-          sourcePlaceId: selection.sourcePlaceId,
-          selectedPhotoOrdinal: selection.selectedPhotoOrdinal,
-        }
-      : null,
-  });
-
-  return noStoreJson({
-    photo: media.photo,
-    status: media.photoStatus,
-    logoUrl: media.logoUrl,
-    httpStatus: media.httpStatus,
-    googleStatus: media.googleStatus,
-  });
 }
 
-function noStoreJson(body: unknown): Response {
+function noStoreJson(body: unknown, status = 200): Response {
   return Response.json(body, {
-    status: 200,
+    status,
     headers: { "Cache-Control": "no-store" },
   });
 }

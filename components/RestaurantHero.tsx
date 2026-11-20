@@ -87,6 +87,11 @@ export default function RestaurantHero({
   const photo = image.photo;
   const logoSrc = media?.logoUrl !== failedLogoUrl ? media?.logoUrl : null;
   const isFeed = variant === "feed";
+  // While a photo is still arriving only the neutral backdrop shows. The logo or placeholder
+  // appears once the photo fails or takes too long, and the photo replaces it as soon as it has
+  // really loaded. Nothing that was shown is ever taken away to leave a blank area.
+  const resolved = media !== null;
+  const showFallback = resolved && image.showFallback;
 
   return (
     <div className={isFeed && feedHeroFullscreen ? "flex h-full min-h-0 flex-col" : undefined}>
@@ -100,8 +105,21 @@ export default function RestaurantHero({
             : "relative mx-4 mt-1 aspect-[4/5] overflow-hidden rounded-[28px] ring-1 ring-white/10"
         }
       >
-        {isFeed && <FeedHeroBackdrop />}
-        {photo ? (
+        <FeedHeroBackdrop />
+        {!resolved && isFeed && <FeedHeroFallback label={`Loading ${name} photo`} />}
+        {showFallback && (logoSrc ? (
+          <LogoCard
+            src={logoSrc}
+            name={name}
+            eager={isFeed}
+            onError={() => setFailedLogoUrl(logoSrc)}
+          />
+        ) : isFeed ? (
+          <FeedHeroFallback label={photo ? `Loading ${name} photo` : `${name} image unavailable`} />
+        ) : (
+          <VideoEmbed video={fallbackVideo} posterEmoji={posterEmoji} fill />
+        ))}
+        {photo && (
           <>
             {/* eslint-disable-next-line @next/next/no-img-element -- Google's Place
                 Photo is an ephemeral URL that must be loaded directly from Google
@@ -120,17 +138,6 @@ export default function RestaurantHero({
               decoding="async"
             />
           </>
-        ) : logoSrc ? (
-          <LogoCard
-            src={logoSrc}
-            name={name}
-            eager={isFeed}
-            onError={() => setFailedLogoUrl(logoSrc)}
-          />
-        ) : isFeed ? (
-          <FeedHeroFallback label={media ? `${name} image unavailable` : `Loading ${name} photo`} />
-        ) : (
-          <VideoEmbed video={fallbackVideo} posterEmoji={posterEmoji} fill />
         )}
 
         <div

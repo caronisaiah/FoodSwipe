@@ -492,10 +492,17 @@ html:has(.tune) { scroll-padding-block: 12px calc(72px + env(safe-area-inset-bot
   padding-block: 12px;
 }
 .saved-photo {
+  position: relative;
   min-width: 0;
   height: 60px;
   overflow: hidden;
   border-radius: var(--radius-editorial-photo);
+  background: var(--color-editorial-hover);
+}
+/* Covers a photo that is still loading, slow or failed. The photo stays in flow underneath. */
+.saved-photo-fallback {
+  position: absolute;
+  inset: 0;
   background: var(--color-editorial-hover);
 }
 .saved-feature .saved-photo {

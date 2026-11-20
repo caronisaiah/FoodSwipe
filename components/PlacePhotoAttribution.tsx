@@ -1,32 +1,11 @@
 "use client";
 
-import { useState } from "react";
 import type { PlacePhoto } from "@/lib/placePhoto";
 import MaterialIcon from "@/components/MaterialIcon";
 import styles from "./PlacePhotoAttribution.module.css";
 
-/** Keep the directly loaded image and its caption on the same load/error boundary. */
-export function usePlacePhotoImage(photo: PlacePhoto | null | undefined) {
-  const key = photo ? JSON.stringify([photo.photoUri, photo.googleMapsUri]) : null;
-  type ImageState = "loading" | "loaded" | "failed";
-  const [result, setResult] = useState<{ key: string | null; state: ImageState }>({ key, state: "loading" });
-  if (result.key !== key) setResult({ key, state: "loading" });
-  const loaded = result.key === key && result.state === "loaded";
-  function settle(state: ImageState) {
-    setResult((current) => current.key === key ? { key, state } : current);
-  }
-  return {
-    photo: result.key === key && result.state === "failed" ? null : photo,
-    displayed: loaded ? photo : null,
-    key,
-    imageProps: {
-      style: { visibility: loaded ? "visible" as const : "hidden" as const },
-      onLoad: () => settle("loaded"),
-      onError: () => settle("failed"),
-      referrerPolicy: "no-referrer" as const,
-    },
-  };
-}
+// The load/credit boundary lives in a hook so its rules can be tested without a browser.
+export { usePlacePhotoImage } from "@/lib/usePlacePhotoImage";
 
 export default function PlacePhotoAttribution({ photo, subject, light = false }: {
   photo: PlacePhoto;
