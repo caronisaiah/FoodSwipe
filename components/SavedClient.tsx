@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { SavedRestaurant } from "@/lib/types";
 import { useFavorites } from "@/lib/storage";
+import { describeStorageFailure } from "@/lib/storageErrors";
 import type { FavoriteRemoval } from "@/lib/discoveryState";
 import EditorialHeader from "@/components/editorial/EditorialHeader";
 import SavedRestaurantItem from "@/components/editorial/SavedRestaurantItem";
@@ -38,7 +39,9 @@ function stillHasActionFocus(button: HTMLButtonElement) {
 }
 
 export default function SavedClient() {
-  const { status, favorites, removeFavorite, undoRemoveFavorite, retry: retryStorage } = useFavorites();
+  const {
+    status, error: storageError, favorites, removeFavorite, undoRemoveFavorite, retry: retryStorage,
+  } = useFavorites();
   const reduceMotion = useReducedMotion() ?? false;
   const [catalogue, setCatalogue] = useState(new Map<string, SavedRestaurant | null>());
   const [failedRequest, setFailedRequest] = useState<string>();
@@ -117,8 +120,8 @@ export default function SavedClient() {
         ...restaurantAnalyticsContext(restaurant, "saved"),
         unsaveSource: "saved_list",
       });
-    } catch {
-      setFeedback(`Couldn’t remove ${name} from Saved.`);
+    } catch (error) {
+      setFeedback(describeStorageFailure(error, "remove", name).message);
     } finally {
       setBusy(false);
     }
@@ -136,8 +139,8 @@ export default function SavedClient() {
         focusRequest.current = restored ? { target: "record", id: undo.id } : { target: "heading" };
       }
       setNotice({ text: restored ? `Restored ${undo.name} to Saved.` : "That removal can no longer be undone." });
-    } catch {
-      setFeedback(`Couldn’t restore ${undo.name} to Saved.`);
+    } catch (error) {
+      setFeedback(describeStorageFailure(error, "restore", undo.name).message);
     } finally {
       setBusy(false);
     }
@@ -152,6 +155,7 @@ export default function SavedClient() {
       ? "Most recent available save" : "Available save";
   const shown = ordered.filter(({ restaurantId }) => catalogue.has(restaurantId));
   const count = favorites.length;
+  const storageNotice = describeStorageFailure(storageError ?? { reason: "read-failed", operation: "read" }, "load");
 
   const actionNotice = (notice || feedback) && (
     <motion.div className="saved-notice" initial={reduceMotion ? false : { opacity: 0.9, y: 4 }}
@@ -177,11 +181,17 @@ export default function SavedClient() {
         {status === "error" ? (
           <section className="saved-state">
             <h2 className="editorial-section-title">Couldn’t access favorites</h2>
-            <p role="alert">Saved favorites couldn’t be read on this device.</p>
-            <button type="button" className="editorial-action editorial-action-secondary" onClick={() => {
-              heading.current?.focus();
-              void retryStorage();
-            }}>Retry device storage</button>
+            <p role="alert">{storageNotice.message}</p>
+            {storageNotice.retry && (
+              <button type="button" className="editorial-action editorial-action-secondary" onClick={() => {
+                heading.current?.focus();
+                void retryStorage();
+              }}>Retry device storage</button>
+            )}
+            {storageNotice.reload && (
+              <button type="button" className="editorial-action editorial-action-secondary"
+                onClick={() => window.location.reload()}>Reload</button>
+            )}
           </section>
         ) : catalogueError ? (
           <section className="saved-state">

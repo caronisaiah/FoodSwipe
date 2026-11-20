@@ -183,10 +183,11 @@ function useDiscoveryState() {
 
 /** Device-local favorites, ordered newest first. */
 export function useFavorites() {
-  const { state, status } = useDiscoveryState();
+  const { state, status, error } = useDiscoveryState();
   const favorites = useMemo(() => selectFavorites(state), [state]);
   return {
     status,
+    error,
     favorites,
     retry: refreshDiscovery,
     saveFavorite: saveRestaurantFavorite,
@@ -209,7 +210,7 @@ function undoRemoveFavorite(receipt: FavoriteRemoval) {
 }
 
 export function useDiscoveryHistory(market: Market | null) {
-  const { state, status } = useDiscoveryState();
+  const { state, status, error } = useDiscoveryState();
   const seenIds = useMemo(() => market ? selectSeen(state, market) : [], [market, state]);
 
   const swipe = useCallback((restaurantId: string, direction: SwipeDirection) => {
@@ -223,7 +224,7 @@ export function useDiscoveryHistory(market: Market | null) {
     return updateDiscovery((current) => restartMarket(current, market));
   }, [market]);
 
-  return { seenIds, status, retry: refreshDiscovery, recordSwipe: swipe, restart };
+  return { seenIds, status, error, retry: refreshDiscovery, recordSwipe: swipe, restart };
 }
 
 /**

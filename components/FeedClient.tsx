@@ -6,6 +6,7 @@ import { getMarketDisplayName, type Market } from "@/lib/markets";
 import { useDiscoveryCatalogue } from "@/lib/useDiscoveryCatalogue";
 import { rankRestaurants } from "@/lib/recommendations";
 import { usePreferences, useFavorites, useDiscoveryHistory } from "@/lib/storage";
+import { describeStorageFailure, type StorageNotice } from "@/lib/storageErrors";
 import SwipeDeck from "@/components/SwipeDeck";
 import MaterialIcon from "@/components/MaterialIcon";
 import {
@@ -23,10 +24,12 @@ import {
 export default function FeedClient({ market }: { market: Market | null }) {
   const { preferences } = usePreferences();
   const { favorites } = useFavorites();
-  const { status: storageStatus, seenIds, recordSwipe, restart, retry: retryStorage } = useDiscoveryHistory(market);
+  const {
+    status: storageStatus, error: storageError, seenIds, recordSwipe, restart, retry: retryStorage,
+  } = useDiscoveryHistory(market);
   const { catalogue, retry } = useDiscoveryCatalogue(market);
   const [deckCycle, setDeckCycle] = useState(0);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<StorageNotice | null>(null);
   const entryTrackedRef = useRef(false);
 
   const deck = useMemo(
@@ -61,9 +64,8 @@ export default function FeedClient({ market }: { market: Market | null }) {
       let addedFavorite;
       try {
         addedFavorite = await recordSwipe(restaurantId, direction);
-      } catch {
-        const { name } = scored.restaurant;
-        setActionError(direction === "right" ? `Couldn’t save ${name}.` : `Couldn’t skip ${name}.`);
+      } catch (error) {
+        setActionError(describeStorageFailure(error, direction === "right" ? "save" : "skip", scored.restaurant.name));
         return false;
       }
 
@@ -89,8 +91,8 @@ export default function FeedClient({ market }: { market: Market | null }) {
       await restart();
       setDeckCycle((cycle) => cycle + 1);
       captureFeedStarted("restart");
-    } catch {
-      setActionError("Couldn’t start over.");
+    } catch (error) {
+      setActionError(describeStorageFailure(error, "restart"));
     }
   }, [captureFeedStarted, restart]);
 
@@ -98,6 +100,10 @@ export default function FeedClient({ market }: { market: Market | null }) {
     await retryStorage();
     setActionError(null);
   };
+
+  const storageNotice = actionError ?? (storageStatus === "error"
+    ? describeStorageFailure(storageError ?? { reason: "read-failed", operation: "read" }, "load")
+    : null);
 
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden bg-ink">
@@ -115,14 +121,23 @@ export default function FeedClient({ market }: { market: Market | null }) {
             </button>
           )}
         </div>
-      ) : actionError || storageStatus === "error" ? (
+      ) : storageNotice ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 text-center">
           <p role="alert" className="font-display text-xl font-bold text-cream">
-            {actionError ?? "Couldn’t access swipe history or favorites on this device."}
+            {storageNotice.message}
           </p>
-          <button type="button" onClick={() => void handleStorageRetry()} className="rounded-full border border-line px-4 py-2 text-cream">
-            Retry
-          </button>
+          <div className="flex flex-wrap justify-center gap-3">
+            {storageNotice.retry && (
+              <button type="button" onClick={() => void handleStorageRetry()} className="rounded-full border border-line px-4 py-2 text-cream">
+                Retry
+              </button>
+            )}
+            {storageNotice.reload && (
+              <button type="button" onClick={() => window.location.reload()} className="rounded-full border border-line px-4 py-2 text-cream">
+                Reload
+              </button>
+            )}
+          </div>
         </div>
       ) : storageStatus === "ready" && catalogue.status === "ready" ? (
         <SwipeDeck

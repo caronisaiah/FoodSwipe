@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useFavorites } from "@/lib/storage";
+import { describeStorageFailure, type StorageNotice } from "@/lib/storageErrors";
 import type { Restaurant } from "@/lib/types";
 import {
   captureFoodSwipeEvent,
@@ -10,9 +11,9 @@ import {
 
 /** Toggle the independent favorite without changing discovery history. */
 export default function SaveButton({ restaurant }: { restaurant: Restaurant }) {
-  const { favorites, status, saveFavorite, removeFavorite, retry } = useFavorites();
+  const { favorites, status, error: storageError, saveFavorite, removeFavorite, retry } = useFavorites();
   const [pending, setPending] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<StorageNotice | null>(null);
   const saved = favorites.some(({ restaurantId }) => restaurantId === restaurant.id);
 
   const toggleSaved = async () => {
@@ -27,20 +28,27 @@ export default function SaveButton({ restaurant }: { restaurant: Restaurant }) {
       } else if (await saveFavorite(restaurant.id)) {
         captureFoodSwipeEvent("restaurant_saved", { ...context, saveSource: "profile_button" });
       }
-    } catch {
-      setActionError(saved ? "Couldn’t remove this favorite." : "Couldn’t save this restaurant.");
+    } catch (error) {
+      setActionError(describeStorageFailure(error, saved ? "remove" : "save"));
     } finally {
       setPending(false);
     }
   };
 
+  const notice = actionError ?? (status === "error"
+    ? describeStorageFailure(storageError ?? { reason: "read-failed", operation: "read" }, "load")
+    : null);
+
   return (
     <>
-      {(actionError || status === "error") && (
+      {notice && (
         <div className="text-xs text-haze">
-          <span role="alert">{actionError ?? "Couldn’t access favorites."}</span>
-          {status === "error" && (
+          <span role="alert">{notice.message}</span>
+          {status === "error" && notice.retry && (
             <button type="button" className="ml-1 underline" onClick={() => void retry()}>Retry</button>
+          )}
+          {notice.reload && (
+            <button type="button" className="ml-1 underline" onClick={() => window.location.reload()}>Reload</button>
           )}
         </div>
       )}

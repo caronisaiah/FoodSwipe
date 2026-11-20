@@ -322,14 +322,23 @@ export default function SwipeDeck({
       // Persist the accepted gesture even if navigation interrupts the animation.
       // Keep the outgoing card rendered until the animation and media handoff finish.
       const committed = onSwipe(restaurantId, direction);
+      // The caller reports failures. Marking it handled keeps a rejection during the
+      // animation from surfacing as an unhandled promise rejection.
+      committed.catch(() => undefined);
       if (next) void prepareHeroMedia(next.restaurant.id);
       return async () => {
-        await waitForHeroReady(next?.restaurant.id ?? null);
-        if (await committed) {
-          const verb = direction === "right" ? "Saved" : "Skipped";
-          setAnnouncement(`${verb} ${top.restaurant.name}.`);
+        try {
+          await waitForHeroReady(next?.restaurant.id ?? null);
+          if (await committed) {
+            const verb = direction === "right" ? "Saved" : "Skipped";
+            setAnnouncement(`${verb} ${top.restaurant.name}.`);
+          }
+        } catch (error) {
+          console.error("Finishing the swipe failed.", error);
+        } finally {
+          // Whatever happened, the deck must never stay mid-transition.
+          setTransition(null);
         }
-        setTransition(null);
       };
     },
     [next, onSwipe, prepareHeroMedia, setTransition, top, waitForHeroReady],
