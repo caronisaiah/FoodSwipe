@@ -19,11 +19,14 @@ import {
   motion,
   useAnimationControls,
   useMotionValue,
+  useMotionValueEvent,
+  useReducedMotion,
   useScroll,
   useTransform,
 } from "framer-motion";
 import type { ScoredRestaurant, SwipeDirection } from "@/lib/types";
 import { getMarketShortName } from "@/lib/markets";
+import { createHeroImagePrewarmer, prewarmDiscardsPhoto } from "@/lib/heroImagePrewarm";
 import RestaurantCard from "@/components/RestaurantCard";
 import RestaurantProfileView from "@/components/RestaurantProfileView";
 import MaterialIcon from "@/components/MaterialIcon";
@@ -33,9 +36,6 @@ import {
 } from "@/lib/analytics";
 
 const HERO_HANDOFF_MAX_WAIT_MS = 350;
-const HERO_IMAGE_SETTLE_MAX_WAIT_MS = 5000;
-
-type ImagePrewarmStatus = "ready" | "error";
 
 interface OutgoingSwipe {
   card: ScoredRestaurant;
@@ -82,14 +82,21 @@ export default function SwipeDeck({
   const nextId = next?.restaurant.id ?? null;
 
   const [announcement, setAnnouncement] = useState("");
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  const reducedMotion = useReducedMotion() ?? false;
   const outgoingSwipeRef = useRef<OutgoingSwipe | null>(null);
   const [heroMediaById, setHeroMediaById] = useState<Record<string, ClientHeroMedia | null>>({});
   const neededHeroIdsRef = useRef(new Set<string>());
   const heroMediaRef = useRef(new Map<string, ClientHeroMedia | null>());
   const heroFetchControllersRef = useRef(new Map<string, AbortController>());
   const heroPreparePromisesRef = useRef(new Map<string, Promise<void>>());
-  const imagePrewarmPromisesRef = useRef(new Map<string, Promise<ImagePrewarmStatus>>());
-  const imagePrewarmStatusRef = useRef(new Map<string, ImagePrewarmStatus | "pending">());
+  const [prewarmer] = useState(() =>
+    createHeroImagePrewarmer({
+      createImage: () => new window.Image(),
+      setTimeout: (callback, ms) => window.setTimeout(callback, ms),
+      clearTimeout: (id) => window.clearTimeout(id),
+    }),
+  );
   const isAdvancing = outgoingSwipe !== null;
 
   useEffect(() => {
@@ -140,66 +147,14 @@ export default function SwipeDeck({
     [],
   );
 
-  const prewarmHeroImage = useCallback((restaurantId: string, url: string) => {
-    const key = `${restaurantId}|${url}`;
-    const known = imagePrewarmStatusRef.current.get(key);
-    if (known === "ready" || known === "error") return Promise.resolve(known);
-
-    const existing = imagePrewarmPromisesRef.current.get(key);
-    if (existing) return existing;
-
-    imagePrewarmStatusRef.current.set(key, "pending");
-    const promise = new Promise<ImagePrewarmStatus>((resolve) => {
-      if (typeof window === "undefined") {
-        resolve("ready");
-        return;
-      }
-
-      const img = new window.Image();
-      let settled = false;
-      const timeoutRef = { id: 0 };
-
-      const settle = (status: ImagePrewarmStatus) => {
-        if (settled) return;
-        settled = true;
-        window.clearTimeout(timeoutRef.id);
-        imagePrewarmStatusRef.current.set(key, status);
-        resolve(status);
-      };
-      timeoutRef.id = window.setTimeout(() => settle("error"), HERO_IMAGE_SETTLE_MAX_WAIT_MS);
-
-      img.onload = () => settle("ready");
-      img.onerror = () => settle("error");
-      img.referrerPolicy = "no-referrer";
-      img.decoding = "async";
-      img.src = url;
-
-      if (typeof img.decode === "function") {
-        img.decode()
-          .then(() => settle("ready"))
-          .catch(() => {
-            if (img.complete) {
-              settle(img.naturalWidth > 0 ? "ready" : "error");
-            }
-          });
-      }
-    });
-
-    const tracked = promise.finally(() => {
-      imagePrewarmPromisesRef.current.delete(key);
-    });
-    imagePrewarmPromisesRef.current.set(key, tracked);
-    return tracked;
-  }, []);
-
   const prepareHeroMedia = useCallback(
     (restaurantId: string): Promise<void> => {
       if (heroMediaRef.current.has(restaurantId)) {
         const cached = heroMediaRef.current.get(restaurantId) ?? null;
         const cachedUrl = heroMediaImageUrl(cached);
         return cachedUrl
-          ? prewarmHeroImage(restaurantId, cachedUrl).then((status) => {
-              if (status === "error" && cached) {
+          ? prewarmer.prewarm(restaurantId, cachedUrl).then((status) => {
+              if (prewarmDiscardsPhoto(status) && cached) {
                 publishHeroMedia(restaurantId, withoutFailedHeroUrl(cached));
               }
             })
@@ -227,8 +182,10 @@ export default function SwipeDeck({
           for (let attempt = 0; attempt < 2; attempt++) {
             const url = heroMediaImageUrl(displayMedia);
             if (!url) break;
-            const status = await prewarmHeroImage(restaurantId, url);
-            if (status === "ready") break;
+            const status = await prewarmer.prewarm(restaurantId, url);
+            // Only a genuine load error discards the photo. A slow one keeps loading and
+            // the hero shows the logo until it arrives.
+            if (!prewarmDiscardsPhoto(status)) break;
             displayMedia = withoutFailedHeroUrl(displayMedia);
             publishHeroMedia(restaurantId, displayMedia);
           }
@@ -249,7 +206,7 @@ export default function SwipeDeck({
       heroPreparePromisesRef.current.set(restaurantId, promise);
       return promise;
     },
-    [prewarmHeroImage, publishHeroMedia],
+    [prewarmer, publishHeroMedia],
   );
 
   const waitForHeroReady = useCallback(
@@ -282,35 +239,21 @@ export default function SwipeDeck({
       if (!keep.has(id)) heroMediaRef.current.delete(id);
     }
 
-    for (const key of imagePrewarmStatusRef.current.keys()) {
-      if (!keep.has(heroImageKeyRestaurantId(key))) {
-        imagePrewarmStatusRef.current.delete(key);
-      }
-    }
-
-    for (const key of imagePrewarmPromisesRef.current.keys()) {
-      if (!keep.has(heroImageKeyRestaurantId(key))) {
-        imagePrewarmPromisesRef.current.delete(key);
-      }
-    }
-
-  }, [nextId, prepareHeroMedia, topId]);
+    prewarmer.retainOnly(keep);
+  }, [nextId, prepareHeroMedia, prewarmer, topId]);
 
   useEffect(() => {
     const controllers = heroFetchControllersRef.current;
     const preparePromises = heroPreparePromisesRef.current;
-    const prewarmPromises = imagePrewarmPromisesRef.current;
-    const prewarmStatus = imagePrewarmStatusRef.current;
     return () => {
       for (const controller of controllers.values()) {
         controller.abort();
       }
       controllers.clear();
       preparePromises.clear();
-      prewarmPromises.clear();
-      prewarmStatus.clear();
+      prewarmer.clear();
     };
-  }, []);
+  }, [prewarmer]);
 
   const handleSwipeAccepted = useCallback(
     (restaurantId: string, direction: SwipeDirection) => {
@@ -330,8 +273,10 @@ export default function SwipeDeck({
         try {
           await waitForHeroReady(next?.restaurant.id ?? null);
           if (await committed) {
-            const verb = direction === "right" ? "Saved" : "Skipped";
+            const verb = direction === "right" ? "Saved" : "Passed";
             setAnnouncement(`${verb} ${top.restaurant.name}.`);
+            // A brief visual confirmation for both decisions (the live region above announces them).
+            setSavedNotice(`${top.restaurant.name} ${direction === "right" ? "saved" : "passed"}`);
           }
         } catch (error) {
           console.error("Finishing the swipe failed.", error);
@@ -346,6 +291,13 @@ export default function SwipeDeck({
 
   const topHeroMedia = top ? heroMediaById[top.restaurant.id] ?? null : null;
   const nextHeroMedia = next ? heroMediaById[next.restaurant.id] ?? null : null;
+
+  // The save confirmation clears itself.
+  useEffect(() => {
+    if (!savedNotice) return;
+    const timer = window.setTimeout(() => setSavedNotice(null), 2200);
+    return () => window.clearTimeout(timer);
+  }, [savedNotice]);
 
   // Desktop affordance: arrow keys save/skip the current card.
   useEffect(() => {
@@ -368,7 +320,8 @@ export default function SwipeDeck({
         <>
           <p id="swipe-hint" className="sr-only">
             Scroll down through each restaurant&apos;s profile. Swipe or drag left to
-            skip, right to save. You can also use the Left and Right arrow keys.
+            pass, right to save. You can also use the Pass and Save buttons, or the Left
+            and Right arrow keys. Tap the photo, or use the photo buttons, to see more photos.
           </p>
 
           {/* Deck area */}
@@ -376,11 +329,11 @@ export default function SwipeDeck({
             role="group"
             aria-label="Restaurant swipe deck"
             aria-describedby="swipe-hint"
-            className="isolate relative min-h-0 flex-1 overflow-hidden rounded-[28px] bg-ink-2"
+            className="swipe-stage isolate relative min-h-0 flex-1 overflow-hidden bg-ink-2"
           >
             <div
               aria-hidden
-              className="pointer-events-none absolute inset-0 z-0 rounded-[28px] bg-ink-2"
+              className="pointer-events-none absolute inset-0 z-0 bg-ink-2"
             />
             {next && (
               // Lightweight peek behind the top card (no profile body / no video fetch).
@@ -391,7 +344,7 @@ export default function SwipeDeck({
                 className="pointer-events-none absolute inset-0 z-10"
                 initial={false}
                 animate={{ scale: 0.955, y: 10, opacity: 1 }}
-                transition={{ type: "spring", stiffness: 260, damping: 30 }}
+                transition={reducedMotion ? { duration: 0 } : { type: "spring", stiffness: 260, damping: 30 }}
               >
                 <RestaurantCard scored={next} heroMedia={nextHeroMedia} />
               </motion.div>
@@ -403,7 +356,11 @@ export default function SwipeDeck({
               heroMedia={topHeroMedia}
               isAdvancing={isAdvancing}
               onSwipeAccepted={handleSwipeAccepted}
+              reducedMotion={reducedMotion}
             />
+            {savedNotice && (
+              <p aria-hidden className="swipe-toast">{savedNotice}</p>
+            )}
           </div>
         </>
       ) : (
@@ -414,11 +371,6 @@ export default function SwipeDeck({
 }
 
 /* -------------------------------------------------------------------------- */
-
-function heroImageKeyRestaurantId(key: string): string {
-  const separator = key.indexOf("|");
-  return separator === -1 ? key : key.slice(0, separator);
-}
 
 function withoutFailedHeroUrl(media: ClientHeroMedia): ClientHeroMedia {
   if (media.photo) return { ...media, photo: null };
@@ -437,19 +389,20 @@ interface SwipeCardProps {
   heroMedia: ClientHeroMedia | null;
   isAdvancing: boolean;
   onSwipeAccepted: (restaurantId: string, direction: SwipeDirection) => (() => Promise<void>) | null;
+  reducedMotion: boolean;
 }
 
 /**
- * The active feed card — a Hinge-style scrollable restaurant profile. The
- * motion wrapper handles horizontal save/skip drags. The browser handles
- * vertical scrolling and pinch zoom, including inside the drag surface where
- * Motion sets an inline touch action. The hero fades via `useScroll` on the
- * card's own scroll container. The first scroll viewport is the hero card; the
- * profile body begins below it and appears only after a vertical scroll.
+ * The active feed card — a scrollable restaurant profile. The motion wrapper handles
+ * horizontal pass/save drags. The browser handles vertical scrolling and pinch zoom,
+ * including inside the drag surface where Motion sets an inline touch action. The hero
+ * fades via `useScroll` on the card's own scroll container. The first scroll viewport is
+ * the full-bleed photo and its credit; the profile begins below it. The Pass / Full
+ * profile / Save dock stays on screen while the profile scrolls.
  */
 const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
   function SwipeCard(
-    { scored, heroMedia, isAdvancing, onSwipeAccepted },
+    { scored, heroMedia, isAdvancing, onSwipeAccepted, reducedMotion },
     ref,
   ) {
     const r = scored.restaurant;
@@ -459,6 +412,7 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
     const decided = useRef(false);
     const scrollRef = useRef<HTMLDivElement>(null);
     const [copied, setCopied] = useState(false);
+    const [scrolled, setScrolled] = useState(false);
 
     const rotate = useTransform(x, [-720, -300, 0, 300, 720], [-18, -10, 0, 10, 18]);
     const saveOpacity = useTransform(x, [32, 132], [0, 1]);
@@ -472,6 +426,8 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
     });
     const heroOpacity = useTransform(heroProgress, [0, 1], [1, 0]);
     const heroScale = useTransform(heroProgress, [0, 1], [1, 1.05]);
+    // "Full profile" is only a hint until the profile is on screen.
+    useMotionValueEvent(scrollY, "change", (latest) => setScrolled(latest > 48));
 
     // Entrance: rise + scale into place.
     useEffect(() => {
@@ -479,9 +435,11 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
         scale: 1,
         y: 0,
         opacity: 1,
-        transition: { type: "spring", stiffness: 330, damping: 28, mass: 0.9 },
+        transition: reducedMotion
+          ? { duration: 0 }
+          : { type: "spring", stiffness: 330, damping: 28, mass: 0.9 },
       });
-    }, [controls]);
+    }, [controls, reducedMotion]);
 
     useEffect(() => {
       const el = scrollRef.current;
@@ -500,13 +458,13 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
             x: direction === "right" ? 720 : -720,
             y: -18,
             scale: 0.96,
-            transition: { duration: 0.34, ease: [0.22, 1, 0.36, 1] },
+            transition: { duration: reducedMotion ? 0 : 0.34, ease: [0.22, 1, 0.36, 1] },
           });
         } finally {
           await finishSwipe();
         }
       },
-      [controls, isAdvancing, onSwipeAccepted, r.id],
+      [controls, isAdvancing, onSwipeAccepted, r.id, reducedMotion],
     );
 
     useImperativeHandle(ref, () => ({ swipe: leave }), [leave]);
@@ -514,8 +472,8 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
     const scrollToProfile = useCallback(() => {
       const el = scrollRef.current;
       if (!el) return;
-      el.scrollTo({ top: el.clientHeight, behavior: "smooth" });
-    }, []);
+      el.scrollTo({ top: el.clientHeight, behavior: reducedMotion ? "auto" : "smooth" });
+    }, [reducedMotion]);
 
     async function shareProfile() {
       if (typeof window === "undefined") return;
@@ -547,17 +505,16 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
 
     return (
       <motion.div
-        className={`absolute inset-0 z-20 cursor-grab [touch-action:pan-y_pinch-zoom]! overflow-hidden rounded-[28px] bg-ink-2 ring-1 ring-white/10 shadow-2xl shadow-black/60 will-change-transform active:cursor-grabbing ${
+        className={`swipe-card absolute inset-0 z-20 cursor-grab [touch-action:pan-y_pinch-zoom]! overflow-hidden bg-ink-2 will-change-transform active:cursor-grabbing ${
           isAdvancing ? "pointer-events-none" : ""
         }`}
-        style={{ x, rotate }}
-        initial={{ scale: 0.98, y: 10, opacity: 1 }}
+        style={{ x, rotate: reducedMotion ? 0 : rotate }}
+        initial={reducedMotion ? false : { scale: 0.98, y: 10, opacity: 1 }}
         animate={controls}
         drag={isAdvancing ? false : "x"}
         dragElastic={0.42}
         dragMomentum={false}
         dragSnapToOrigin={false}
-        whileTap={isAdvancing ? undefined : { scale: 0.995 }}
         onDragEnd={(_, info) => {
           if (isAdvancing) return;
           // Slightly higher than the old threshold so a diagonal scroll-flick
@@ -570,7 +527,9 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
               x: 0,
               y: 0,
               scale: 1,
-              transition: { type: "spring", stiffness: 420, damping: 34, mass: 0.85 },
+              transition: reducedMotion
+                ? { duration: 0 }
+                : { type: "spring", stiffness: 420, damping: 34, mass: 0.85 },
             });
         }}
       >
@@ -584,19 +543,17 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
             restaurant={r}
             variant="feed"
             feedHeroFullscreen
-            heroStyle={{ opacity: heroOpacity, scale: heroScale }}
+            heroStyle={reducedMotion ? undefined : { opacity: heroOpacity, scale: heroScale }}
             heroMedia={heroMedia}
-            onScrollToProfile={scrollToProfile}
           />
         </div>
 
         {/* Top scrim for control legibility over the hero */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-black/45 to-transparent" />
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-[#101a16]/80 to-transparent" />
 
-        {/* Persistent action — Share. (Save is the right-swipe; no redundant heart.)
-            Sits below the feed top app bar so it never overlaps the notifications icon. */}
+        {/* Persistent action — Share. Sits below the feed top bar so it never overlaps it. */}
         <div
-          className="absolute right-3 top-20 z-20"
+          className="swipe-share absolute z-20"
           onPointerDown={(e) => e.stopPropagation()}
         >
           <ActionButton label={copied ? "Copied" : "Share"} onClick={shareProfile}>
@@ -604,20 +561,38 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(
           </ActionButton>
         </div>
 
+        {/* Decision dock: explicit alternatives to the horizontal drag. */}
+        <div className="swipe-dock" data-scrolled={scrolled || undefined} onPointerDown={(e) => e.stopPropagation()}>
+          <button type="button" className="swipe-decision" disabled={isAdvancing}
+            onClick={() => void leave("left")}>
+            <MaterialIcon name="close" /> Pass
+          </button>
+          <button type="button" className="swipe-profile-link" data-hidden={scrolled || undefined}
+            disabled={isAdvancing || scrolled} tabIndex={scrolled ? -1 : undefined}
+            aria-label={`Full profile for ${r.name}`} onClick={scrollToProfile}>
+            <MaterialIcon name="keyboard_arrow_up" />
+            <span>Full profile</span>
+          </button>
+          <button type="button" className="swipe-decision swipe-decision-save" disabled={isAdvancing}
+            onClick={() => void leave("right")}>
+            <MaterialIcon name="bookmark" /> Save
+          </button>
+        </div>
+
         {/* Decision stamps */}
         <motion.div
           aria-hidden
           style={{ opacity: saveOpacity }}
-          className="pointer-events-none absolute right-5 top-24 z-30 rotate-12 rounded-xl border-4 border-saffron px-3 py-1 font-display text-3xl font-extrabold tracking-wider text-saffron"
+          className="swipe-stamp swipe-stamp-save pointer-events-none absolute right-5 top-28 z-30 rotate-6 font-display"
         >
           SAVE
         </motion.div>
         <motion.div
           aria-hidden
           style={{ opacity: skipOpacity }}
-          className="pointer-events-none absolute left-5 top-24 z-30 -rotate-12 rounded-xl border-4 border-chili px-3 py-1 font-display text-3xl font-extrabold tracking-wider text-chili"
+          className="swipe-stamp swipe-stamp-pass pointer-events-none absolute left-5 top-28 z-30 -rotate-6 font-display"
         >
-          SKIP
+          PASS
         </motion.div>
       </motion.div>
     );
@@ -640,7 +615,7 @@ function ActionButton({
       type="button"
       onClick={onClick}
       aria-label={label}
-      className="flex h-12 w-12 items-center justify-center rounded-full bg-black/40 text-cream ring-1 ring-white/20 backdrop-blur-md transition hover:bg-black/60 active:scale-90"
+      className="swipe-share-button flex items-center justify-center transition active:scale-90"
     >
       {children}
     </button>

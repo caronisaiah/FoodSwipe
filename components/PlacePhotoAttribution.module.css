@@ -10,6 +10,9 @@
   font: 500 .8125rem/1.35 var(--font-editorial-ui), sans-serif;
   text-align: start;
 }
+.credit[data-surface="media"] { padding-inline: 0 10px; background: var(--color-editorial-media); color: var(--color-editorial-media-muted); }
+.credit[data-surface="media"] .author { padding-inline-start: 10px; }
+@media (pointer: coarse) { .credit[data-surface="media"] .author { min-height: 40px; } }
 .credit[data-surface="light"] { background: var(--color-editorial-paper); color: var(--color-editorial-muted); }
 .credit a { text-decoration: underline; text-underline-offset: 3px; }
 .credit a:focus-visible { outline: 2px solid var(--color-editorial-media-focus); outline-offset: -2px; }

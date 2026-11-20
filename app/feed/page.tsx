@@ -6,7 +6,7 @@ export default async function FeedPage() {
   const { market } = await getDiscoveryMarket();
 
   return (
-    <AppShell>
+    <AppShell tone="media" wide>
       <FeedClient key={market} market={market} />
     </AppShell>
   );

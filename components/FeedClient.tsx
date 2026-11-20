@@ -106,7 +106,30 @@ export default function FeedClient({ market }: { market: Market | null }) {
     : null);
 
   return (
-    <div className="relative min-h-0 flex-1 overflow-hidden bg-ink">
+    <div className="swipe-screen relative min-h-0 flex-1 overflow-hidden bg-ink">
+      {/* Top bar — floats over the media. Tune at left, wordmark, market and Map at right. */}
+      <div className="swipe-bar pointer-events-none absolute inset-x-0 top-0 z-40">
+        <Link
+          href="/"
+          aria-label="Tune your preferences"
+          className="swipe-bar-button pointer-events-auto justify-self-start"
+        >
+          <MaterialIcon name="tune" />
+        </Link>
+        <h1 className="swipe-wordmark">FoodSwipe</h1>
+        <div className="swipe-bar-end">
+          <Link
+            href="/map"
+            prefetch={false}
+            aria-label="Discover restaurants on the map"
+            className="swipe-bar-button swipe-bar-map pointer-events-auto"
+          >
+            <MaterialIcon name="map" />
+            <span>Map</span>
+          </Link>
+        </div>
+        {market && <p className="swipe-market">{getMarketDisplayName(market)}</p>}
+      </div>
       {/* Full-bleed discovery canvas — hero first, profile details below on scroll */}
       {!market || catalogue.status === "error" || (catalogue.status === "ready" && deck.length === 0) ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 text-center">
@@ -154,27 +177,6 @@ export default function FeedClient({ market }: { market: Market | null }) {
         </div>
       )}
 
-      {/* Top app bar — floats over the hero. */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-40 flex items-center justify-between bg-gradient-to-b from-black/70 via-black/25 to-transparent px-4 py-3">
-        <Link
-          href="/"
-          aria-label="Tune your preferences"
-          className="pointer-events-auto flex h-10 w-10 items-center justify-center text-saffron/90 transition active:scale-90"
-        >
-          <MaterialIcon name="tune" className="text-[26px]" />
-        </Link>
-        <h1 className="font-display text-3xl font-black italic tracking-tighter text-saffron drop-shadow-[0_0_12px_rgba(255,192,130,0.35)]">
-          FoodSwipe
-        </h1>
-        <Link
-          href="/map"
-          prefetch={false}
-          aria-label="Discover restaurants on the map"
-          className="pointer-events-auto flex h-10 items-center gap-1 rounded-full bg-black/45 px-2 text-xs font-semibold text-saffron"
-        >
-          <MaterialIcon name="map" className="text-[21px]" /> Map
-        </Link>
-      </div>
     </div>
   );
 }

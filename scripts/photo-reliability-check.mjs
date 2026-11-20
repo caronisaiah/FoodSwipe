@@ -427,6 +427,16 @@ for (const file of ["components/RestaurantHero.tsx", "components/editorial/Saved
   const source = readFileSync(root(file), "utf8");
   const uses = [...source.matchAll(/<PlacePhotoAttribution\s+photo=\{([^}]+)\}/g)].map((match) => match[1].trim());
   ok(uses.length >= 1, `${file} renders credits`);
+  if (file === "components/RestaurantHero.tsx") {
+    // The gallery keeps the last photo that really loaded on screen while the next one loads, with its own
+    // credit. `credited` may therefore only ever come from a photo that was displayed, never an attempted one.
+    ok(uses.every((expression) => expression === "credited"), `${file} credits only its credited photo: ${uses}`);
+    ok(source.includes("const credited = targetImage.displayed ?? shownHeld;"), "credited is the displayed photo or the held displayed photo");
+    const holds = [...source.matchAll(/setHeld\(([^;]+)\);/g)].map((match) => match[1].trim());
+    ok(holds.length === 1 && holds[0] === "{ restaurantId, photo: targetImage.displayed }", `a photo is held only once it has been displayed: ${holds}`);
+    ok(/const shownHeld = !targetImage\.displayed && heldPhoto/.test(source), "a held photo is shown only while the target is not yet displayed");
+    continue;
+  }
   ok(uses.every((expression) => expression === "image.displayed"), `${file} passes only the displayed photo: ${uses}`);
 }
 

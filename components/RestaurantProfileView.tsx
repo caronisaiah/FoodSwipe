@@ -35,7 +35,6 @@ export default function RestaurantProfileView({
   variant = "page",
   feedHeroFullscreen = false,
   heroMedia,
-  onScrollToProfile,
 }: {
   restaurant: Restaurant;
   /** Scroll-linked motion style for the hero (in-feed card only). */
@@ -46,8 +45,6 @@ export default function RestaurantProfileView({
   feedHeroFullscreen?: boolean;
   /** Feed deck can provide in-memory media so preview/active use the same URL. */
   heroMedia?: ClientHeroMedia | null;
-  /** Feed-only: smooth-scroll the card to the profile body. */
-  onScrollToProfile?: () => void;
 }) {
   const isFeed = variant === "feed";
   const poster = cuisineEmoji(r.cuisineTags);
@@ -106,12 +103,12 @@ export default function RestaurantProfileView({
       neighborhood={r.neighborhood}
       distanceMiles={r.distanceMiles}
       priceLevel={r.priceLevel}
+      market={r.market}
       heroStyle={heroStyle}
       variant={variant}
       feedHeroFullscreen={feedHeroFullscreen}
       badges={isFeed ? <HeroStatusBadges restaurant={r} /> : null}
       heroMedia={heroMedia}
-      onScrollToProfile={isFeed ? onScrollToProfile : undefined}
     />
   );
 
@@ -120,7 +117,7 @@ export default function RestaurantProfileView({
       {isFeed ? (
         <section
           aria-label={`${r.name} hero`}
-          className="h-full min-h-full w-full flex-none overflow-hidden"
+          className="swipe-hero-section h-full min-h-full w-full flex-none overflow-hidden"
         >
           {hero}
         </section>
@@ -128,20 +125,24 @@ export default function RestaurantProfileView({
         hero
       )}
 
-      <div className={`bg-ink-2 px-4 pt-[26px] ${isFeed ? "pb-12" : "pb-7"}`}>
+      <div className={`profile-body bg-ink-2 px-4 pt-[26px] ${isFeed ? "swipe-profile-body" : "pb-7"}`}>
         <header ref={profileEngagedRef} className="mb-4">
           <h2 className="font-display text-[26px] font-black leading-[1.05] tracking-normal text-cream">
             {r.name}
           </h2>
           <p className="mt-1.5 flex flex-wrap items-center gap-x-1.5 text-[13px] text-tan">
-            <span>{r.neighborhood}</span>
-            {primaryCuisine && (
+            {r.neighborhood.trim() && (
               <>
+                <span>{r.neighborhood}</span>
                 <span aria-hidden>·</span>
-                <span className="capitalize">{primaryCuisine}</span>
               </>
             )}
-            <span aria-hidden>·</span>
+            {primaryCuisine && (
+              <>
+                <span className="capitalize">{primaryCuisine}</span>
+                <span aria-hidden>·</span>
+              </>
+            )}
             <span className="font-semibold text-saffron">{priceLabel(r.priceLevel)}</span>
           </p>
         </header>
@@ -311,7 +312,7 @@ function ProfileModule({
   return (
     <section
       ref={analyticsRef}
-      className="rounded-[24px] bg-surface px-4 py-[18px] pb-5 ring-1 ring-inset ring-white/5"
+      className="profile-module rounded-[24px] bg-surface px-4 py-[18px] pb-5 ring-1 ring-inset ring-white/5"
     >
       <h3 className="mb-3 text-[11px] font-bold uppercase tracking-[0.25em] text-haze">
         {title}

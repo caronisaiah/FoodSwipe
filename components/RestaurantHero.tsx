@@ -1,12 +1,17 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, type MotionStyle } from "framer-motion";
 import type { PriceLevel, Video } from "@/lib/types";
 import { normalizeClientHeroMedia, type ClientHeroMedia } from "@/lib/clientHeroMedia";
+import type { PlacePhoto } from "@/lib/placePhoto";
+import { useRestaurantGallery } from "@/lib/useRestaurantGallery";
+import { addTouch, isTap, moveTap, startTap, type TapTrace } from "@/lib/tapGesture";
 import PlacePhotoAttribution, { usePlacePhotoImage } from "@/components/PlacePhotoAttribution";
+import { GalleryButtons, GalleryIndicator } from "@/components/PhotoGalleryControls";
 import { priceLabel } from "@/lib/options";
+import { getMarketShortName } from "@/lib/markets";
 import VideoEmbed from "@/components/VideoEmbed";
 import MaterialIcon from "@/components/MaterialIcon";
 
@@ -33,12 +38,12 @@ export default function RestaurantHero({
   neighborhood,
   distanceMiles,
   priceLevel,
+  market,
   heroStyle,
   variant = "page",
   feedHeroFullscreen = false,
   badges,
   heroMedia,
-  onScrollToProfile,
 }: {
   restaurantId: string;
   fallbackVideo: Video;
@@ -47,6 +52,8 @@ export default function RestaurantHero({
   neighborhood: string;
   distanceMiles: number;
   priceLevel: PriceLevel;
+  /** Names the origin the distance is measured from. */
+  market?: string;
   /** Optional motion style (opacity/scale) for the scroll-linked fade. Omitted on
    *  the standalone route -> hero is static. */
   heroStyle?: MotionStyle;
@@ -59,11 +66,8 @@ export default function RestaurantHero({
   badges?: ReactNode;
   /** Feed deck can provide in-memory media so preview/active use the same URL. */
   heroMedia?: ClientHeroMedia | null;
-  /** Feed-only affordance: scroll the card below the hero. */
-  onScrollToProfile?: () => void;
 }) {
   const [fetched, setFetched] = useState<ClientHeroMedia | null>(null);
-  const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null);
   useEffect(() => {
     if (heroMedia !== undefined) return;
     const controller = new AbortController();
@@ -83,15 +87,75 @@ export default function RestaurantHero({
 
   const candidate = heroMedia === undefined ? fetched : heroMedia;
   const media = candidate?.restaurantId === restaurantId ? candidate : null;
-  const image = usePlacePhotoImage(media?.photo);
-  const photo = image.photo;
-  const logoSrc = media?.logoUrl !== failedLogoUrl ? media?.logoUrl : null;
   const isFeed = variant === "feed";
+
+  // The photo on screen is one of the gallery's photos; the hero is photo 1. Each photo
+  // goes through the same load rules as before, and its credit appears only with it.
+  const heroPhoto = media?.photo ?? null;
+  // More photos are offered only once the hero's own image has really loaded.
+  const heroLoadKey = heroPhoto ? `${restaurantId}|${heroPhoto.googleMapsUri}` : null;
+  const [heroLoadedKey, setHeroLoadedKey] = useState<string | null>(null);
+  const gallery = useRestaurantGallery({
+    restaurantId,
+    hero: heroPhoto,
+    heroDisplayed: heroLoadKey !== null && heroLoadedKey === heroLoadKey,
+    galleryCount: media?.galleryCount ?? 0,
+  });
+  const target = gallery.current ?? heroPhoto;
+  const targetImage = usePlacePhotoImage(target);
+  const targetPhoto = targetImage.photo;
+  if (heroLoadKey !== null && heroLoadedKey !== heroLoadKey && targetImage.displayed?.googleMapsUri === heroPhoto?.googleMapsUri) {
+    setHeroLoadedKey(heroLoadKey);
+  }
+
+  // The last photo that actually loaded stays on screen, with its own credit, while the
+  // next one loads, so a slow photo never leaves a blank area or a mismatched credit.
+  const [held, setHeld] = useState<{ restaurantId: string; photo: PlacePhoto } | null>(null);
+  if (targetImage.displayed && (held?.restaurantId !== restaurantId || held.photo.googleMapsUri !== targetImage.displayed.googleMapsUri)) {
+    setHeld({ restaurantId, photo: targetImage.displayed });
+  }
+  const heldPhoto = held?.restaurantId === restaurantId ? held.photo : null;
+  const shownHeld = !targetImage.displayed && heldPhoto && heldPhoto.googleMapsUri !== target?.googleMapsUri ? heldPhoto : null;
+  const credited = targetImage.displayed ?? shownHeld;
+
+  // A photo that fails to load leaves the gallery instead of leaving a gap.
+  if (targetImage.phase === "failed" && target && gallery.phase === "ready") gallery.drop(target.googleMapsUri);
+
+  const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null);
+  const logoSrc = media?.logoUrl !== failedLogoUrl ? media?.logoUrl : null;
   // While a photo is still arriving only the neutral backdrop shows. The logo or placeholder
   // appears once the photo fails or takes too long, and the photo replaces it as soon as it has
   // really loaded. Nothing that was shown is ever taken away to leave a blank area.
   const resolved = media !== null;
-  const showFallback = resolved && image.showFallback;
+  const showFallback = resolved && targetImage.showFallback && !shownHeld;
+  const interactive = gallery.canStep || gallery.offerMore;
+  const count = gallery.confirmedCount;
+  const imageLabel = gallery.canStep
+    ? `${name} restaurant photo ${gallery.index + 1} of ${count}`
+    : `${name} restaurant photo`;
+
+  // Tap the photograph for the next photo. A press that drifts, lasts, uses a second finger
+  // or is taken over by the browser (scroll, pinch) is a different gesture and does nothing.
+  const tapRef = useRef<TapTrace | null>(null);
+  const pointerHandlers = interactive ? {
+    onPointerDown(event: ReactPointerEvent) {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      if (tapRef.current && tapRef.current.pointerId !== event.pointerId) {
+        tapRef.current = addTouch(tapRef.current);
+        return;
+      }
+      tapRef.current = startTap(event.pointerId, event.clientX, event.clientY, event.timeStamp);
+    },
+    onPointerMove(event: ReactPointerEvent) {
+      if (tapRef.current) tapRef.current = moveTap(tapRef.current, event.pointerId, event.clientX, event.clientY);
+    },
+    onPointerUp(event: ReactPointerEvent) {
+      const trace = tapRef.current;
+      tapRef.current = null;
+      if (trace && isTap(trace, event.pointerId, event.clientX, event.clientY, event.timeStamp)) gallery.step(1);
+    },
+    onPointerCancel() { tapRef.current = null; },
+  } : undefined;
 
   return (
     <div className={isFeed && feedHeroFullscreen ? "flex h-full min-h-0 flex-col" : undefined}>
@@ -115,11 +179,23 @@ export default function RestaurantHero({
             onError={() => setFailedLogoUrl(logoSrc)}
           />
         ) : isFeed ? (
-          <FeedHeroFallback label={photo ? `Loading ${name} photo` : `${name} image unavailable`} />
+          <FeedHeroFallback label={targetPhoto ? `Loading ${name} photo` : `${name} image unavailable`} />
         ) : (
           <VideoEmbed video={fallbackVideo} posterEmoji={posterEmoji} fill />
         ))}
-        {photo && (
+        {shownHeld && (
+          // eslint-disable-next-line @next/next/no-img-element -- already-loaded Google photo kept on screen (with its own credit) while the next one loads; loaded directly from Google, never rehosted.
+          <img
+            key={shownHeld.photoUri}
+            src={shownHeld.photoUri}
+            alt={`${name} restaurant photo`}
+            draggable={isFeed ? false : undefined}
+            referrerPolicy="no-referrer"
+            className="absolute inset-0 h-full w-full object-cover"
+            decoding="async"
+          />
+        )}
+        {targetPhoto && (
           <>
             {/* eslint-disable-next-line @next/next/no-img-element -- Google's Place
                 Photo is an ephemeral URL that must be loaded directly from Google
@@ -127,63 +203,62 @@ export default function RestaurantHero({
                 /_next/image (effectively caching/rehosting), which Google's policy
                 forbids, so a plain <img> is the correct, legal-safe choice here. */}
             <img
-              key={image.key}
-              {...image.imageProps}
-              src={photo.photoUri}
-              alt={`${name} restaurant photo`}
+              key={targetImage.key}
+              {...targetImage.imageProps}
+              src={targetPhoto.photoUri}
+              alt={imageLabel}
               draggable={isFeed ? false : undefined}
-              className="absolute inset-0 h-full w-full object-cover"
+              className="gallery-photo absolute inset-0 h-full w-full object-cover"
+              data-shown={targetImage.displayed ? "" : undefined}
               loading={isFeed ? "eager" : "lazy"}
-              fetchPriority={isFeed ? "high" : "auto"}
+              fetchPriority={isFeed && gallery.index === 0 ? "high" : "auto"}
               decoding="async"
             />
           </>
         )}
 
+        {/* Tap target for the next photo. It sits under every control and the text. */}
+        {interactive && <div className="absolute inset-0" {...pointerHandlers} />}
+
         <div
-          className={`pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-4 pt-16 ${
-            isFeed ? "pb-20" : ""
+          className={`pointer-events-none absolute inset-x-0 bottom-0 p-4 pt-16 ${
+            isFeed ? "swipe-hero-shade" : "bg-gradient-to-t from-black/85 to-transparent"
           }`}
         >
-          {badges && <div className="mb-2 flex max-w-full flex-wrap gap-1.5">{badges}</div>}
-          <h1 className="font-display text-3xl font-bold leading-tight text-white drop-shadow">
+          {badges && <div className="swipe-hero-badges mb-2 flex max-w-full flex-wrap gap-1.5">{badges}</div>}
+          {gallery.canStep && <GalleryIndicator count={count} index={gallery.index} />}
+          <h1 className={isFeed ? "swipe-hero-title" : "font-display text-3xl font-bold leading-tight text-white drop-shadow"}>
             {name}
           </h1>
-          <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-white/85">
-            <span className="inline-flex items-center gap-1">
-              <MaterialIcon name="location_on" className="text-[15px]" /> {neighborhood}
-            </span>
-            <span aria-hidden>·</span>
-            <span>{distanceMiles.toFixed(1)} mi away</span>
+          <p className={`mt-1 flex flex-wrap items-center gap-x-2 text-sm ${isFeed ? "swipe-hero-meta" : "text-white/85"}`}>
+            {neighborhood.trim() && (
+              <>
+                <span className="inline-flex items-center gap-1">
+                  <MaterialIcon name="location_on" className="text-[15px]" /> {neighborhood}
+                </span>
+                <span aria-hidden>·</span>
+              </>
+            )}
+            <span>{distanceMiles.toFixed(1)} mi from {market ? `${getMarketShortName(market)} center` : "center"}</span>
             <span aria-hidden>·</span>
             <span className="font-semibold text-saffron">{priceLabel(priceLevel)}</span>
           </p>
         </div>
 
-        {isFeed && onScrollToProfile && (
-          <button
-            type="button"
-            onClick={onScrollToProfile}
-            onPointerDown={(e) => e.stopPropagation()}
-            aria-label={`Scroll for ${name}'s full profile`}
-            className="absolute inset-x-0 bottom-4 z-20 mx-auto flex w-fit flex-col items-center gap-1 border-0 bg-transparent px-3 py-1 text-white/85 opacity-70 transition hover:opacity-95 active:scale-95"
-          >
-            <span className="bounce-subtle flex flex-col items-center gap-1">
-              <MaterialIcon name="keyboard_arrow_up" className="text-[22px] text-white/75" />
-              <span className="text-[11px] font-bold uppercase tracking-[0.25em]">
-                Swipe up for the full profile
-              </span>
-            </span>
-          </button>
-        )}
+        <GalleryButtons
+          name={name}
+          phase={gallery.phase}
+          canStep={gallery.canStep}
+          offerMore={gallery.offerMore}
+          onStep={gallery.step}
+        />
       </motion.div>
-      {image.displayed && (
-        <div className={isFeed
-          ? "max-h-[32%] shrink-0 overflow-y-auto bg-ink-2 px-3"
-          : "mx-4 mt-1"}>
-          <PlacePhotoAttribution photo={image.displayed} subject={name} />
+      {targetPhoto && (
+        <div className={isFeed ? "swipe-credit-band" : "mx-4 mt-1"} data-pending={credited ? undefined : ""}>
+          {credited && <PlacePhotoAttribution photo={credited} subject={name} media={isFeed} />}
         </div>
       )}
+      <p role="status" aria-live="polite" className="sr-only">{gallery.announcement}</p>
     </div>
   );
 }

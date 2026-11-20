@@ -7,13 +7,15 @@ import styles from "./PlacePhotoAttribution.module.css";
 // The load/credit boundary lives in a hook so its rules can be tested without a browser.
 export { usePlacePhotoImage } from "@/lib/usePlacePhotoImage";
 
-export default function PlacePhotoAttribution({ photo, subject, light = false }: {
+export default function PlacePhotoAttribution({ photo, subject, light = false, media = false }: {
   photo: PlacePhoto;
   subject: string;
   light?: boolean;
+  /** Swipe v2: sits on the dark media canvas instead of the legacy dark surface. */
+  media?: boolean;
 }) {
   return (
-    <div className={styles.credit} data-surface={light ? "light" : "dark"}
+    <div className={styles.credit} data-surface={light ? "light" : media ? "media" : "dark"}
       role="group" aria-label={`Photo attribution for ${subject}`}
       onPointerDownCapture={(event) => { if ((event.target as Element).closest("a")) event.stopPropagation(); }}
       onKeyDown={(event) => {

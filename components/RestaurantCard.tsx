@@ -25,7 +25,7 @@ export default function RestaurantCard({
   const topChoice = r.vibeScore >= 90;
 
   return (
-    <article className="absolute inset-0 overflow-hidden rounded-[28px] bg-ink-2 ring-1 ring-white/10">
+    <article className="absolute inset-0 overflow-hidden bg-ink-2">
       <HeroMedia key={r.id} name={r.name} logoSrc={heroMedia?.restaurantId === r.id ? heroMedia.logoUrl : null} />
 
       {/* Scrims for legibility */}
