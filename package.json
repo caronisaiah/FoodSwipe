@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test:photo-attribution": "node scripts/photo-attribution-check.mjs",
     "test:photo-reliability": "node scripts/photo-reliability-check.mjs",
+    "test:reviews-v2": "node scripts/reviews-v2-check.mjs",
     "test:photo-gallery": "node scripts/photo-gallery-check.mjs",
     "test:gallery-ui": "node scripts/gallery-ui-check.mjs",
     "test:map-v2": "node scripts/map-v2-check.mjs",

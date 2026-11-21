@@ -1,113 +1,115 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import MaterialIcon from "@/components/MaterialIcon";
-import VideoEmbed from "@/components/VideoEmbed";
 import type { ProfileVideoItem } from "@/components/RestaurantVideos";
-import {
-  analyticsVideoPlatform, captureFoodSwipeEvent, type AnalyticsVideoPosition, type RestaurantAnalyticsContext,
-} from "@/lib/analytics";
-import { useVisibleOnce } from "@/lib/useVisibleOnce";
+import type { AnalyticsVideoPosition, RestaurantAnalyticsContext } from "@/lib/analytics";
+import { reviewCreatorName, reviewFrame } from "@/lib/reviewMedia";
 import { videoCanEmbed, videoSourceHref } from "@/lib/video";
+import ReviewAttribution from "@/components/reviews/ReviewAttribution";
+import ReviewPlayer from "@/components/reviews/ReviewPlayer";
+import { useReviewImpression, useReviewSourceClick } from "@/components/reviews/useReviewAnalytics";
+
+const FORMAT_LABEL = { portrait: "Vertical video", landscape: "Video", post: "Post" } as const;
+const keyOf = (item: ProfileVideoItem) => `${item.origin}-${item.video.id}`;
 
 /**
- * Profile v2 creator reviews: compact rows, each with the creator, the platform and the original post. An
- * allowed clip plays in the platform's own player only when asked for. What may be shown, embedded or linked
- * is still decided by lib/video, exactly as for Swipe's review cards.
+ * Profile v2 creator reviews (Concept A): one featured review in a reserved player frame, with the other
+ * reviews listed to choose from. Choosing disposes the previous provider iframe and loads the next. Attribution
+ * sits below the player, never over it. What may be embedded or linked is decided by lib/video.
  */
-export default function CreatorReviews({ items, analytics, posterEmoji }: {
+export default function CreatorReviews({
+  items,
+  analytics,
+}: {
   items: ProfileVideoItem[];
   analytics: RestaurantAnalyticsContext;
-  posterEmoji: string;
 }) {
-  const [openKey, setOpenKey] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [chosen, setChosen] = useState(false);
+  const found = items.findIndex((item) => keyOf(item) === selectedKey);
+  const index = found === -1 ? 0 : found;
+  const current = items[index];
+  if (!current) return null;
+  const name = reviewCreatorName(current.video, videoSourceHref(current.video));
+
   return (
-    <ul className="profile-reviews">
-      {items.map((item, index) => {
-        const key = `${item.origin}-${item.video.id}`;
-        return (
-          <ReviewRow key={key} item={item} position={(index + 1) as AnalyticsVideoPosition} analytics={analytics}
-            posterEmoji={posterEmoji} open={openKey === key} onOpen={() => setOpenKey(key)} onClose={() => setOpenKey(null)} />
-        );
-      })}
-    </ul>
+    <div className="review-feature">
+      <div className="review-feature-grid">
+      <FeaturedReview key={keyOf(current)} item={current} position={(index + 1) as AnalyticsVideoPosition}
+        analytics={analytics} load={chosen ? "immediate" : "when-visible"} />
+      {items.length > 1 && (
+        <ul className="review-selector" aria-label="Choose a review">
+          {items.map((item, i) => (
+            <SelectorRow key={keyOf(item)} item={item} position={(i + 1) as AnalyticsVideoPosition} analytics={analytics}
+              current={i === index} total={items.length}
+              onSelect={() => { setSelectedKey(keyOf(item)); setChosen(true); }} />
+          ))}
+        </ul>
+      )}
+      </div>
+      <p role="status" className="sr-only">
+        {chosen ? `Showing review ${index + 1} of ${items.length}${name ? ` by ${name}` : ""}.` : ""}
+      </p>
+    </div>
   );
 }
 
-/** A TikTok-style post link carries its creator: https://www.tiktok.com/@name/video/123. */
-function handleFromUrl(href: string | undefined): string | null {
-  if (!href) return null;
-  try {
-    return new URL(href).pathname.match(/^\/(@[\w.-]+)/)?.[1] ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function ReviewRow({ item, position, analytics, posterEmoji, open, onOpen, onClose }: {
+function FeaturedReview({
+  item,
+  position,
+  analytics,
+  load,
+}: {
   item: ProfileVideoItem;
   position: AnalyticsVideoPosition;
   analytics: RestaurantAnalyticsContext;
-  posterEmoji: string;
-  open: boolean;
-  onOpen: () => void;
-  onClose: () => void;
+  load: "immediate" | "when-visible";
+}) {
+  const sourceClicked = useReviewSourceClick(item.video, position, analytics);
+  return (
+    <div className="review-feature-main">
+      <ReviewPlayer video={item.video} load={load} onSourceClick={sourceClicked} />
+      <ReviewAttribution video={item.video} demoLabel={item.origin === "seed" ? undefined : item.origin === "local" ? "Local" : "Demo clip"}
+        onSourceClick={sourceClicked} />
+    </div>
+  );
+}
+
+function SelectorRow({
+  item,
+  position,
+  analytics,
+  current,
+  total,
+  onSelect,
+}: {
+  item: ProfileVideoItem;
+  position: AnalyticsVideoPosition;
+  analytics: RestaurantAnalyticsContext;
+  current: boolean;
+  total: number;
+  onSelect: () => void;
 }) {
   const { video, origin } = item;
-  const canEmbed = videoCanEmbed(video);
   const href = videoSourceHref(video);
-  const handle = video.creatorHandle && video.creatorHandle !== "@unknown" ? video.creatorHandle : handleFromUrl(href);
-  const title = handle ?? video.creatorDisplayName ?? video.attributionText;
-  const context = {
-    ...analytics,
-    platform: analyticsVideoPlatform(video.platform),
-    videoPosition: position,
-    renderMode: canEmbed ? "embed" as const : href ? "source_link" as const : "unavailable" as const,
-  };
-  const row = useVisibleOnce<HTMLLIElement>(() => captureFoodSwipeEvent("video_impression", context));
-  const playButton = useRef<HTMLButtonElement>(null);
-  const closeButton = useRef<HTMLButtonElement>(null);
-  const panel = `review-player-${video.id}`;
-  const sourceClicked = () => captureFoodSwipeEvent("video_source_clicked", { ...context, sourcePlacement: "review_card" });
-
+  const name = reviewCreatorName(video, href) ?? `${video.platform} review`;
+  const row = useReviewImpression<HTMLLIElement>(video, position, analytics);
+  const playable = videoCanEmbed(video) || href !== undefined;
   return (
-    <li ref={row} className="profile-review">
-      <div className="profile-review-row">
-        {canEmbed ? (
-          <button ref={playButton} type="button" className="profile-play" aria-expanded={open} aria-controls={open ? panel : undefined}
-            aria-label={`${open ? "Close" : "Play"} review by ${title}`}
-            onClick={() => { if (open) onClose(); else { onOpen(); window.requestAnimationFrame(() => closeButton.current?.focus()); } }}>
-            <MaterialIcon name={open ? "close" : "play_arrow"} filled />
-          </button>
-        ) : href ? (
-          <a className="profile-play" href={href} target="_blank" rel="noopener noreferrer" onClick={sourceClicked}
-            aria-label={`Watch review by ${title} on ${video.platform} (opens in a new tab)`}>
-            <MaterialIcon name="play_arrow" filled />
-          </a>
-        ) : (
-          <span className="profile-play" data-muted aria-hidden><MaterialIcon name="play_arrow" filled /></span>
-        )}
-        <div className="profile-review-copy">
-          <small>{video.platform}{origin !== "seed" ? " · Demo clip" : ""}</small>
-          <strong>{title}</strong>
-          {!canEmbed && !href && <small>Preview only</small>}
-        </div>
-        {href && (
-          <a className="profile-original" href={href} target="_blank" rel="noopener noreferrer" onClick={sourceClicked}
-            aria-label={`Original post by ${title} on ${video.platform} (opens in a new tab)`}>
-            <MaterialIcon name="arrow_outward" />
-          </a>
-        )}
-      </div>
-      {open && canEmbed && (
-        <div id={panel} className="profile-player">
-          <div className="profile-player-frame"><VideoEmbed video={video} posterEmoji={posterEmoji} fill onSourceClick={sourceClicked} /></div>
-          <button ref={closeButton} type="button" className="profile-text-action"
-            onClick={() => { onClose(); window.requestAnimationFrame(() => playButton.current?.focus()); }}>
-            Close video
-          </button>
-        </div>
-      )}
+    <li ref={row}>
+      <button type="button" className="review-select" aria-current={current || undefined}
+        aria-label={`${name}, ${video.platform}, review ${position} of ${total}${current ? ", now showing" : ""}`}
+        onClick={() => { if (!current) onSelect(); }}>
+        <span className="review-disc" aria-hidden data-muted={!playable || undefined}>
+          <MaterialIcon name={playable ? "play_arrow" : "videocam_off"} filled />
+        </span>
+        <span className="review-copy">
+          <small>{video.platform}{origin === "seed" ? "" : origin === "local" ? " · Local" : " · Demo clip"} · {FORMAT_LABEL[reviewFrame(video)]}</small>
+          <strong>{name}</strong>
+        </span>
+        <span className="review-select-state" aria-hidden>{current ? "Showing" : ""}</span>
+      </button>
     </li>
   );
 }

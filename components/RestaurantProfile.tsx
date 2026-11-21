@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import type { Restaurant } from "@/lib/types";
+import type { Restaurant, Video } from "@/lib/types";
 import EditorialHeader from "@/components/editorial/EditorialHeader";
 import RestaurantHero from "@/components/RestaurantHero";
 import CreatorReviews from "@/components/CreatorReviews";
@@ -23,12 +23,17 @@ import { useVisibleOnce } from "@/lib/useVisibleOnce";
  * The one standalone restaurant profile, `/restaurants/[slug]`, whether it was opened from Map, Saved, Swipe or a
  * link. It shares the editorial identity and the Phase 13 photo gallery with Swipe's card, in its own page layout.
  */
-export default function RestaurantProfile({ restaurant: r, origin }: { restaurant: Restaurant; origin: ProfileOrigin | null }) {
+export default function RestaurantProfile({ restaurant: r, origin, initialVideos = null }: {
+  restaurant: Restaurant;
+  origin: ProfileOrigin | null;
+  /** Attached videos the server already read, or null to ask the API. */
+  initialVideos?: Video[] | null;
+}) {
   const router = useRouter();
   const page = useRef<HTMLDivElement>(null);
   const navigation = useRef<HTMLDivElement>(null);
   const [shareStatus, setShareStatus] = useState("");
-  const { videos } = useRestaurantProfileVideos({ restaurantId: r.id, seedVideos: r.videos });
+  const { videos } = useRestaurantProfileVideos({ restaurantId: r.id, seedVideos: r.videos, initialShared: initialVideos });
   const context = restaurantAnalyticsContext(r, "standalone_profile");
   const poster = cuisineEmoji(r.cuisineTags);
   const website = websiteUrl(r.websiteDomain);
@@ -127,7 +132,7 @@ export default function RestaurantProfile({ restaurant: r, origin }: { restauran
             {videos.length > 0 && (
               <section aria-labelledby="profile-reviews-title" className="profile-section">
                 <h2 id="profile-reviews-title" className="editorial-section-title">Creator reviews</h2>
-                <CreatorReviews items={videos} analytics={context} posterEmoji={poster} />
+                <CreatorReviews items={videos} analytics={context} />
               </section>
             )}
             {r.dishHighlights.length > 0 && (
