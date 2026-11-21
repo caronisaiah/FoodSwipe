@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useFavorites } from "@/lib/storage";
 import { describeStorageFailure, type StorageNotice } from "@/lib/storageErrors";
 import type { Restaurant } from "@/lib/types";
-import MaterialIcon from "@/components/MaterialIcon";
+import BookmarkToggle from "@/components/BookmarkToggle";
 import {
   captureFoodSwipeEvent,
   restaurantAnalyticsContext,
@@ -21,7 +21,11 @@ export default function SaveButton({ restaurant, variant = "legacy" }: {
   const [actionError, setActionError] = useState<StorageNotice | null>(null);
   const saved = favorites.some(({ restaurantId }) => restaurantId === restaurant.id);
 
+  // One write at a time, even for two presses in the same frame (state would not have updated yet).
+  const inFlight = useRef(false);
   const toggleSaved = async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setPending(true);
     setActionError(null);
     const context = restaurantAnalyticsContext(restaurant, "standalone_profile");
@@ -36,6 +40,7 @@ export default function SaveButton({ restaurant, variant = "legacy" }: {
     } catch (error) {
       setActionError(describeStorageFailure(error, saved ? "remove" : "save"));
     } finally {
+      inFlight.current = false;
       setPending(false);
     }
   };
@@ -58,15 +63,8 @@ export default function SaveButton({ restaurant, variant = "legacy" }: {
         </div>
       )}
       {variant === "editorial" ? (
-        <button
-          type="button"
-          onClick={() => void toggleSaved()}
-          disabled={pending || status !== "ready"}
-          aria-pressed={saved}
-          className="profile-action"
-        >
-          <MaterialIcon name="bookmark" filled={saved} /> {saved ? "Saved" : "Save"}
-        </button>
+        <BookmarkToggle identity={restaurant.id} name={restaurant.name} saved={saved} pending={pending}
+          unavailable={status !== "ready"} onToggle={() => void toggleSaved()} className="profile-action" />
       ) : (
       <button
         type="button"

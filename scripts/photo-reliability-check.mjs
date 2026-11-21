@@ -433,8 +433,11 @@ for (const file of ["components/RestaurantHero.tsx", "components/editorial/Saved
     ok(uses.every((expression) => expression === "credited"), `${file} credits only its credited photo: ${uses}`);
     ok(source.includes("const credited = targetImage.displayed ?? shownHeld;"), "credited is the displayed photo or the held displayed photo");
     const holds = [...source.matchAll(/setHeld\(([^;]+)\);/g)].map((match) => match[1].trim());
-    ok(holds.length === 1 && holds[0] === "{ restaurantId, photo: targetImage.displayed }", `a photo is held only once it has been displayed: ${holds}`);
+    ok(holds.length === 1 && holds[0].startsWith("{ restaurantId, photo: targetImage.displayed,"), `a photo is held only once it has been displayed: ${holds}`);
     ok(/const shownHeld = !targetImage\.displayed && heldPhoto/.test(source), "a held photo is shown only while the target is not yet displayed");
+    // Position, indicator and announcement come from the photo on screen, never from the requested index.
+    ok(!/GalleryIndicator count=\{count\} index=\{gallery\.index\}/.test(source), "the indicator is not driven by the requested index");
+    ok(source.includes("presentedIndex(gallery.photos, credited, gallery.index)"), "position is derived from the credited photo");
     continue;
   }
   ok(uses.every((expression) => expression === "image.displayed"), `${file} passes only the displayed photo: ${uses}`);

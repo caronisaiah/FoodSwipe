@@ -9,6 +9,8 @@ export interface ClientHeroMedia {
    * promise that many working photos: the gallery request is authoritative.
    */
   galleryCount?: number;
+  /** The deck has fetched and decoded this photograph already, so it can appear without a loading frame. */
+  preloaded?: boolean;
   status?: string;
   httpStatus?: number;
   googleStatus?: string;

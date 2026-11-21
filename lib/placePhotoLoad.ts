@@ -14,11 +14,18 @@ export interface PhotoLoadState {
   /** Which photo this state describes. Answers about any other photo are ignored. */
   key: string | null;
   phase: PhotoLoadPhase;
+  /**
+   * The image was already fetched and decoded by the deck's prewarm, so it starts as loaded instead of
+   * hidden. Until the element's own load event confirms it, a real error still wins.
+   */
+  assumed?: boolean;
 }
 
 export interface PhotoLoadEvent {
   type: "load" | "error" | "slow" | "reset";
   key: string | null;
+  /** With `reset`: start as loaded because the image is known to be decoded. */
+  preloaded?: boolean;
 }
 
 /** Identifies one specific photo, including its individual source link. */
@@ -26,23 +33,24 @@ export function photoLoadKey(photo: PlacePhoto | null | undefined): string | nul
   return photo ? JSON.stringify([photo.photoUri, photo.googleMapsUri]) : null;
 }
 
-export function initialPhotoLoad(key: string | null): PhotoLoadState {
-  return { key, phase: "loading" };
+export function initialPhotoLoad(key: string | null, preloaded = false): PhotoLoadState {
+  return preloaded && key !== null ? { key, phase: "loaded", assumed: true } : { key, phase: "loading" };
 }
 
 export function reducePhotoLoad(state: PhotoLoadState, event: PhotoLoadEvent): PhotoLoadState {
-  if (event.type === "reset") return state.key === event.key ? state : initialPhotoLoad(event.key);
+  if (event.type === "reset") return state.key === event.key ? state : initialPhotoLoad(event.key, event.preloaded);
   // A late answer about an earlier restaurant's photo must never touch the current one,
   // and there is nothing to answer for when there is no photo at all.
   if (event.key !== state.key || event.key === null) return state;
   const waiting = state.phase === "loading" || state.phase === "slow";
+  const open = waiting || state.assumed === true;
   switch (event.type) {
     case "slow":
       return state.phase === "loading" ? { ...state, phase: "slow" } : state;
     case "load":
-      return waiting ? { ...state, phase: "loaded" } : state;
+      return open ? { key: state.key, phase: "loaded" } : state;
     case "error":
-      return waiting ? { ...state, phase: "failed" } : state;
+      return open ? { key: state.key, phase: "failed" } : state;
   }
 }
 

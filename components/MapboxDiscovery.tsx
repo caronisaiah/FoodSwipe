@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useReducedMotion } from "framer-motion";
 import MaterialIcon from "@/components/MaterialIcon";
+import BookmarkToggle from "@/components/BookmarkToggle";
 import { loadMapbox, type MapboxMap } from "@/lib/mapboxClient";
 import {
   collectionFor, directionsUrl, indexOrder, type MapFilter, type MapLocation,
@@ -90,6 +91,7 @@ export default function MapboxDiscovery({ token, market, marketName, locations }
   const pendingLocate = useRef<{ slug: string; source: "marker" | "index" } | null>(null);
   const pendingFocus = useRef<"profile" | null>(null);
   const reduce = useRef(reduceMotion);
+  const inFlight = useRef(false);
 
   useEffect(() => {
     latest.current = { collection, selectedSlug: selected?.slug ?? null, locations };
@@ -369,7 +371,8 @@ export default function MapboxDiscovery({ token, market, marketName, locations }
   /* ------------------------------------------------------------- favorites */
   const savedNow = selected ? savedIds.has(selected.slug) : false;
   async function toggleSaved() {
-    if (!selected) return;
+    if (!selected || inFlight.current) return;
+    inFlight.current = true;
     const slug = selected.slug;
     const was = savedIds.has(slug);
     setPending(true);
@@ -380,6 +383,7 @@ export default function MapboxDiscovery({ token, market, marketName, locations }
     } catch (error) {
       setActionError(describeStorageFailure(error, was ? "remove" : "save", selected.name));
     } finally {
+      inFlight.current = false;
       setPending(false);
     }
   }
@@ -533,10 +537,8 @@ export default function MapboxDiscovery({ token, market, marketName, locations }
                 className="editorial-action" onClick={rememberForReturn}>
                 View profile <MaterialIcon name="arrow_forward" />
               </Link>
-              <button type="button" className="map-action" aria-pressed={savedNow}
-                disabled={pending || favoritesStatus !== "ready"} onClick={() => void toggleSaved()}>
-                <MaterialIcon name="bookmark" filled={savedNow} /> {savedNow ? "Saved" : "Save"}
-              </button>
+              <BookmarkToggle identity={selected.slug} name={selected.name} saved={savedNow} pending={pending}
+                unavailable={favoritesStatus !== "ready"} onToggle={() => void toggleSaved()} className="map-action" />
               <a className="map-action" href={directionsUrl(selected)} target="_blank" rel="noopener noreferrer"
                 aria-label={`Directions to ${selected.name} (opens in a new tab)`}>
                 <MaterialIcon name="directions" /> Directions

@@ -12,12 +12,12 @@ import {
  * is slow shows `showFallback` while it keeps loading; one that fails, or belongs
  * to a restaurant that is no longer current, never reaches the screen.
  */
-export function usePlacePhotoImage(photo: PlacePhoto | null | undefined) {
+export function usePlacePhotoImage(photo: PlacePhoto | null | undefined, preloaded = false) {
   const key = photoLoadKey(photo);
-  const [stored, dispatch] = useReducer(reducePhotoLoad, key, initialPhotoLoad);
+  const [stored, dispatch] = useReducer(reducePhotoLoad, key, (initial: string | null) => initialPhotoLoad(initial, preloaded));
   // A different photo starts from scratch, and until that renders the old state is not used.
-  if (stored.key !== key) dispatch({ type: "reset", key });
-  const state = stored.key === key ? stored : initialPhotoLoad(key);
+  if (stored.key !== key) dispatch({ type: "reset", key, preloaded });
+  const state = stored.key === key ? stored : initialPhotoLoad(key, preloaded);
 
   useEffect(() => {
     if (key === null || state.phase !== "loading") return;

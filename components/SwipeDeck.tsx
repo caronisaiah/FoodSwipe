@@ -156,6 +156,8 @@ export default function SwipeDeck({
           ? prewarmer.prewarm(restaurantId, cachedUrl).then((status) => {
               if (prewarmDiscardsPhoto(status) && cached) {
                 publishHeroMedia(restaurantId, withoutFailedHeroUrl(cached));
+              } else if (status === "ready" && cached && !cached.preloaded) {
+                publishHeroMedia(restaurantId, { ...cached, preloaded: true });
               }
             })
           : Promise.resolve();
@@ -184,7 +186,13 @@ export default function SwipeDeck({
             if (!url) break;
             const status = await prewarmer.prewarm(restaurantId, url);
             // Only a genuine load error discards the photo. A slow one keeps loading and
-            // the hero shows the logo until it arrives.
+            // the hero keeps a stable neutral surface until it arrives.
+            if (status === "ready") {
+              // Decoded already: let the card show it with no loading frame.
+              displayMedia = { ...displayMedia, preloaded: true };
+              publishHeroMedia(restaurantId, displayMedia);
+              break;
+            }
             if (!prewarmDiscardsPhoto(status)) break;
             displayMedia = withoutFailedHeroUrl(displayMedia);
             publishHeroMedia(restaurantId, displayMedia);

@@ -1041,3 +1041,24 @@ body:has([data-tone="media"])::before { display: none; }
   .profile-grid { grid-template-columns: minmax(0, 1.3fr) minmax(300px, 1fr); column-gap: clamp(28px, 4vw, 56px); align-items: start; }
   .profile-copy .profile-section:first-child { margin-top: 0; }
 }
+
+/* ---------------------------------------------------------------------------
+   Phase 14D motion: confirmed bookmark (100 ms glyph only) and Map preview entrance.
+   ------------------------------------------------------------------------- */
+.bookmark-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-width: 7.2em; }
+.bookmark-toggle[aria-disabled="true"] { color: var(--color-editorial-on-disabled); cursor: default; }
+.bookmark-glyph { display: inline-grid; transform-origin: 50% 60%; }
+.bookmark-glyph[data-pop="save"] { animation: bookmark-save 100ms var(--ease-editorial-out); }
+.bookmark-glyph[data-pop="remove"] { animation: bookmark-remove 100ms var(--ease-editorial-out); }
+@keyframes bookmark-save { from { transform: scale(.84); } to { transform: scale(1); } }
+@keyframes bookmark-remove { from { transform: scale(.94); } to { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .bookmark-glyph[data-pop] { animation: none; } }
+
+/* Map preview: the whole sheet arrives once (150 ms, 6 px, opacity), and only on first open. Selecting another
+   restaurant keeps the same element, so nothing moves. The selected pin settles on its inner glyph (100 ms), never
+   on Mapbox's own positioned element. Close is immediate. */
+.map-preview { animation: map-preview-in 150ms var(--ease-editorial-out); }
+@keyframes map-preview-in { from { opacity: .94; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.map-pin.is-selected .map-pin-body { animation: map-pin-settle 100ms var(--ease-editorial-out); }
+@keyframes map-pin-settle { from { transform: scale(.88); } to { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .map-preview, .map-pin.is-selected .map-pin-body { animation: none; } }

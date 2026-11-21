@@ -99,3 +99,16 @@ export function selectGallery(state: GalleryState, hero: PlacePhoto | null | und
     canStep: state.phase === "ready" && photos.length > 1,
   };
 }
+
+/**
+ * The position of the photograph that is actually on screen. The gallery's own `index` is where the person
+ * asked to go; the visible photo (and its credit) only catches up once that image has loaded. Everything the
+ * person sees or hears about position must come from the photo shown, matched by its own Maps link.
+ */
+export function presentedIndex(photos: readonly PlacePhoto[], shown: PlacePhoto | null | undefined, requested: number): number {
+  if (shown) {
+    const at = photos.findIndex((photo) => photo.googleMapsUri === shown.googleMapsUri);
+    if (at >= 0) return at;
+  }
+  return Math.max(0, Math.min(requested, photos.length - 1));
+}

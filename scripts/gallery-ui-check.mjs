@@ -35,6 +35,8 @@ const galleryState = load("lib/galleryState", { "./clientGallery": clientGallery
 const tapGesture = load("lib/tapGesture");
 const prewarm = load("lib/heroImagePrewarm");
 const heroMedia = load("lib/clientHeroMedia", { "@/lib/placePhoto": placePhoto });
+const photoLoad = load("lib/placePhotoLoad", {});
+const heroFallback = load("lib/heroFallback", {});
 
 const photo = (ref, authors = [{ displayName: "Author " + ref }]) => ({
   sourceProvider: "google_places",
@@ -311,4 +313,81 @@ test("a quick press that stays put is a tap; drags, long presses, pinches and ca
   assert.equal(t.isTap(wandered, 1, 100, 100, 120), false);
   // Movement from another pointer is ignored.
   assert.equal(t.moveTap(press(), 2, 900, 900).maxTravel, 0);
+});
+
+/* ------------------- presented position (Phase 14D: pending vs displayed) ------------------- */
+
+test("the indicator and announcement follow the photo on screen, not the one requested", () => {
+  const a = photo("a"), b = photo("b"), c = photo("c");
+  const photos = [a, b, c];
+  // Photo 2 was requested (index 1) but photo 1 is still what the person sees, with photo 1's credit.
+  assert.equal(galleryState.presentedIndex(photos, a, 1), 0, "the original bug: position 2 was highlighted over photo 1");
+  assert.equal(galleryState.presentedIndex(photos, b, 1), 1, "it moves once photo 2 is displayed");
+  assert.equal(galleryState.presentedIndex(photos, c, 0), 2, "matched by the photo's own Maps link, whatever was requested");
+  // A different image URL for the same photo is still the same photo.
+  assert.equal(galleryState.presentedIndex(photos, { ...b, photoUri: "https://images.example/new" }, 0), 1);
+  // Nothing shown yet, or the shown photo left the gallery (it failed): fall back to the requested index, kept in range.
+  assert.equal(galleryState.presentedIndex(photos, null, 2), 2);
+  assert.equal(galleryState.presentedIndex(photos, photo("gone"), 7), 2);
+  assert.equal(galleryState.presentedIndex([], null, 3), 0);
+});
+
+test("a rapid next/next/previous never leaves the indicator ahead of the credited photo", () => {
+  const photos = [photo("a"), photo("b"), photo("c")];
+  const key = galleryState.galleryKey("pizza", photos[0]);
+  let state = galleryState.initialGallery(key, photos[0].googleMapsUri);
+  const run = (...events) => events.reduce(galleryState.reduceGallery, state);
+  state = run({ type: "request", key, step: 1 }, { type: "loaded", key, extras: photos.slice(1) });
+  // The person taps quickly: the requested index races ahead while only photo b has ever loaded.
+  state = run({ type: "step", key, step: 1 }, { type: "step", key, step: -1 });
+  const view = galleryState.selectGallery(state, photos[0]);
+  assert.equal(view.index, 1, "requested position");
+  assert.equal(galleryState.presentedIndex(view.photos, photos[1], view.index), 1, "b is displayed and credited");
+  assert.equal(galleryState.presentedIndex(view.photos, photos[0], view.index), 0, "while a is still displayed, the indicator says a");
+});
+
+/* ------------------------- hero fallback policy (the logo flash) ------------------------- */
+
+test("a slow photograph keeps a neutral surface; only a missing or failed one becomes a logo", () => {
+  const photoA = photo("a");
+  const key = photoLoad.photoLoadKey(photoA);
+  const slow = photoLoad.reducePhotoLoad(photoLoad.initialPhotoLoad(key), { type: "slow", key });
+  // The behaviour that was released: a photo past the 2 s patience asked for the logo underneath it.
+  const released = (state, hasLogo) => (photoLoad.selectPhotoLoad(state, photoA).showFallback ? (hasLogo ? "logo" : "unavailable") : "none");
+  assert.equal(released(slow, true), "logo", "reproduction: the logo appeared while the photograph was still on its way");
+
+  const kind = (state, extra = {}) => {
+    const view = photoLoad.selectPhotoLoad(state, photoA);
+    return heroFallback.heroFallbackKind({ resolved: true, photoPending: view.attempted !== null, displayed: view.displayed !== null, hasLogo: true, ...extra });
+  };
+  assert.equal(kind(photoLoad.initialPhotoLoad(key)), "neutral");
+  assert.equal(kind(slow), "neutral", "slow is still neutral");
+  assert.equal(kind(photoLoad.reducePhotoLoad(slow, { type: "load", key })), "none");
+  const failed = photoLoad.reducePhotoLoad(slow, { type: "error", key });
+  assert.equal(kind(failed), "logo", "a photograph that really failed falls back to the logo");
+  assert.equal(heroFallback.heroFallbackKind({ resolved: true, photoPending: false, displayed: false, hasLogo: false }), "unavailable");
+  assert.equal(heroFallback.heroFallbackKind({ resolved: false, photoPending: false, displayed: false, hasLogo: true }), "neutral", "before the lookup answers there is nothing to fall back to");
+  assert.equal(heroFallback.heroFallbackKind({ resolved: true, photoPending: false, displayed: true, hasLogo: true }), "none");
+});
+
+test("a photograph the deck already decoded starts displayed, and a real error or a late load still counts", () => {
+  const photoA = photo("a");
+  const key = photoLoad.photoLoadKey(photoA);
+  const start = photoLoad.initialPhotoLoad(key, true);
+  assert.equal(photoLoad.selectPhotoLoad(start, photoA).displayed, photoA, "no hidden loading frame");
+  assert.equal(photoLoad.initialPhotoLoad(key, false).phase, "loading");
+  assert.equal(photoLoad.initialPhotoLoad(null, true).phase, "loading", "nothing to assume without a photo");
+  // The element's own load confirms it; an error (the cached bytes were gone) takes it back honestly.
+  assert.equal(photoLoad.reducePhotoLoad(start, { type: "load", key }).assumed, undefined);
+  const failed = photoLoad.reducePhotoLoad(start, { type: "error", key });
+  assert.equal(photoLoad.selectPhotoLoad(failed, photoA).displayed, null);
+  assert.equal(photoLoad.selectPhotoLoad(failed, photoA).attempted, null);
+  // A confirmed image ignores a later stray error, as before.
+  const confirmed = photoLoad.reducePhotoLoad(start, { type: "load", key });
+  assert.equal(photoLoad.reducePhotoLoad(confirmed, { type: "error", key }), confirmed);
+  // An answer about another photograph never applies, assumed or not.
+  assert.equal(photoLoad.reducePhotoLoad(start, { type: "error", key: "other" }), start);
+  // A reset to another photo can start assumed too.
+  const next = photoLoad.reducePhotoLoad(photoLoad.initialPhotoLoad(key), { type: "reset", key: photoLoad.photoLoadKey(photo("b")), preloaded: true });
+  assert.equal(next.phase, "loaded");
 });

@@ -7,6 +7,8 @@ import type { PriceLevel, Video } from "@/lib/types";
 import { normalizeClientHeroMedia, type ClientHeroMedia } from "@/lib/clientHeroMedia";
 import type { PlacePhoto } from "@/lib/placePhoto";
 import { useRestaurantGallery } from "@/lib/useRestaurantGallery";
+import { presentedIndex } from "@/lib/galleryState";
+import { heroFallbackKind } from "@/lib/heroFallback";
 import { addTouch, isTap, moveTap, startTap, type TapTrace } from "@/lib/tapGesture";
 import PlacePhotoAttribution, { usePlacePhotoImage } from "@/components/PlacePhotoAttribution";
 import { GalleryButtons, GalleryIndicator } from "@/components/PhotoGalleryControls";
@@ -104,7 +106,8 @@ export default function RestaurantHero({
     galleryCount: media?.galleryCount ?? 0,
   });
   const target = gallery.current ?? heroPhoto;
-  const targetImage = usePlacePhotoImage(target);
+  // A hero the deck has already fetched and decoded appears with no loading frame; any other photo waits for its image.
+  const targetImage = usePlacePhotoImage(target, Boolean(media?.preloaded) && target !== null && target.googleMapsUri === heroPhoto?.googleMapsUri);
   const targetPhoto = targetImage.photo;
   if (heroLoadKey !== null && heroLoadedKey !== heroLoadKey && targetImage.displayed?.googleMapsUri === heroPhoto?.googleMapsUri) {
     setHeroLoadedKey(heroLoadKey);
@@ -112,24 +115,35 @@ export default function RestaurantHero({
 
   // The last photo that actually loaded stays on screen, with its own credit, while the
   // next one loads, so a slow photo never leaves a blank area or a mismatched credit.
-  const [held, setHeld] = useState<{ restaurantId: string; photo: PlacePhoto } | null>(null);
+  // `reveals` counts the photos shown for this restaurant: only the first (the hero arriving) may fade in.
+  const [held, setHeld] = useState<{ restaurantId: string; photo: PlacePhoto; reveals: number } | null>(null);
   if (targetImage.displayed && (held?.restaurantId !== restaurantId || held.photo.googleMapsUri !== targetImage.displayed.googleMapsUri)) {
-    setHeld({ restaurantId, photo: targetImage.displayed });
+    setHeld({ restaurantId, photo: targetImage.displayed, reveals: (held?.restaurantId === restaurantId ? held.reveals : 0) + 1 });
   }
   const heldPhoto = held?.restaurantId === restaurantId ? held.photo : null;
   const shownHeld = !targetImage.displayed && heldPhoto && heldPhoto.googleMapsUri !== target?.googleMapsUri ? heldPhoto : null;
   const credited = targetImage.displayed ?? shownHeld;
+  // Position, indicator and announcement follow the photo on screen (and its credit), not the requested one.
+  const shownIndex = presentedIndex(gallery.photos, credited, gallery.index);
+  const announcement = gallery.phase === "ready" && gallery.canStep && credited
+    ? `Photo ${shownIndex + 1} of ${gallery.photos.length}`
+    : gallery.announcement;
 
   // A photo that fails to load leaves the gallery instead of leaving a gap.
   if (targetImage.phase === "failed" && target && gallery.phase === "ready") gallery.drop(target.googleMapsUri);
 
   const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null);
   const logoSrc = media?.logoUrl !== failedLogoUrl ? media?.logoUrl : null;
-  // While a photo is still arriving only the neutral backdrop shows. The logo or placeholder
-  // appears once the photo fails or takes too long, and the photo replaces it as soon as it has
-  // really loaded. Nothing that was shown is ever taken away to leave a blank area.
+  // Until the photograph is on screen a stable neutral surface stays put. A logo or the "unavailable" surface
+  // appears only when there is no photograph to wait for (none exists, or it really failed); a photograph that is
+  // merely slow never turns into a logo that is replaced a moment later.
   const resolved = media !== null;
-  const showFallback = resolved && targetImage.showFallback && !shownHeld;
+  const fallbackKind = heroFallbackKind({
+    resolved,
+    photoPending: Boolean(targetPhoto),
+    displayed: Boolean(targetImage.displayed) || Boolean(shownHeld),
+    hasLogo: Boolean(logoSrc),
+  });
   const interactive = gallery.canStep || gallery.offerMore;
   const count = gallery.confirmedCount;
   const imageLabel = gallery.canStep
@@ -174,33 +188,27 @@ export default function RestaurantHero({
         }
       >
         {!isProfile && <FeedHeroBackdrop />}
-        {!resolved && isFeed && <FeedHeroFallback label={`Loading ${name} photo`} />}
-        {showFallback && isProfile && (
+        {isProfile && fallbackKind !== "none" && (
           <ProfileFallback
             name={name}
+            kind={fallbackKind}
             logoSrc={logoSrc}
-            loading={!resolved || Boolean(targetPhoto)}
             onLogoError={() => logoSrc && setFailedLogoUrl(logoSrc)}
           />
         )}
-        {showFallback && !isProfile && (logoSrc ? (
-          <LogoCard
-            src={logoSrc}
-            name={name}
-            eager={isFeed}
-            onError={() => setFailedLogoUrl(logoSrc)}
-          />
-        ) : isFeed ? (
-          <FeedHeroFallback label={targetPhoto ? `Loading ${name} photo` : `${name} image unavailable`} />
-        ) : (
-          <VideoEmbed video={fallbackVideo} posterEmoji={posterEmoji} fill />
-        ))}
+        {isFeed && fallbackKind === "neutral" && <FeedHeroFallback label={`Loading ${name} photo`} />}
+        {!isProfile && fallbackKind === "logo" && logoSrc && (
+          <LogoCard src={logoSrc} name={name} eager={isFeed} onError={() => setFailedLogoUrl(logoSrc)} />
+        )}
+        {!isProfile && fallbackKind === "unavailable" && (isFeed
+          ? <FeedHeroFallback label={`${name} image unavailable`} />
+          : <VideoEmbed video={fallbackVideo} posterEmoji={posterEmoji} fill />)}
         {shownHeld && (
           // eslint-disable-next-line @next/next/no-img-element -- already-loaded Google photo kept on screen (with its own credit) while the next one loads; loaded directly from Google, never rehosted.
           <img
             key={shownHeld.photoUri}
             src={shownHeld.photoUri}
-            alt={`${name} restaurant photo`}
+            alt={gallery.canStep ? `${name} restaurant photo ${shownIndex + 1} of ${count}` : `${name} restaurant photo`}
             draggable={isFeed ? false : undefined}
             referrerPolicy="no-referrer"
             className="absolute inset-0 h-full w-full object-cover"
@@ -221,7 +229,7 @@ export default function RestaurantHero({
               alt={imageLabel}
               draggable={isFeed ? false : undefined}
               className="gallery-photo absolute inset-0 h-full w-full object-cover"
-              data-shown={targetImage.displayed ? "" : undefined}
+              data-shown={targetImage.displayed && held?.reveals === 1 ? "" : undefined}
               loading={isFeed ? "eager" : "lazy"}
               fetchPriority={isFeed && gallery.index === 0 ? "high" : "auto"}
               decoding="async"
@@ -238,7 +246,7 @@ export default function RestaurantHero({
           }`}
         >
           {badges && <div className="swipe-hero-badges mb-2 flex max-w-full flex-wrap gap-1.5">{badges}</div>}
-          {gallery.canStep && <GalleryIndicator count={count} index={gallery.index} />}
+          {gallery.canStep && <GalleryIndicator count={count} index={shownIndex} />}
           <h1 className={isFeed ? "swipe-hero-title" : "font-display text-3xl font-bold leading-tight text-white drop-shadow"}>
             {name}
           </h1>
@@ -258,7 +266,7 @@ export default function RestaurantHero({
         </div>}
         {isProfile && gallery.canStep && (
           <div className="profile-photo-count" aria-hidden>
-            <GalleryIndicator count={count} index={gallery.index} />
+            <GalleryIndicator count={count} index={shownIndex} />
           </div>
         )}
 
@@ -275,29 +283,27 @@ export default function RestaurantHero({
           {credited && <PlacePhotoAttribution photo={credited} subject={name} media={isFeed} light={isProfile} />}
         </div>
       )}
-      <p role="status" aria-live="polite" className="sr-only">{gallery.announcement}</p>
+      <p role="status" aria-live="polite" className="sr-only">{announcement}</p>
     </div>
   );
 }
 
-/** Missing, failed or slow photo on the profile: a quiet panel with the restaurant's logo when it has one. */
-function ProfileFallback({ name, logoSrc, loading, onLogoError }: {
+/** The profile's photo frame before a photograph: neutral while it loads, then a logo or "unavailable" only if there is none. */
+function ProfileFallback({ name, kind, logoSrc, onLogoError }: {
   name: string;
+  kind: "neutral" | "logo" | "unavailable";
   logoSrc: string | null | undefined;
-  loading: boolean;
   onLogoError: () => void;
 }) {
   return (
-    <div className="profile-photo-absent" role="img" aria-label={loading ? `Loading ${name} photo` : `${name} photo unavailable`}>
-      {logoSrc ? (
+    <div className="profile-photo-absent" role="img" aria-label={kind === "unavailable" || kind === "logo" ? `${name} photo unavailable` : `Loading ${name} photo`}>
+      {kind === "logo" && logoSrc && (
         <span className="profile-photo-logo">
           {/* eslint-disable-next-line @next/next/no-img-element -- the logo loads directly from Logo.dev and is never rehosted. */}
           <img src={logoSrc} alt="" referrerPolicy="no-referrer" onError={onLogoError} />
         </span>
-      ) : (
-        <MaterialIcon name="restaurant" />
       )}
-      {!logoSrc && <span>{loading ? "Loading photo…" : "Photo unavailable"}</span>}
+      {kind === "unavailable" && <><MaterialIcon name="restaurant" /><span>Photo unavailable</span></>}
     </div>
   );
 }
