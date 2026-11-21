@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import MaterialIcon from "@/components/MaterialIcon";
 import type { ProfileVideoItem } from "@/components/RestaurantVideos";
 import type { AnalyticsVideoPosition, RestaurantAnalyticsContext } from "@/lib/analytics";
-import { reviewCreatorName } from "@/lib/reviewMedia";
+import { reviewCreatorName, reviewOriginLabel } from "@/lib/reviewMedia";
 import { videoSourceHref } from "@/lib/video";
 import ReviewAttribution from "@/components/reviews/ReviewAttribution";
 import ReviewPlayer from "@/components/reviews/ReviewPlayer";
@@ -118,7 +118,7 @@ function ViewerReview({
   return (
     <>
       <ReviewPlayer video={item.video} load="immediate" onSourceClick={sourceClicked} />
-      <ReviewAttribution video={item.video} demoLabel={item.origin === "seed" ? undefined : item.origin === "local" ? "Local" : "Demo clip"} onSourceClick={sourceClicked} />
+      <ReviewAttribution video={item.video} demoLabel={reviewOriginLabel(item.origin, item.video)} onSourceClick={sourceClicked} />
     </>
   );
 }

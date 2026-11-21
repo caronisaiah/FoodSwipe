@@ -4,7 +4,7 @@ import { useId, useRef, useState } from "react";
 import MaterialIcon from "@/components/MaterialIcon";
 import type { ProfileVideoItem } from "@/components/RestaurantVideos";
 import type { AnalyticsVideoPosition, RestaurantAnalyticsContext } from "@/lib/analytics";
-import { reviewCreatorName, reviewTitle } from "@/lib/reviewMedia";
+import { reviewCreatorName, reviewOriginLabel, reviewTitle } from "@/lib/reviewMedia";
 import { sourceLinkLabel, videoCanEmbed, videoSourceHref } from "@/lib/video";
 import ReviewViewer from "@/components/reviews/ReviewViewer";
 import { useReviewImpression, useReviewSourceClick } from "@/components/reviews/useReviewAnalytics";
@@ -79,7 +79,8 @@ function ReviewListRow({
   const name = reviewCreatorName(video, href);
   const row = useReviewImpression<HTMLLIElement>(video, position, analytics);
   const sourceClicked = useReviewSourceClick(video, position, analytics);
-  const meta = `${video.platform}${origin === "seed" ? "" : origin === "local" ? " · Local" : " · Demo clip"}`;
+  const originLabel = reviewOriginLabel(origin, video);
+  const meta = originLabel ? `${video.platform} · ${originLabel}` : video.platform;
   const copy = (
     <>
       <span className="review-disc" aria-hidden>

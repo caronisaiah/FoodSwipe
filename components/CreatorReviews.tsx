@@ -4,7 +4,7 @@ import { useState } from "react";
 import MaterialIcon from "@/components/MaterialIcon";
 import type { ProfileVideoItem } from "@/components/RestaurantVideos";
 import type { AnalyticsVideoPosition, RestaurantAnalyticsContext } from "@/lib/analytics";
-import { reviewCreatorName, reviewFrame } from "@/lib/reviewMedia";
+import { reviewCreatorName, reviewFrame, reviewOriginLabel } from "@/lib/reviewMedia";
 import { videoCanEmbed, videoSourceHref } from "@/lib/video";
 import ReviewAttribution from "@/components/reviews/ReviewAttribution";
 import ReviewPlayer from "@/components/reviews/ReviewPlayer";
@@ -70,7 +70,7 @@ function FeaturedReview({
   return (
     <div className="review-feature-main">
       <ReviewPlayer video={item.video} load={load} onSourceClick={sourceClicked} />
-      <ReviewAttribution video={item.video} demoLabel={item.origin === "seed" ? undefined : item.origin === "local" ? "Local" : "Demo clip"}
+      <ReviewAttribution video={item.video} demoLabel={reviewOriginLabel(item.origin, item.video)}
         onSourceClick={sourceClicked} />
     </div>
   );
@@ -105,7 +105,7 @@ function SelectorRow({
           <MaterialIcon name={playable ? "play_arrow" : "videocam_off"} filled />
         </span>
         <span className="review-copy">
-          <small>{video.platform}{origin === "seed" ? "" : origin === "local" ? " · Local" : " · Demo clip"} · {FORMAT_LABEL[reviewFrame(video)]}</small>
+          <small>{[video.platform, reviewOriginLabel(origin, video), FORMAT_LABEL[reviewFrame(video)]].filter(Boolean).join(" · ")}</small>
           <strong>{name}</strong>
         </span>
         <span className="review-select-state" aria-hidden>{current ? "Showing" : ""}</span>

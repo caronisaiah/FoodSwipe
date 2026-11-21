@@ -41,6 +41,15 @@ test("a stored @unknown is not a creator; fall back to the link, then the displa
   assert.equal(media.reviewTitle("@a", "TikTok"), "TikTok review by @a");
 });
 
+test("origin labels: a real attached post is not called a demo", () => {
+  const real = { sourceType: "real-post", isRealSource: true };
+  assert.equal(media.reviewOriginLabel("shared", real), undefined);
+  assert.equal(media.reviewOriginLabel("seed", real), undefined);
+  assert.equal(media.reviewOriginLabel("local", real), "Local clip");
+  assert.equal(media.reviewOriginLabel("shared", { sourceType: "manual-seed", isRealSource: false }), "Demo clip");
+  assert.equal(media.reviewOriginLabel("shared", { sourceType: "real-post", isRealSource: false }), "Demo clip");
+});
+
 test("only YouTube URLs are changed, never with autoplay", () => {
   const tiktok = "https://www.tiktok.com/player/v1/7458835434269871390";
   const ig = "https://www.instagram.com/p/CuE2WNQs6vH/embed";

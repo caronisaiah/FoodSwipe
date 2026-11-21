@@ -1132,6 +1132,7 @@ Concept A's featured player and review selector on Profile, Concept C's compact 
 .review-list .review-copy strong { color: var(--color-editorial-media-ink); }
 .review-open-cta { display: grid; place-items: center; min-height: var(--editorial-target); padding: 0 14px; border: 1px solid #ffffff66; border-radius: var(--radius-editorial-control); font-size: var(--text-editorial-control); font-weight: 700; }
 .review-open-icon { padding-right: 12px; }
+@media (max-width: 359px) { .review-open-cta { display: none; } .review-open { grid-template-columns: auto minmax(0, 1fr); } }
 .review-open:is(button, a):hover .review-open-cta { background: #ffffff1a; }
 .review-original { display: grid; place-items: center; min-width: var(--editorial-target); min-height: var(--editorial-target); color: var(--color-editorial-media-muted); }
 
@@ -1150,7 +1151,7 @@ dialog.review-viewer[open] { animation: review-viewer-in var(--editorial-disclos
 .review-viewer .review-attribution-platform, .review-viewer .review-attribution-none { color: var(--color-editorial-media-muted); }
 .review-viewer .review-attribution-tag { color: var(--color-editorial-media-muted); border-color: #ffffff59; }
 .review-viewer .review-attribution a { color: var(--color-editorial-media-focus); }
-.review-viewer-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; padding-top: 8px; border-top: 1px solid #ffffff22; font-size: var(--text-editorial-control); }
+.review-viewer-nav { position: sticky; bottom: 0; z-index: 1; margin-inline: -16px; padding-inline: 16px; padding-bottom: max(8px, env(safe-area-inset-bottom)); background: var(--color-editorial-media); display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; padding-top: 8px; border-top: 1px solid #ffffff22; font-size: var(--text-editorial-control); }
 .review-viewer-nav button { display: inline-flex; align-items: center; gap: 2px; min-height: var(--editorial-target); padding: 0 8px; border: 0; background: transparent; color: var(--color-editorial-media-ink); font: inherit; font-weight: 700; }
 .review-viewer-nav button:disabled { color: var(--color-editorial-media-muted); opacity: .55; }
 @media (min-width: 600px) {

@@ -13,7 +13,7 @@ export default function ReviewAttribution({
   onSourceClick,
 }: {
   video: Video;
-  /** "Demo clip" / "Local" for clips that came through the internal tool. */
+  /** From reviewOriginLabel: only for a local or non-real clip. */
   demoLabel?: string;
   onSourceClick?: () => void;
 }) {

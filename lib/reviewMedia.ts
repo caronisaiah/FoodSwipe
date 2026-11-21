@@ -25,6 +25,20 @@ export function reviewFrame(video: Pick<Video, "platform" | "sourceUrl" | "embed
   return "landscape";
 }
 
+/**
+ * A note for a clip that is not an ordinary published review: "Local clip" for one saved only in this browser
+ * by the internal tool, "Demo clip" for an attached clip that is not a real source post. A real, attached post
+ * (what the admin tool publishes) carries no label.
+ */
+export function reviewOriginLabel(
+  origin: "seed" | "shared" | "local",
+  video: Pick<Video, "sourceType" | "isRealSource">,
+): string | undefined {
+  if (origin === "local") return "Local clip";
+  if (origin === "shared" && !(video.sourceType === "real-post" && video.isRealSource)) return "Demo clip";
+  return undefined;
+}
+
 /** A TikTok-style post link carries its creator: https://www.tiktok.com/@name/video/123. */
 export function handleFromUrl(href: string | undefined): string | null {
   if (!href) return null;
