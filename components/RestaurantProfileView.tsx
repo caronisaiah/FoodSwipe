@@ -9,19 +9,13 @@ import { getMarketShortName } from "@/lib/markets";
 import { priceLabel } from "@/lib/options";
 import TagPill from "@/components/TagPill";
 import RestaurantHero from "@/components/RestaurantHero";
-import {
-  firstReviewHref,
-  ReviewClipCard,
-  type ProfileVideoItem,
-  useRestaurantProfileVideos,
-} from "@/components/RestaurantVideos";
+import { firstReviewHref, useRestaurantProfileVideos } from "@/components/RestaurantVideos";
+import CreatorReviews from "@/components/CreatorReviews";
 import GoThere from "@/components/GoThere";
 import MaterialIcon from "@/components/MaterialIcon";
 import {
   captureFoodSwipeEvent,
   restaurantAnalyticsContext,
-  type AnalyticsVideoPosition,
-  type RestaurantAnalyticsContext,
 } from "@/lib/analytics";
 import { useVisibleOnce } from "@/lib/useVisibleOnce";
 
@@ -48,7 +42,6 @@ export default function RestaurantProfileView({
 }) {
   const isFeed = variant === "feed";
   const poster = cuisineEmoji(r.cuisineTags);
-  const clipPosters = [...new Set(r.cuisineTags.map((t) => cuisineEmoji([t])))];
   const profileVideos = useRestaurantProfileVideos({
     restaurantId: r.id,
     seedVideos: r.videos,
@@ -92,8 +85,6 @@ export default function RestaurantProfileView({
       milestone: "go_there",
     });
   });
-  const clipPoster = (index: number) =>
-    clipPosters[index % Math.max(clipPosters.length, 1)] ?? poster;
   const hero = (
     <RestaurantHero
       restaurantId={r.id}
@@ -158,14 +149,11 @@ export default function RestaurantProfileView({
         )}
 
         <div className="flex flex-col gap-3">
-          {profileVideos.videos[0] && (
-            <ReviewClipSection
-              item={profileVideos.videos[0]}
-              posterEmoji={clipPoster(0)}
-              analyticsContext={analyticsContext}
-              videoPosition={1}
-              featured
-            />
+          {profileVideos.videos.length > 0 && (
+            <section aria-labelledby="swipe-reviews-title">
+              <h3 id="swipe-reviews-title">Creator reviews</h3>
+              <CreatorReviews items={profileVideos.videos} analytics={analyticsContext} tone="dark" />
+            </section>
           )}
 
           {hasReason && (
@@ -190,15 +178,6 @@ export default function RestaurantProfileView({
             </ProfileModule>
           )}
 
-          {profileVideos.videos[1] && (
-            <ReviewClipSection
-              item={profileVideos.videos[1]}
-              posterEmoji={clipPoster(1)}
-              analyticsContext={analyticsContext}
-              videoPosition={2}
-            />
-          )}
-
           {r.bestFor.length > 0 && (
             <ProfileModule title="Best for">
               <div className="flex flex-wrap gap-1.5">
@@ -209,15 +188,6 @@ export default function RestaurantProfileView({
                 ))}
               </div>
             </ProfileModule>
-          )}
-
-          {profileVideos.videos[2] && (
-            <ReviewClipSection
-              item={profileVideos.videos[2]}
-              posterEmoji={clipPoster(2)}
-              analyticsContext={analyticsContext}
-              videoPosition={3}
-            />
           )}
 
           <GoThere
@@ -265,38 +235,6 @@ function HeroStatusBadges({ restaurant: r }: { restaurant: Restaurant }) {
         </span>
       ))}
     </>
-  );
-}
-
-function ReviewClipSection({
-  item,
-  posterEmoji,
-  analyticsContext,
-  videoPosition,
-  featured = false,
-}: {
-  item: ProfileVideoItem;
-  posterEmoji: string;
-  analyticsContext: RestaurantAnalyticsContext;
-  videoPosition: AnalyticsVideoPosition;
-  featured?: boolean;
-}) {
-  return (
-    <section>
-      {featured && (
-        <div className="mb-3">
-          <h3 className="text-[11px] font-bold uppercase tracking-[0.25em] text-haze">
-            Watch the reviews
-          </h3>
-        </div>
-      )}
-      <ReviewClipCard
-        item={item}
-        posterEmoji={posterEmoji}
-        featured={featured}
-        analytics={{ restaurant: analyticsContext, videoPosition }}
-      />
-    </section>
   );
 }
 
