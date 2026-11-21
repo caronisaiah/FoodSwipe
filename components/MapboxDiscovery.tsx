@@ -393,7 +393,7 @@ export default function MapboxDiscovery({ token, market, marketName, locations }
     const { lng, lat } = map.getCenter();
     saveMapReturnState({
       market, center: [lng, lat], zoom: map.getZoom(), selected: selected.slug, filter,
-      listScroll: indexElement.current?.scrollTop ?? 0, focus: "profile", savedAt: Date.now(),
+      listScroll: indexElement.current?.scrollTop ?? 0, focus: "profile", armed: false, savedAt: Date.now(),
     });
   }
 
@@ -529,7 +529,7 @@ export default function MapboxDiscovery({ token, market, marketName, locations }
               </p>
             )}
             <div className="map-actions">
-              <Link ref={profileLink} prefetch={false} href={`/restaurants/${encodeURIComponent(selected.slug)}`}
+              <Link ref={profileLink} prefetch={false} href={`/restaurants/${encodeURIComponent(selected.slug)}?from=map`}
                 className="editorial-action" onClick={rememberForReturn}>
                 View profile <MaterialIcon name="arrow_forward" />
               </Link>

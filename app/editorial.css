@@ -981,3 +981,63 @@ body:has([data-tone="media"])::before { display: none; }
   .map-pin.is-selected .map-pin-body { outline: 2px solid Highlight; }
   .map-row[aria-pressed="true"] { outline: 1px solid Highlight; outline-offset: -1px; }
 }
+
+/* ---------------------------------------------------------------------------
+   Restaurant Profile v2 (standalone /restaurants/[slug]): cream and forest, photograph-led.
+   ------------------------------------------------------------------------- */
+.profile-page { --profile-footer-height: calc(64px + env(safe-area-inset-bottom)); }
+.profile-page .editorial-masthead { flex-wrap: wrap; column-gap: 12px; row-gap: 0; }
+.profile-layout {
+  width: min(calc(100% - var(--editorial-gutter) * 2), 1100px);
+  margin-inline: auto;
+  padding-block: 0 calc(var(--profile-footer-height) + 28px);
+}
+.profile-return { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 8px; border-bottom: 1px solid var(--color-editorial-rule); }
+.profile-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0 4px; }
+.profile-action { display: inline-flex; align-items: center; gap: 7px; min-height: var(--editorial-target); padding: 0 6px; font-weight: 700; }
+.profile-action .material-symbols-outlined { font-size: 20px; }
+.profile-action[aria-pressed="true"] { color: var(--color-editorial-action); }
+.profile-action:disabled { color: var(--color-editorial-on-disabled); }
+.profile-notice { flex-basis: 100%; padding-bottom: 6px; color: var(--color-editorial-error); font-size: .85rem; text-align: right; }
+.profile-notice button { margin-left: 8px; text-decoration: underline; }
+.profile-head { padding-block: 16px 14px; }
+.profile-head .editorial-eyebrow { margin-bottom: 6px; }
+.profile-head h1 { font-size: clamp(2.25rem, 9.5vw, 4rem); }
+.profile-grid { display: grid; gap: 0; }
+.profile-media { min-width: 0; }
+.profile-photo { aspect-ratio: 3 / 2; background: #e9e0ce; border-radius: var(--radius-editorial-photo); }
+.profile-photo-absent { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 8px; padding: 16px; color: var(--color-editorial-muted); background: #e9e0ce; text-align: center; }
+.profile-photo-absent .material-symbols-outlined { font-size: 30px; color: var(--color-editorial-boundary); }
+.profile-photo-logo { display: grid; place-items: center; width: min(9rem, 45%); aspect-ratio: 1; padding: 14px; border-radius: 3px; background: #fff; box-shadow: 0 1px 4px #1d2d2733; }
+.profile-photo-logo img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.profile-photo-count { position: absolute; left: 12px; bottom: 12px; z-index: 5; pointer-events: none; filter: drop-shadow(0 1px 2px #0008); }
+.profile-photo-count .gallery-indicator { margin-bottom: 0; }
+.profile-credit { min-height: var(--editorial-target); }
+.profile-credit > div > a:first-child { padding-left: 0; }
+.profile-copy { min-width: 0; }
+.profile-section { margin-top: 18px; padding-top: 14px; border-top: 2px solid var(--color-editorial-ink); }
+.profile-section h2 { margin-bottom: 8px; }
+.profile-section p { color: var(--color-editorial-muted); overflow-wrap: anywhere; }
+.profile-reviews { list-style: none; margin: 0; padding: 0; }
+.profile-review { border-bottom: 1px solid var(--color-editorial-rule); }
+.profile-review-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 68px; padding-block: 8px; }
+.profile-play { display: grid; place-items: center; width: var(--editorial-target); height: var(--editorial-target); border-radius: 50%; color: var(--color-editorial-surface); background: var(--color-editorial-ink); }
+.profile-play[data-muted] { background: var(--color-editorial-disabled); color: var(--color-editorial-on-disabled); }
+.profile-play .material-symbols-outlined { font-size: 24px; }
+.profile-review-copy small { display: block; color: var(--color-editorial-muted); font-size: .8rem; }
+.profile-review-copy strong { display: block; font-size: 1.06rem; font-weight: 700; overflow-wrap: anywhere; }
+.profile-original { display: grid; place-items: center; min-width: var(--editorial-target); min-height: var(--editorial-target); }
+.profile-player { padding: 4px 0 14px; }
+.profile-player-frame { position: relative; aspect-ratio: 9 / 16; max-height: min(70dvh, 620px); margin-inline: auto; overflow: hidden; background: var(--color-editorial-media); }
+.profile-links { display: flex; flex-wrap: wrap; gap: 0 18px; margin-top: 4px; }
+.profile-text-action { display: inline-flex; align-items: center; gap: 4px; min-height: var(--editorial-target); color: var(--color-editorial-action); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.profile-text-action .material-symbols-outlined { font-size: 18px; }
+.profile-page :is(a, button):focus-visible { outline: 2px solid var(--color-editorial-focus); outline-offset: 2px; }
+@media (max-width: 359px) { .profile-share-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); } }
+@media (min-width: 790px) {
+  .profile-layout { padding-block: 0 48px; }
+  .profile-head { padding-block: 28px 22px; }
+  .profile-head h1 { font-size: clamp(2.75rem, 5.5vw, 4.75rem); }
+  .profile-grid { grid-template-columns: minmax(0, 1.3fr) minmax(300px, 1fr); column-gap: clamp(28px, 4vw, 56px); align-items: start; }
+  .profile-copy .profile-section:first-child { margin-top: 0; }
+}

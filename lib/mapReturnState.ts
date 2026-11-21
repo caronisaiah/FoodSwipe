@@ -23,6 +23,11 @@ export interface MapReturnState {
   listScroll: number;
   /** What to focus on return. */
   focus: MapReturnFocus;
+  /**
+   * True only after the person went Back from that restaurant's profile. A snapshot that was never
+   * armed (they left the profile some other way) is discarded, so it cannot hijack a later visit.
+   */
+  armed: boolean;
   savedAt: number;
 }
 
@@ -39,12 +44,13 @@ export function parseMapReturnState(raw: unknown, market: Market, now: number): 
   if (!finite(value.zoom, 0, 22) || !finite(value.listScroll, 0, 1_000_000)) return null;
   if (value.filter !== "all" && value.filter !== "saved") return null;
   if (value.focus !== "profile" && value.focus !== "marker" && value.focus !== "index") return null;
+  if (typeof value.armed !== "boolean") return null;
   if (!finite(value.savedAt, 0, Number.MAX_SAFE_INTEGER) || now - value.savedAt > MAP_RETURN_MAX_AGE_MS || value.savedAt > now + 60_000) return null;
   const selected = value.selected;
   if (selected !== null && (typeof selected !== "string" || !selected || selected.length > 256 || selected.includes("\0"))) return null;
   return {
     market, center: [center[0], center[1]], zoom: value.zoom, selected, filter: value.filter,
-    listScroll: value.listScroll, focus: value.focus, savedAt: value.savedAt,
+    listScroll: value.listScroll, focus: value.focus, armed: value.armed, savedAt: value.savedAt,
   };
 }
 
@@ -56,12 +62,30 @@ export function saveMapReturnState(state: MapReturnState): void {
   }
 }
 
-/** Reads and clears the stored state: it is meant for one return. */
+/**
+ * Called by a profile when the person goes Back (the Back button, or the browser's back gesture). It arms the
+ * snapshot only if it was saved for this very restaurant, so the Map restores it exactly once.
+ */
+export function armMapReturn(slug: string, now = Date.now()): void {
+  try {
+    const raw = window.sessionStorage.getItem(MAP_RETURN_KEY);
+    if (!raw) return;
+    const value = JSON.parse(raw) as { market?: unknown };
+    if (!isAllowedMarket(value?.market)) return;
+    const state = parseMapReturnState(value, value.market, now);
+    if (state && state.selected === slug) saveMapReturnState({ ...state, armed: true });
+  } catch {
+    // Without storage the Map simply opens on its normal first view.
+  }
+}
+
+/** Reads and always clears the stored state. Only an armed snapshot for this market is returned. */
 export function takeMapReturnState(market: Market, now = Date.now()): MapReturnState | null {
   try {
     const raw = window.sessionStorage.getItem(MAP_RETURN_KEY);
     window.sessionStorage.removeItem(MAP_RETURN_KEY);
-    return raw ? parseMapReturnState(JSON.parse(raw), market, now) : null;
+    const state = raw ? parseMapReturnState(JSON.parse(raw), market, now) : null;
+    return state?.armed ? state : null;
   } catch {
     return null;
   }

@@ -59,7 +59,7 @@ export default function RestaurantHero({
   heroStyle?: MotionStyle;
   /** "page" = inset rounded hero (standalone route); "feed" = full-bleed hero.
    *  `feedHeroFullscreen` makes the feed hero fill the first card viewport. */
-  variant?: "page" | "feed";
+  variant?: "page" | "feed" | "profile";
   /** Feed-only: make the hero occupy the card's first scroll viewport. */
   feedHeroFullscreen?: boolean;
   /** Compact status/ranking badges shown above the restaurant name. */
@@ -88,6 +88,8 @@ export default function RestaurantHero({
   const candidate = heroMedia === undefined ? fetched : heroMedia;
   const media = candidate?.restaurantId === restaurantId ? candidate : null;
   const isFeed = variant === "feed";
+  // Profile v2: a bounded, photograph-led frame. The name and facts live in the page, not over the photo.
+  const isProfile = variant === "profile";
 
   // The photo on screen is one of the gallery's photos; the hero is photo 1. Each photo
   // goes through the same load rules as before, and its credit appears only with it.
@@ -166,12 +168,22 @@ export default function RestaurantHero({
             ? feedHeroFullscreen
               ? "relative min-h-0 w-full flex-1 overflow-hidden"
               : "relative aspect-[4/5] w-full overflow-hidden"
-            : "relative mx-4 mt-1 aspect-[4/5] overflow-hidden rounded-[28px] ring-1 ring-white/10"
+            : isProfile
+              ? "profile-photo relative w-full overflow-hidden"
+              : "relative mx-4 mt-1 aspect-[4/5] overflow-hidden rounded-[28px] ring-1 ring-white/10"
         }
       >
-        <FeedHeroBackdrop />
+        {!isProfile && <FeedHeroBackdrop />}
         {!resolved && isFeed && <FeedHeroFallback label={`Loading ${name} photo`} />}
-        {showFallback && (logoSrc ? (
+        {showFallback && isProfile && (
+          <ProfileFallback
+            name={name}
+            logoSrc={logoSrc}
+            loading={!resolved || Boolean(targetPhoto)}
+            onLogoError={() => logoSrc && setFailedLogoUrl(logoSrc)}
+          />
+        )}
+        {showFallback && !isProfile && (logoSrc ? (
           <LogoCard
             src={logoSrc}
             name={name}
@@ -220,7 +232,7 @@ export default function RestaurantHero({
         {/* Tap target for the next photo. It sits under every control and the text. */}
         {interactive && <div className="absolute inset-0" {...pointerHandlers} />}
 
-        <div
+        {!isProfile && <div
           className={`pointer-events-none absolute inset-x-0 bottom-0 p-4 pt-16 ${
             isFeed ? "swipe-hero-shade" : "bg-gradient-to-t from-black/85 to-transparent"
           }`}
@@ -243,7 +255,12 @@ export default function RestaurantHero({
             <span aria-hidden>·</span>
             <span className="font-semibold text-saffron">{priceLabel(priceLevel)}</span>
           </p>
-        </div>
+        </div>}
+        {isProfile && gallery.canStep && (
+          <div className="profile-photo-count" aria-hidden>
+            <GalleryIndicator count={count} index={gallery.index} />
+          </div>
+        )}
 
         <GalleryButtons
           name={name}
@@ -254,11 +271,33 @@ export default function RestaurantHero({
         />
       </motion.div>
       {targetPhoto && (
-        <div className={isFeed ? "swipe-credit-band" : "mx-4 mt-1"} data-pending={credited ? undefined : ""}>
-          {credited && <PlacePhotoAttribution photo={credited} subject={name} media={isFeed} />}
+        <div className={isFeed ? "swipe-credit-band" : isProfile ? "profile-credit" : "mx-4 mt-1"} data-pending={credited ? undefined : ""}>
+          {credited && <PlacePhotoAttribution photo={credited} subject={name} media={isFeed} light={isProfile} />}
         </div>
       )}
       <p role="status" aria-live="polite" className="sr-only">{gallery.announcement}</p>
+    </div>
+  );
+}
+
+/** Missing, failed or slow photo on the profile: a quiet panel with the restaurant's logo when it has one. */
+function ProfileFallback({ name, logoSrc, loading, onLogoError }: {
+  name: string;
+  logoSrc: string | null | undefined;
+  loading: boolean;
+  onLogoError: () => void;
+}) {
+  return (
+    <div className="profile-photo-absent" role="img" aria-label={loading ? `Loading ${name} photo` : `${name} photo unavailable`}>
+      {logoSrc ? (
+        <span className="profile-photo-logo">
+          {/* eslint-disable-next-line @next/next/no-img-element -- the logo loads directly from Logo.dev and is never rehosted. */}
+          <img src={logoSrc} alt="" referrerPolicy="no-referrer" onError={onLogoError} />
+        </span>
+      ) : (
+        <MaterialIcon name="restaurant" />
+      )}
+      {!logoSrc && <span>{loading ? "Loading photo…" : "Photo unavailable"}</span>}
     </div>
   );
 }

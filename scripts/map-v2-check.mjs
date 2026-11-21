@@ -94,7 +94,7 @@ test("the index is alphabetical and stable, and directions use the verified dest
   assert.equal(new URL(locationsLib.directionsUrl({ name: "A & B", address: null })).searchParams.get("destination"), "A & B");
 });
 
-const good = { market: "nyc", center: [-73.99, 40.73], zoom: 12.7, selected: "deux-luxe", filter: "saved", listScroll: 120, focus: "profile", savedAt: 1_000_000 };
+const good = { market: "nyc", center: [-73.99, 40.73], zoom: 12.7, selected: "deux-luxe", filter: "saved", listScroll: 120, focus: "profile", armed: true, savedAt: 1_000_000 };
 test("return state accepts only complete, recent, bounded values for this market", () => {
   const { parseMapReturnState: parse } = returnState({});
   assert.deepEqual(plain(parse(good, "nyc", 1_000_500)), good);
@@ -103,13 +103,13 @@ test("return state accepts only complete, recent, bounded values for this market
     null, "x", [], { ...good, market: "dc" }, { ...good, market: "atlantis" }, { ...good, center: [200, 0] }, { ...good, center: [0, 95] },
     { ...good, center: [NaN, 1] }, { ...good, center: [1] }, { ...good, zoom: 30 }, { ...good, zoom: -1 }, { ...good, listScroll: -5 },
     { ...good, filter: "everything" }, { ...good, focus: "https://evil.example" }, { ...good, selected: "" }, { ...good, selected: "x".repeat(257) },
-    { ...good, selected: 7 }, { ...good, selected: "a\0b" }, { ...good, savedAt: 1_000_000 - 31 * 60_000 }, { ...good, savedAt: 9_999_999 }, { ...good, savedAt: "now" },
+    { ...good, selected: 7 }, { ...good, selected: "a\0b" }, { ...good, savedAt: 1_000_000 - 31 * 60_000 }, { ...good, savedAt: 9_999_999 }, { ...good, savedAt: "now" }, { ...good, armed: "yes" }, { ...good, armed: undefined },
   ];
   for (const value of bad) assert.equal(parse(value, "nyc", 1_000_500), null, JSON.stringify(value)?.slice(0, 60));
   assert.equal(parse(good, "dc", 1_000_500), null, "another market's snapshot is never applied");
 });
 
-test("return state is read once, and storage failures degrade to the normal first view", () => {
+test("return state is read once, only when armed, and storage failures degrade to the normal first view", () => {
   const store = new Map();
   const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) };
   const lib = returnState(storage);
@@ -123,5 +123,31 @@ test("return state is read once, and storage failures degrade to the normal firs
   assert.equal(lib.takeMapReturnState("nyc", 1_000_500), null);
   const broken = returnState({ getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); }, removeItem() { throw new Error("blocked"); } });
   assert.doesNotThrow(() => broken.saveMapReturnState(good));
+  assert.doesNotThrow(() => broken.armMapReturn("deux-luxe"));
   assert.equal(broken.takeMapReturnState("nyc"), null);
+});
+
+test("a snapshot is restored only after Back from that restaurant's profile, never by a later fresh visit", () => {
+  const store = new Map();
+  const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) };
+  const lib = returnState(storage);
+  const unarmed = { ...good, armed: false };
+  // Left the profile some other way (never armed): a later Map visit ignores and clears it.
+  lib.saveMapReturnState(unarmed);
+  assert.equal(lib.takeMapReturnState("nyc", 1_000_500), null);
+  assert.equal(store.size, 0);
+  // Back from the right profile arms it, once.
+  lib.saveMapReturnState(unarmed);
+  lib.armMapReturn("deux-luxe", 1_000_500);
+  assert.deepEqual(plain(lib.takeMapReturnState("nyc", 1_000_500)), good);
+  assert.equal(lib.takeMapReturnState("nyc", 1_000_500), null);
+  // Back from a different restaurant's profile, an expired snapshot, or no snapshot arms nothing.
+  lib.saveMapReturnState(unarmed);
+  lib.armMapReturn("some-other-place", 1_000_500);
+  assert.equal(lib.takeMapReturnState("nyc", 1_000_500), null);
+  lib.saveMapReturnState(unarmed);
+  lib.armMapReturn("deux-luxe", 1_000_000 + 31 * 60_000);
+  assert.equal(JSON.parse(store.get(lib.MAP_RETURN_KEY)).armed, false);
+  store.clear();
+  assert.doesNotThrow(() => lib.armMapReturn("deux-luxe", 1_000_500));
 });

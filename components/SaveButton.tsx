@@ -4,13 +4,18 @@ import { useState } from "react";
 import { useFavorites } from "@/lib/storage";
 import { describeStorageFailure, type StorageNotice } from "@/lib/storageErrors";
 import type { Restaurant } from "@/lib/types";
+import MaterialIcon from "@/components/MaterialIcon";
 import {
   captureFoodSwipeEvent,
   restaurantAnalyticsContext,
 } from "@/lib/analytics";
 
 /** Toggle the independent favorite without changing discovery history. */
-export default function SaveButton({ restaurant }: { restaurant: Restaurant }) {
+export default function SaveButton({ restaurant, variant = "legacy" }: {
+  restaurant: Restaurant;
+  /** "editorial": Profile v2 (light page, icon plus label, no pill). */
+  variant?: "legacy" | "editorial";
+}) {
   const { favorites, status, error: storageError, saveFavorite, removeFavorite, retry } = useFavorites();
   const [pending, setPending] = useState(false);
   const [actionError, setActionError] = useState<StorageNotice | null>(null);
@@ -42,7 +47,7 @@ export default function SaveButton({ restaurant }: { restaurant: Restaurant }) {
   return (
     <>
       {notice && (
-        <div className="text-xs text-haze">
+        <div className={variant === "editorial" ? "profile-notice" : "text-xs text-haze"}>
           <span role="alert">{notice.message}</span>
           {status === "error" && notice.retry && (
             <button type="button" className="ml-1 underline" onClick={() => void retry()}>Retry</button>
@@ -52,6 +57,17 @@ export default function SaveButton({ restaurant }: { restaurant: Restaurant }) {
           )}
         </div>
       )}
+      {variant === "editorial" ? (
+        <button
+          type="button"
+          onClick={() => void toggleSaved()}
+          disabled={pending || status !== "ready"}
+          aria-pressed={saved}
+          className="profile-action"
+        >
+          <MaterialIcon name="bookmark" filled={saved} /> {saved ? "Saved" : "Save"}
+        </button>
+      ) : (
       <button
         type="button"
         onPointerDown={(e) => e.stopPropagation()}
@@ -67,6 +83,7 @@ export default function SaveButton({ restaurant }: { restaurant: Restaurant }) {
         <span aria-hidden>{saved ? "♥" : "♡"}</span>
         {saved ? "Saved" : "Save"}
       </button>
+      )}
     </>
   );
 }

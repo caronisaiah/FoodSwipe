@@ -37,3 +37,18 @@ Map is shown again. P14-C (Profile v2) must keep the Back path compatible with t
    when the previous entry is the Map, otherwise to `/map` (or `/saved`, `/feed`). It must not accept a URL.
 4. Saved → profile → Back is a different return (Saved has its own scroll and invoking control) and is not part of
    this snapshot.
+
+## Update (Profile v2)
+
+Implemented in the standalone profile (`components/RestaurantProfile.tsx`).
+
+- **Entry points name themselves** with a bounded `?from=map|saved|feed` on the canonical link
+  (`/restaurants/[slug]?from=map`). `lib/profileOrigin.ts` accepts only those three words; anything else, including a
+  URL, is ignored. Share links never include it.
+- **The snapshot is armed by a return.** It gains `armed: boolean` (saved as `false` when View profile is used). The profile
+  arms it, bound to its own slug, when the person goes Back: its Back button, or a browser back/forward traversal
+  (Navigation API `traverse`, plus `popstate` for browsers without it). The Map restores only an armed snapshot and always
+  removes it, so a profile left some other way (a nav tab, a typed URL) can never hijack a later Map visit.
+- **Back button:** with a `from` and a history entry it uses browser history; otherwise it goes to the origin's route
+  (`/map`, `/saved`, `/feed`). A direct link has no `from` and shows "Back to Swipe" (`/feed`).
+- **Saved** needs nothing beyond history: Back lands on `/saved`, which loads its own list.

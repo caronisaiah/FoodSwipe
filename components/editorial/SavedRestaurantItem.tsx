@@ -76,7 +76,7 @@ export default function SavedRestaurantItem({
   // a photo that loads replaces them. The photo is never hidden behind a blank frame.
   const showFallback = (media !== null || !restaurant) && image.showFallback;
   const name = restaurant?.name ?? "Restaurant unavailable";
-  const href = restaurant ? `/restaurants/${encodeURIComponent(restaurant.id)}` : undefined;
+  const href = restaurant ? `/restaurants/${encodeURIComponent(restaurant.id)}?from=saved` : undefined;
 
   return (
     <motion.li

@@ -59,7 +59,7 @@ export default function GoThere({
   );
 }
 
-function websiteUrl(domain?: string | null): string | undefined {
+export function websiteUrl(domain?: string | null): string | undefined {
   const trimmed = domain?.trim();
   if (!trimmed || /\s/.test(trimmed)) return undefined;
   if (trimmed.startsWith("https://")) return trimmed;
