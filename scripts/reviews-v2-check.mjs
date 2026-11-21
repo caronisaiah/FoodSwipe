@@ -90,7 +90,7 @@ test("source guards: one iframe, no autoplay, no overlay on a live player", () =
   assert.doesNotMatch(player, /autoplay=|autoPlay|\.play\(/, "no autoplay URL parameter or script");
   assert.match(player, /allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"/, "iframe permission policy is unchanged");
   assert.doesNotMatch(player, /setTimeout\([^)]*,\s*(700|1000)\)/, "no fixed readiness delay");
-  for (const file of ["ReviewPlayer", "ReviewAttribution", "ReviewViewer", "SwipeReviewList"]) {
+  for (const file of ["ReviewPlayer", "ReviewAttribution"]) {
     assert.doesNotMatch(read(`components/reviews/${file}.tsx`), /VideoEmbed|<video\b|fetch\(|backdrop-blur|absolute inset-x-0 bottom-0/, `${file} does not rehost, fetch or overlay`);
   }
   const creator = read("components/CreatorReviews.tsx");
@@ -99,12 +99,12 @@ test("source guards: one iframe, no autoplay, no overlay on a live player", () =
   assert.doesNotMatch(read("components/RestaurantVideos.tsx"), /aspect-\[4\/5\]/, "no forced 4:5 review frame");
 });
 
-test("source guards: the Swipe viewer cannot trigger the deck's Arrow-key shortcut and restores focus", () => {
-  const viewer = read("components/reviews/ReviewViewer.tsx");
-  assert.match(viewer, /showModal\(\)/);
-  assert.match(viewer, /createPortal\(/);
-  assert.match(viewer, /onKeyDown=\{\(event\) => event\.stopPropagation\(\)\}/);
-  const list = read("components/reviews/SwipeReviewList.tsx");
-  assert.match(list, /target\?\.isConnected\) target\.focus\(\)/);
-  assert.match(list, /\{openIndex !== null && \(/, "no viewer, and so no iframe, until Watch is pressed");
+test("source guards: Swipe shows the featured player inline, kept out of the card's drag, with no viewer", () => {
+  const creator = read("components/CreatorReviews.tsx");
+  assert.match(creator, /load=\{chosen \? "immediate" : "when-visible"\}/, "the featured review loads when it is near the viewport");
+  assert.match(creator, /onPointerDown=\{dragInert \? \(event\) => event\.stopPropagation\(\) : undefined\}/);
+  assert.match(creator, /touchAction: "auto"/);
+  const view = read("components/RestaurantProfileView.tsx");
+  assert.match(view, /<CreatorReviews items=\{profileVideos\.videos\} analytics=\{analyticsContext\} tone="dark" \/>/);
+  assert.doesNotMatch(view, /showModal|<dialog/);
 });

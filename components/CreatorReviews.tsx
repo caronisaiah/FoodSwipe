@@ -21,9 +21,12 @@ const keyOf = (item: ProfileVideoItem) => `${item.origin}-${item.video.id}`;
 export default function CreatorReviews({
   items,
   analytics,
+  tone = "light",
 }: {
   items: ProfileVideoItem[];
   analytics: RestaurantAnalyticsContext;
+  /** "dark" is Swipe's card: the player zone is also kept out of the deck's horizontal drag. */
+  tone?: "light" | "dark";
 }) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [chosen, setChosen] = useState(false);
@@ -34,10 +37,10 @@ export default function CreatorReviews({
   const name = reviewCreatorName(current.video, videoSourceHref(current.video));
 
   return (
-    <div className="review-feature">
+    <div className="review-feature" data-tone={tone}>
       <div className="review-feature-grid">
       <FeaturedReview key={keyOf(current)} item={current} position={(index + 1) as AnalyticsVideoPosition}
-        analytics={analytics} load={chosen ? "immediate" : "when-visible"} />
+        analytics={analytics} load={chosen ? "immediate" : "when-visible"} dragInert={tone === "dark"} />
       {items.length > 1 && (
         <ul className="review-selector" aria-label="Choose a review">
           {items.map((item, i) => (
@@ -60,15 +63,20 @@ function FeaturedReview({
   position,
   analytics,
   load,
+  dragInert,
 }: {
   item: ProfileVideoItem;
   position: AnalyticsVideoPosition;
   analytics: RestaurantAnalyticsContext;
   load: "immediate" | "when-visible";
+  dragInert: boolean;
 }) {
   const sourceClicked = useReviewSourceClick(item.video, position, analytics);
   return (
-    <div className="review-feature-main">
+    // Swipe: taps and scrubs belong to the provider's player, not to the card's horizontal drag, and the browser
+    // keeps vertical scrolling and pinch (the same pattern the old review card used).
+    <div className="review-feature-main" style={dragInert ? { touchAction: "auto" } : undefined}
+      onPointerDown={dragInert ? (event) => event.stopPropagation() : undefined}>
       <ReviewPlayer video={item.video} load={load} onSourceClick={sourceClicked} />
       <ReviewAttribution video={item.video} demoLabel={reviewOriginLabel(item.origin, item.video)}
         onSourceClick={sourceClicked} />

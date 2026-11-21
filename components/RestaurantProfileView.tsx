@@ -10,7 +10,7 @@ import { priceLabel } from "@/lib/options";
 import TagPill from "@/components/TagPill";
 import RestaurantHero from "@/components/RestaurantHero";
 import { firstReviewHref, useRestaurantProfileVideos } from "@/components/RestaurantVideos";
-import SwipeReviewList from "@/components/reviews/SwipeReviewList";
+import CreatorReviews from "@/components/CreatorReviews";
 import GoThere from "@/components/GoThere";
 import MaterialIcon from "@/components/MaterialIcon";
 import {
@@ -150,7 +150,10 @@ export default function RestaurantProfileView({
 
         <div className="flex flex-col gap-3">
           {profileVideos.videos.length > 0 && (
-            <SwipeReviewList items={profileVideos.videos} analytics={analyticsContext} />
+            <section aria-labelledby="swipe-reviews-title">
+              <h3 id="swipe-reviews-title">Creator reviews</h3>
+              <CreatorReviews items={profileVideos.videos} analytics={analyticsContext} tone="dark" />
+            </section>
           )}
 
           {hasReason && (
