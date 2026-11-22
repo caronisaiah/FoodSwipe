@@ -1,5 +1,6 @@
 import { desc, eq } from "drizzle-orm";
-import { normalizeMarket, type Market } from "@/lib/markets";
+import { isAllowedMarket, normalizeMarket, type Market } from "@/lib/markets";
+import type { CandidateWrite } from "@/lib/adminValidation";
 import { getDb, isDbConfigured } from "./index";
 import {
   candidateRestaurants,
@@ -258,6 +259,13 @@ export async function getExistingRestaurantPlaceStatusesForImport(): Promise<Map
  * `name`. A fresh uuid + proposed slug are generated; status defaults to
  * "candidate" and source to "manual".
  */
+/** Backstop for writes: throws instead of defaulting to a market. Reads still use normalizeMarket. */
+function requireMarket(value: unknown): Market {
+  const v = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!isAllowedMarket(v)) throw new Error("A valid market is required to create a candidate.");
+  return v;
+}
+
 export async function insertCandidateRestaurant(
   input: unknown,
 ): Promise<CandidateRestaurant | null> {
@@ -276,8 +284,8 @@ export async function insertCandidateRestaurant(
       name,
       status: inSet(CANDIDATE_STATUSES, b.status) ? b.status : "candidate",
       source: inSet(CANDIDATE_SOURCES, b.source) ? b.source : "manual",
-      // Allow-list validated; unknown/omitted → DC default (DC-first).
-      market: normalizeMarket(b.market),
+      // Strict: no silent DC default. Callers (routes, importer) validate first; this is the backstop.
+      market: requireMarket(b.market),
       googlePlaceId: optStr(b.googlePlaceId),
       websiteDomain: optStr(b.websiteDomain),
       address: optStr(b.address),
@@ -307,42 +315,23 @@ export async function insertCandidateRestaurant(
   return rowToCandidate(row);
 }
 
-/**
- * Patch a candidate from an untrusted body — only fields actually present in the
- * body are written (so PATCH is additive). Returns null if no row matched.
- */
+/** Apply a VALIDATED patch (see lib/adminValidation). Returns null if no row matched. */
 export async function updateCandidateRestaurant(
   id: string,
-  patch: unknown,
+  write: CandidateWrite,
 ): Promise<CandidateRestaurant | null> {
   const db = getDb();
   if (!db) throw new Error("DATABASE_URL not configured");
-  const b = (patch && typeof patch === "object" ? patch : {}) as Record<string, unknown>;
-
+  // `write` has already been validated by validateCandidateBody; only known keys are copied.
   const set: Partial<NewCandidateRestaurantRow> = { updatedAt: new Date() };
-  if ("name" in b) {
-    const n = optStr(b.name);
-    if (n) set.name = n;
+  const keys = [
+    "name", "slug", "status", "market", "googlePlaceId", "websiteDomain", "address", "neighborhood",
+    "lat", "lng", "priceLevel", "cuisineTags", "dietaryTags", "vibeTags", "bestFor", "dishHighlights",
+    "reasonText", "reviewNotes",
+  ] as const;
+  for (const key of keys) {
+    if (key in write && write[key] !== undefined) (set as Record<string, unknown>)[key] = write[key];
   }
-  if ("slug" in b) set.slug = optStr(b.slug);
-  if ("status" in b && inSet(CANDIDATE_STATUSES, b.status)) set.status = b.status;
-  if ("source" in b && inSet(CANDIDATE_SOURCES, b.source)) set.source = b.source;
-  if ("googlePlaceId" in b) set.googlePlaceId = optStr(b.googlePlaceId);
-  if ("websiteDomain" in b) set.websiteDomain = optStr(b.websiteDomain);
-  if ("address" in b) set.address = optStr(b.address);
-  if ("neighborhood" in b) set.neighborhood = optStr(b.neighborhood);
-  if ("lat" in b) set.lat = optCoord(b.lat);
-  if ("lng" in b) set.lng = optCoord(b.lng);
-  if ("priceLevel" in b) set.priceLevel = optPrice(b.priceLevel);
-  if ("cuisineTags" in b) set.cuisineTags = strArray(b.cuisineTags);
-  if ("dietaryTags" in b) set.dietaryTags = strArray(b.dietaryTags);
-  if ("vibeTags" in b) set.vibeTags = strArray(b.vibeTags);
-  if ("dishHighlights" in b) set.dishHighlights = strArray(b.dishHighlights);
-  if ("bestFor" in b) set.bestFor = strArray(b.bestFor);
-  if ("reasonText" in b) set.reasonText = optStr(b.reasonText);
-  if ("reviewNotes" in b) set.reviewNotes = optStr(b.reviewNotes);
-  else if ("notes" in b) set.reviewNotes = optStr(b.notes);
-
   const [row] = await db
     .update(candidateRestaurants)
     .set(set)

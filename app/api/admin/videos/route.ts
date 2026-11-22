@@ -1,7 +1,7 @@
 import { getRestaurantById } from "@/lib/seed/restaurants";
 import { normalizeVideo } from "@/lib/video";
-import { hasValidAdminSecret, isAdminConfigured } from "@/lib/adminAuth";
-import { insertVideo, isDbConfigured } from "@/lib/db/videos";
+import { guardAdmin } from "@/lib/adminGuard";
+import { insertVideo } from "@/lib/db/videos";
 
 /*
   POST /api/admin/videos  (internal, admin-secret protected, v1.2)
@@ -12,21 +12,8 @@ import { insertVideo, isDbConfigured } from "@/lib/db/videos";
   - inserts into Postgres; returns the saved Video
 */
 export async function POST(req: Request): Promise<Response> {
-  if (!isAdminConfigured()) {
-    return Response.json(
-      { error: "Admin writes are disabled (FOODSWIPE_ADMIN_SECRET not set)." },
-      { status: 503 },
-    );
-  }
-  if (!hasValidAdminSecret(req)) {
-    return Response.json({ error: "Unauthorized." }, { status: 401 });
-  }
-  if (!isDbConfigured()) {
-    return Response.json(
-      { error: "Database not configured (DATABASE_URL not set)." },
-      { status: 503 },
-    );
-  }
+  const auth = guardAdmin(req, "publish");
+  if (!auth.ok) return auth.response;
 
   let body: unknown;
   try {

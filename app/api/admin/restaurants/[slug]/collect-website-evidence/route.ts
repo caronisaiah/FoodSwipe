@@ -1,5 +1,4 @@
-import { hasValidAdminSecret, isAdminConfigured } from "@/lib/adminAuth";
-import { isDbConfigured } from "@/lib/db/candidates";
+import { guardAdmin } from "@/lib/adminGuard";
 import { getAppRestaurantById } from "@/lib/db/restaurants";
 import { getEvidenceMeta, saveEvidenceForSubject } from "@/lib/db/restaurantEvidence";
 import { collectWebsiteEvidence } from "@/lib/websiteEvidence";
@@ -20,21 +19,8 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ slug: string }> },
 ): Promise<Response> {
-  if (!isAdminConfigured()) {
-    return Response.json(
-      { error: "Admin API is disabled (FOODSWIPE_ADMIN_SECRET not set)." },
-      { status: 503, headers: NO_STORE },
-    );
-  }
-  if (!hasValidAdminSecret(req)) {
-    return Response.json({ error: "Unauthorized." }, { status: 401, headers: NO_STORE });
-  }
-  if (!isDbConfigured()) {
-    return Response.json(
-      { error: "Database not configured (DATABASE_URL not set)." },
-      { status: 503, headers: NO_STORE },
-    );
-  }
+  const auth = guardAdmin(req, "draft");
+  if (!auth.ok) return auth.response;
 
   const { slug } = await params;
   const restaurant = await getAppRestaurantById(slug);

@@ -1,5 +1,6 @@
-import { hasValidAdminSecret, isAdminConfigured } from "@/lib/adminAuth";
-import { getCandidateRestaurant, isDbConfigured, type CandidateRestaurant } from "@/lib/db/candidates";
+import { guardAdmin } from "@/lib/adminGuard";
+import type { AdminScope } from "@/lib/adminAuth";
+import { getCandidateRestaurant, type CandidateRestaurant } from "@/lib/db/candidates";
 import {
   clearApprovedHeroSelectionForCandidate,
   getApprovedHeroSelectionForCandidate,
@@ -48,16 +49,9 @@ type CandidateGuardResult =
   | { ok: false; response: Response }
   | { ok: true; candidate: CandidateRestaurant };
 
-async function guardCandidate(req: Request, id: string): Promise<CandidateGuardResult> {
-  if (!isAdminConfigured()) {
-    return { ok: false, response: json({ error: "Admin API is disabled (FOODSWIPE_ADMIN_SECRET not set)." }, 503) };
-  }
-  if (!hasValidAdminSecret(req)) {
-    return { ok: false, response: json({ error: "Unauthorized." }, 401) };
-  }
-  if (!isDbConfigured()) {
-    return { ok: false, response: json({ error: "Database not configured (DATABASE_URL not set)." }, 503) };
-  }
+async function guardCandidate(req: Request, id: string, required: AdminScope): Promise<CandidateGuardResult> {
+  const auth = guardAdmin(req, required);
+  if (!auth.ok) return { ok: false, response: auth.response };
   const candidate = await getCandidateRestaurant(id);
   if (!candidate) {
     return { ok: false, response: json({ error: "Candidate not found." }, 404) };
@@ -77,7 +71,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const { id } = await params;
-  const guarded = await guardCandidate(req, id);
+  const guarded = await guardCandidate(req, id, "draft");
   if (!guarded.ok) return guarded.response;
   const { candidate } = guarded;
   const selection = await getApprovedHeroSelectionForCandidate(candidate.id);
@@ -131,7 +125,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const { id } = await params;
-  const guarded = await guardCandidate(req, id);
+  const guarded = await guardCandidate(req, id, "publish");
   if (!guarded.ok) return guarded.response;
   const { candidate } = guarded;
   if (!candidate.googlePlaceId) {
@@ -197,7 +191,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const { id } = await params;
-  const guarded = await guardCandidate(req, id);
+  const guarded = await guardCandidate(req, id, "publish");
   if (!guarded.ok) return guarded.response;
   const { candidate } = guarded;
   const clearedCount = await clearApprovedHeroSelectionForCandidate(candidate.id);

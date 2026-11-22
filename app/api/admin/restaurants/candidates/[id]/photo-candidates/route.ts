@@ -1,5 +1,5 @@
-import { hasValidAdminSecret, isAdminConfigured } from "@/lib/adminAuth";
-import { getCandidateRestaurant, isDbConfigured } from "@/lib/db/candidates";
+import { guardAdmin } from "@/lib/adminGuard";
+import { getCandidateRestaurant } from "@/lib/db/candidates";
 import { getPlacePhotoCandidates, type PlacePhotoStatus } from "@/lib/places";
 
 const NO_STORE = { "Cache-Control": "no-store" };
@@ -40,15 +40,8 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  if (!isAdminConfigured()) {
-    return json({ error: "Admin API is disabled (FOODSWIPE_ADMIN_SECRET not set)." }, 503);
-  }
-  if (!hasValidAdminSecret(req)) {
-    return json({ error: "Unauthorized." }, 401);
-  }
-  if (!isDbConfigured()) {
-    return json({ error: "Database not configured (DATABASE_URL not set)." }, 503);
-  }
+  const auth = guardAdmin(req, "draft");
+  if (!auth.ok) return auth.response;
 
   const { id } = await params;
   const candidate = await getCandidateRestaurant(id); // SELECT only - no writes

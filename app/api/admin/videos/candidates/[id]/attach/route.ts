@@ -1,5 +1,6 @@
-import { hasValidAdminSecret, isAdminConfigured } from "@/lib/adminAuth";
-import { attachVideoCandidate, isDbConfigured } from "@/lib/db/videoCandidates";
+import { adminError, adminJson, adminUrl } from "@/lib/adminApi";
+import { guardAdmin } from "@/lib/adminGuard";
+import { attachVideoCandidate } from "@/lib/db/videoCandidates";
 
 /*
   POST /api/admin/videos/candidates/[id]/attach  (INTERNAL, admin-secret)
@@ -17,21 +18,8 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  if (!isAdminConfigured()) {
-    return Response.json(
-      { error: "Admin API is disabled (FOODSWIPE_ADMIN_SECRET not set)." },
-      { status: 503 },
-    );
-  }
-  if (!hasValidAdminSecret(req)) {
-    return Response.json({ error: "Unauthorized." }, { status: 401 });
-  }
-  if (!isDbConfigured()) {
-    return Response.json(
-      { error: "Database not configured (DATABASE_URL not set)." },
-      { status: 503 },
-    );
-  }
+  const auth = guardAdmin(req, "publish");
+  if (!auth.ok) return auth.response;
 
   let expectedRestaurantSlug: string | undefined;
   // Bodyless requests can retrieve an existing attachment, but cannot create one.
@@ -43,12 +31,12 @@ export async function POST(
         ? body.expectedRestaurantSlug
         : null;
       if (typeof slug !== "string" || !slug.trim()) {
-        return Response.json({ error: "Expected restaurant slug is required in the request body." }, { status: 400 });
+        return adminError(400, "expected_slug_required", "Expected restaurant slug is required in the request body.", { field: "expectedRestaurantSlug" });
       }
       expectedRestaurantSlug = slug.trim();
     }
   } catch {
-    return Response.json({ error: "Invalid JSON body." }, { status: 400 });
+    return adminError(400, "invalid_json", "Invalid JSON body.");
   }
 
   const { id } = await params;
@@ -56,44 +44,36 @@ export async function POST(
   try {
     result = await attachVideoCandidate(id, expectedRestaurantSlug);
   } catch {
-    return Response.json({ error: "Could not confirm attachment. Refresh the queue and retry if it is still approved." }, { status: 500 });
+    return adminError(500, "attach_failed", "Could not confirm attachment. Refresh the queue and retry if it is still approved.", { retryable: true });
   }
 
   if (result.ok) {
-    return Response.json(
-      { videoId: result.videoId, candidate: result.candidate, alreadyAttached: result.alreadyAttached },
-      { status: result.alreadyAttached ? 200 : 201 },
+    return adminJson(
+      {
+        videoId: result.videoId, candidate: result.candidate, alreadyAttached: result.alreadyAttached,
+        restaurantSlug: result.restaurantSlug, id: result.candidate.id,
+        adminUrl: adminUrl(req, "/admin/videos/candidates", { candidate: result.candidate.id }),
+      },
+      result.alreadyAttached ? 200 : 201,
     );
   }
 
   switch (result.code) {
     case "no-db":
-      return Response.json(
-        { error: "Database not configured (DATABASE_URL not set)." },
-        { status: 503 },
-      );
+      return adminError(503, "database_unavailable", "Database not configured (DATABASE_URL not set).");
     case "not-found":
-      return Response.json({ error: "Candidate not found." }, { status: 404 });
+      return adminError(404, "not_found", "Candidate not found.");
     case "target-changed":
-      return Response.json({ error: "The saved restaurant changed. Refresh the queue and verify the target before attaching." }, { status: 409 });
+      return adminError(409, "target_changed", "The restaurant this video is linked to changed, was hidden, or no longer matches what you confirmed. Refresh the queue and verify the target before attaching.");
     case "target-required":
-      return Response.json({ error: "Confirm the saved restaurant slug before attaching." }, { status: 400 });
+      return adminError(400, "target_required", "Confirm the restaurant slug the video will be attached to before attaching.", { field: "expectedRestaurantSlug" });
     case "attachment-inconsistent":
-      return Response.json({ error: "This candidate has an incomplete attachment record. Verify the restaurant's videos before repairing the record." }, { status: 409 });
+      return adminError(409, "attachment_inconsistent", "This candidate has an incomplete attachment record. Verify the restaurant's videos before repairing the record.");
     case "not-approved":
-      return Response.json(
-        {
-          error: `Candidate must be "approved" before attaching (currently "${result.status}").`,
-          status: result.status,
-        },
-        { status: 400 },
-      );
+      return adminError(400, "not_approved", `Candidate must be "approved" before attaching (currently "${result.status}").`, { status: result.status });
     case "restaurant-not-found":
-      return Response.json(
-        { error: `No published restaurant found for slug "${result.slug}".`, slug: result.slug },
-        { status: 422 },
-      );
+      return adminError(422, "restaurant_not_published", "The restaurant this video is linked to is not published yet. Publish the restaurant first; the video stays linked by ID.", { slug: result.slug });
     case "invalid-video":
-      return Response.json({ error: "Candidate could not be turned into a valid video." }, { status: 422 });
+      return adminError(422, "invalid_video", "Candidate could not be turned into a valid video.");
   }
 }

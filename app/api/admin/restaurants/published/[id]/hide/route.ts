@@ -1,5 +1,4 @@
-import { hasValidAdminSecret, isAdminConfigured } from "@/lib/adminAuth";
-import { isDbConfigured } from "@/lib/db/candidates";
+import { guardAdmin } from "@/lib/adminGuard";
 import { hidePublishedRestaurant } from "@/lib/db/restaurants";
 
 /*
@@ -13,21 +12,8 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  if (!isAdminConfigured()) {
-    return Response.json(
-      { error: "Admin API is disabled (FOODSWIPE_ADMIN_SECRET not set)." },
-      { status: 503 },
-    );
-  }
-  if (!hasValidAdminSecret(req)) {
-    return Response.json({ error: "Unauthorized." }, { status: 401 });
-  }
-  if (!isDbConfigured()) {
-    return Response.json(
-      { error: "Database not configured (DATABASE_URL not set)." },
-      { status: 503 },
-    );
-  }
+  const auth = guardAdmin(req, "publish");
+  if (!auth.ok) return auth.response;
 
   const { id } = await params;
   try {

@@ -1,5 +1,5 @@
-import { hasValidAdminSecret, isAdminConfigured } from "@/lib/adminAuth";
-import { isDbConfigured } from "@/lib/db/candidates";
+import { adminError, adminJson, adminUrl } from "@/lib/adminApi";
+import { guardAdmin } from "@/lib/adminGuard";
 import { promoteCandidateToRestaurant } from "@/lib/db/restaurants";
 
 /*
@@ -22,79 +22,52 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  if (!isAdminConfigured()) {
-    return Response.json(
-      { error: "Admin API is disabled (FOODSWIPE_ADMIN_SECRET not set)." },
-      { status: 503 },
-    );
-  }
-  if (!hasValidAdminSecret(req)) {
-    return Response.json({ error: "Unauthorized." }, { status: 401 });
-  }
-  if (!isDbConfigured()) {
-    return Response.json(
-      { error: "Database not configured (DATABASE_URL not set)." },
-      { status: 503 },
-    );
-  }
+  const auth = guardAdmin(req, "publish");
+  if (!auth.ok) return auth.response;
 
   const { id } = await params;
   let result;
   try {
     result = await promoteCandidateToRestaurant(id);
   } catch {
-    return Response.json({ error: "Failed to promote candidate." }, { status: 500 });
+    return adminError(500, "promote_failed", "Failed to promote candidate.", { retryable: true });
   }
 
   if (result.ok) {
-    return Response.json(
-      { restaurant: result.restaurant, heroSelectionWarning: result.heroSelectionWarning },
-      { status: 201 },
+    return adminJson(
+      {
+        restaurant: result.restaurant, heroSelectionWarning: result.heroSelectionWarning,
+        id: result.restaurant.id, slug: result.restaurant.slug,
+        adminUrl: adminUrl(req, "/admin/restaurants/published"),
+        candidateAdminUrl: adminUrl(req, "/admin/restaurants/candidates", { candidate: id }),
+      },
+      201,
     );
   }
 
   switch (result.code) {
     case "no-db":
-      return Response.json(
-        { error: "Database not configured (DATABASE_URL not set)." },
-        { status: 503 },
-      );
+      return adminError(503, "database_unavailable", "Database not configured (DATABASE_URL not set).");
     case "not-found":
-      return Response.json({ error: "Candidate not found." }, { status: 404 });
+      return adminError(404, "not_found", "Candidate not found.");
     case "not-approved":
-      return Response.json(
-        {
-          error: `Candidate must be "approved" before promotion (currently "${result.status}").`,
-          status: result.status,
-        },
-        { status: 400 },
-      );
+      return adminError(400, "not_approved", `Candidate must be "approved" before promotion (currently "${result.status}").`, { status: result.status });
     case "incomplete":
-      return Response.json(
-        {
-          error: "Candidate is missing required feed fields.",
-          missingFields: result.missingFields,
-        },
-        { status: 422 },
-      );
+      return adminError(422, "incomplete_candidate", result.invalidCoordinates?.length
+        ? `Candidate has invalid coordinates: ${result.invalidCoordinates[0].message}`
+        : "Candidate is missing required feed fields.", {
+        missingFields: result.missingFields,
+        errors: result.invalidCoordinates,
+      });
     case "already-promoted":
-      return Response.json(
-        {
-          error: "Candidate has already been promoted.",
-          restaurant: result.restaurant,
-          heroSelectionWarning: result.heroSelectionWarning,
-        },
-        { status: 409 },
-      );
+      return adminError(409, "already_promoted", "Candidate has already been promoted.", {
+        restaurant: result.restaurant, heroSelectionWarning: result.heroSelectionWarning,
+      });
     case "place-already-published":
-      return Response.json(
-        {
-          error: "Another published restaurant already uses this Google Place ID.",
-          restaurant: result.restaurant,
-        },
-        { status: 409 },
-      );
+      return adminError(409, "place_already_published", "Another published restaurant already uses this Google Place ID.", {
+        restaurant: result.restaurant,
+      });
     default:
-      return Response.json({ error: "Failed to promote candidate." }, { status: 500 });
+      return adminError(500, "promote_failed", "Failed to promote candidate.", { retryable: true });
   }
 }

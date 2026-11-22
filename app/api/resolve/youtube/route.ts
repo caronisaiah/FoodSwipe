@@ -1,3 +1,4 @@
+import { guardAdmin } from "@/lib/adminGuard";
 import {
   buildYouTubeVideo,
   fetchYouTubeMetadata,
@@ -5,7 +6,7 @@ import {
 } from "@/lib/youtube";
 
 /*
-  POST /api/resolve/youtube  (internal)
+  POST /api/resolve/youtube  (INTERNAL, admin credential required)
   -------------------------------------
   Body: { url: string, creatorHandle?, creatorDisplayName?, caption? }
   Returns: { video, metadataStatus } or { error }.
@@ -18,6 +19,9 @@ import {
 */
 
 export async function POST(request: Request): Promise<Response> {
+  // Spends the YouTube Data API quota, so it is no longer open to the public.
+  const auth = guardAdmin(request, "draft", { requireDb: false });
+  if (!auth.ok) return auth.response;
   let body: unknown;
   try {
     body = await request.json();

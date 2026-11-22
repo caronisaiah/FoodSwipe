@@ -809,7 +809,8 @@ DATABASE_URL="postgresql://USER:PASSWORD@HOST/DB?sslmode=require"   # Neon conne
 FOODSWIPE_CONTENT_MODE="mixed"                                      # demo | mixed | production; production is DB-published only
 FOODSWIPE_DEFAULT_MARKET="nyc"                                      # public discovery default; missing/blank = nyc
 FOODSWIPE_ENABLE_DC_DISCOVERY="false"                               # opt in only with the local development server
-FOODSWIPE_ADMIN_SECRET="a-long-random-string"                       # gate for admin writes
+FOODSWIPE_ADMIN_SECRET="a-long-random-string"                       # publication credential: full admin access (human administrator)
+FOODSWIPE_ADMIN_DRAFT_SECRET="a-different-long-random-string"        # OPTIONAL draft credential for ingestion agents (see docs/admin-credentials.md)
 YOUTUBE_API_KEY="..."                                              # optional — YouTube metadata enrichment
 GOOGLE_MAPS_API_KEY="..."                                          # optional — Google Place Photos on profiles
 LOGODEV_TOKEN="pk_..."                                             # optional — brand-logo hero fallback (publishable token)

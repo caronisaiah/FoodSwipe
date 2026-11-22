@@ -1,4 +1,8 @@
-import { hasValidAdminSecret, isAdminConfigured } from "@/lib/adminAuth";
+import { adminError, adminJson, adminUrl, validationError } from "@/lib/adminApi";
+import { guardAdmin } from "@/lib/adminGuard";
+import { validateMarket } from "@/lib/adminValidation";
+import { findPossibleDuplicates } from "@/lib/duplicateWarnings";
+import { listIdentityRecords } from "@/lib/db/identity";
 import { searchPlacesText, type PlaceTextResult } from "@/lib/places";
 import {
   addRestaurantSource,
@@ -8,14 +12,13 @@ import {
   getExistingCandidateSlugs,
   getExistingRestaurantPlaceStatusesForImport,
   insertCandidateRestaurant,
-  isDbConfigured,
   slugify,
   type CandidateRestaurant,
 } from "@/lib/db/candidates";
 import { scoreReviewLikelihood, type ReviewLikelihood } from "@/lib/reviewLikelihood";
 import { suggestCandidateTags } from "@/lib/candidateTagger";
 import { RESTAURANTS } from "@/lib/seed/restaurants";
-import { DEFAULT_MARKET, isAllowedMarket, type Market } from "@/lib/markets";
+import type { Market } from "@/lib/markets";
 import { signImportPreview, verifyImportPreview } from "@/lib/restaurantImportPreview";
 
 /*
@@ -25,7 +28,7 @@ import { signImportPreview, verifyImportPreview } from "@/lib/restaurantImportPr
   REVIEW rows. NOTHING is published to /feed; imported rows land as
   status="needs_review", source="google_places", for a human to curate/approve.
 
-  Preview body: { query, maxResults?, market?, dryRun?: true }
+  Preview body: { query, market (REQUIRED), maxResults?, dryRun?: true }
   Write body: same context + dryRun:false, previewToken, selectedPlaceIds (1–20).
   dryRun DEFAULTS TO true (must pass `"dryRun": false` to actually write).
 
@@ -201,60 +204,39 @@ export async function POST(req: Request): Promise<Response> {
   try {
     return await importRequest(req);
   } catch {
-    return Response.json({ error: "Could not prepare the candidate import. No result was confirmed; retry safely." }, { status: 500 });
+    return adminError(500, "import_failed", "Could not prepare the candidate import. No result was confirmed; retry safely.", { retryable: true });
   }
 }
 
 async function importRequest(req: Request): Promise<Response> {
-  if (!isAdminConfigured()) {
-    return Response.json(
-      { error: "Admin API is disabled (FOODSWIPE_ADMIN_SECRET not set)." },
-      { status: 503 },
-    );
-  }
-  if (!hasValidAdminSecret(req)) {
-    return Response.json({ error: "Unauthorized." }, { status: 401 });
-  }
-  if (!isDbConfigured()) {
-    return Response.json(
-      { error: "Database not configured (DATABASE_URL not set)." },
-      { status: 503 },
-    );
-  }
+  const auth = guardAdmin(req, "draft");
+  if (!auth.ok) return auth.response;
   if (!process.env.GOOGLE_MAPS_API_KEY) {
-    return Response.json(
-      { error: "Google Places is not configured (GOOGLE_MAPS_API_KEY not set)." },
-      { status: 503 },
-    );
+    return adminError(503, "google_not_configured", "Google Places is not configured (GOOGLE_MAPS_API_KEY not set).");
   }
 
   let body: unknown;
   try {
     body = await req.json();
   } catch {
-    return Response.json({ error: "Invalid JSON body." }, { status: 400 });
+    return adminError(400, "invalid_json", "Invalid JSON body.");
   }
   const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
 
   const query = str(b.query);
   if (!query || query.length > 1024) {
-    return Response.json({ error: "A non-empty `query` of at most 1024 characters is required." }, { status: 400 });
+    return validationError([{ field: "query", code: "invalid_query", message: "A non-empty `query` of at most 1024 characters is required." }]);
   }
   const rawMax = typeof b.maxResults === "number" ? b.maxResults : 10;
   const maxResults = Math.min(Math.max(Math.trunc(rawMax) || 10, 1), 20);
   // Safe default: only an explicit `false` performs writes.
   const dryRun = b.dryRun !== false;
 
-  // Optional market (allow-list). Omitted → DC (DC-first, unchanged behavior);
-  // present-but-invalid is rejected rather than silently coerced.
-  let market: Market = DEFAULT_MARKET;
-  if (b.market !== undefined && b.market !== null) {
-    const m = typeof b.market === "string" ? b.market.trim().toLowerCase() : "";
-    if (!isAllowedMarket(m)) {
-      return Response.json({ error: "Invalid market (allowed: dc, nyc)." }, { status: 400 });
-    }
-    market = m;
-  }
+  // The market is REQUIRED and strictly validated: there is no default (a silent DC default used to
+  // misplace NYC restaurants). A missing or invalid market is a structured 422.
+  const marketCheck = validateMarket(b.market);
+  if (!marketCheck.ok) return validationError([marketCheck.error]);
+  const market: Market = marketCheck.market;
 
   const context = { query, maxResults, market };
   let selectedPlaceIds: string[] = [];
@@ -265,15 +247,15 @@ async function importRequest(req: Request): Promise<Response> {
         (id) => typeof id === "string" && id.length > 0 && id.length <= 256 && id.trim() === id,
       )
     ) {
-      return Response.json({ error: "Select 1–20 Google Place IDs from a current preview." }, { status: 400 });
+      return adminError(400, "invalid_selection", "Select 1–20 Google Place IDs from a current preview.", { field: "selectedPlaceIds" });
     }
     const eligibleIds = verifyImportPreview(b.previewToken, context, process.env.FOODSWIPE_ADMIN_SECRET!);
     if (!eligibleIds) {
-      return Response.json({ error: "Preview expired, changed, or invalid. Search again before importing." }, { status: 409 });
+      return adminError(409, "preview_invalid", "Preview expired, changed, or invalid. Search again before importing.", { field: "previewToken" });
     }
     selectedPlaceIds = [...new Set(b.selectedPlaceIds as string[])];
     if (selectedPlaceIds.some((id) => !eligibleIds.includes(id))) {
-      return Response.json({ error: "Selected IDs must be eligible restaurants from this preview." }, { status: 400 });
+      return adminError(400, "ineligible_selection", "Selected IDs must be eligible restaurants from this preview.", { field: "selectedPlaceIds" });
     }
   }
 
@@ -292,15 +274,12 @@ async function importRequest(req: Request): Promise<Response> {
       });
     }
     const code = search.status === "missing-api-key" ? 503 : 502;
-    return Response.json(
-      {
-        error: "Google Places search failed.",
-        status: search.status,
-        httpStatus: search.httpStatus,
-        googleStatus: search.googleStatus,
-      },
-      { status: code },
-    );
+    return adminError(code, "google_search_failed", "Google Places search failed.", {
+      status: search.status,
+      httpStatus: search.httpStatus,
+      googleStatus: search.googleStatus,
+      retryable: code === 502,
+    });
   }
 
   // Only results with a usable display name can become a named candidate.
@@ -334,12 +313,25 @@ async function importRequest(req: Request): Promise<Response> {
         duplicateOfKind: dupStatus !== null ? "candidate" : restaurantStatus !== null ? "restaurant" : repeated ? "preview" : null,
       };
     });
+    // Conservative name/address hints. They never block an import and never merge branches: the Google
+    // Place ID stays the only exact identity. A failed lookup must not break the preview.
+    try {
+      const index = await listIdentityRecords();
+      for (const candidate of candidates) {
+        (candidate as Record<string, unknown>).duplicateWarnings = findPossibleDuplicates(
+          { name: candidate.name ?? "", address: candidate.address ?? null, market, googlePlaceId: candidate.googlePlaceId },
+          index,
+        ).map((n) => ({ code: n.code, severity: n.severity, message: n.message, existing: n.existing }));
+      }
+    } catch {
+      /* hints are optional */
+    }
     const previewToken = signImportPreview(
       context,
       candidates.filter((candidate) => !candidate.isDuplicate).map((candidate) => candidate.googlePlaceId),
       process.env.FOODSWIPE_ADMIN_SECRET!,
     );
-    return Response.json({ dryRun: true, query, found: candidates.length, candidates, previewToken });
+    return adminJson({ dryRun: true, query, market, found: candidates.length, candidates, previewToken });
   }
 
   // Import ONLY selected IDs, with server-resolved fields. Repeated Google rows
@@ -478,8 +470,11 @@ async function importRequest(req: Request): Promise<Response> {
     // Preserve confirmed per-row outcomes if best-effort audit logging fails.
   }
 
-  return Response.json(
-    { requested: selectedPlaceIds.length, imported, skippedDuplicates, failed, duplicates, outcomes, candidates: created },
-    { status: imported > 0 ? 201 : 200 },
+  return adminJson(
+    {
+      requested: selectedPlaceIds.length, imported, skippedDuplicates, failed, market, duplicates, outcomes,
+      candidates: created.map((c) => ({ ...c, adminUrl: adminUrl(req, "/admin/restaurants/candidates", { candidate: c.id }) })),
+    },
+    imported > 0 ? 201 : 200,
   );
 }

@@ -1,82 +1,83 @@
-import { hasValidAdminSecret, isAdminConfigured } from "@/lib/adminAuth";
+import { adminError, adminJson, adminUrl, validationError } from "@/lib/adminApi";
+import { guardAdmin } from "@/lib/adminGuard";
+import { validateVideoCandidateBody } from "@/lib/adminVideoValidation";
+import { getCandidateRef, getPublishedRefBySlug } from "@/lib/db/identity";
 import {
   createVideoCandidate,
-  isDbConfigured,
+  getAssociationSummaries,
   listVideoCandidates,
 } from "@/lib/db/videoCandidates";
 import { resolveSocialVideo } from "@/lib/socialVideo";
+import { resolveAssociation } from "@/lib/videoAssociation";
 
 /*
-  /api/admin/videos/candidates  (INTERNAL, admin-secret)
+  /api/admin/videos/candidates  (INTERNAL, admin credential required)
+  Social-video intake/review queue. NOTHING here is shown on a profile; a candidate only reaches
+  restaurant_videos via an explicit attach of an APPROVED candidate by the publication credential.
 
-  Social-video intake/review queue (Phase 1). NOTHING here is shown on a profile;
-  a candidate only reaches restaurant_videos via an explicit attach of an APPROVED
-  candidate. Guards mirror the other admin routes: 503 no secret · 401 bad secret
-  · 503 no DB.
+  Credentials: the draft credential may list and create candidates (always status needs_review).
 
-  POST  Body: { sourceUrl, restaurantSlug?, candidateRestaurantId?,
-                proposedRestaurantName?, reviewNotes? }
-        → resolves the URL (TikTok/Instagram/YouTube), inserts a needs_review
-          candidate. 422 on unsupported/invalid URL. 409 (with existing) on dup.
-  GET   ?status=&platform=&restaurantSlug=  → { candidates }
+  POST  Body: { sourceUrl, candidateRestaurantId?, restaurantSlug?, proposedRestaurantName?, reviewNotes?,
+                creatorHandle?, creatorName?, attributionText?, caption? }
+        The restaurant link is by STABLE ID: `candidateRestaurantId` for a draft (or promoted) restaurant,
+        or `restaurantSlug` for a published restaurant. A reference that does not exist, refers to two
+        different restaurants, or crosses markets is rejected with a structured 422. Typed slugs of
+        restaurants that do not exist are no longer accepted.
+        201 -> { candidate, id, adminUrl, association, warnings }; 409 duplicate -> { code: "duplicate_video", existing }.
+  GET   ?status=&platform=&restaurantSlug=&candidateRestaurantId=  -> { candidates (+association, adminUrl), adminScope }
 */
-
-function guard(req: Request): Response | null {
-  if (!isAdminConfigured()) {
-    return Response.json(
-      { error: "Admin API is disabled (FOODSWIPE_ADMIN_SECRET not set)." },
-      { status: 503 },
-    );
-  }
-  if (!hasValidAdminSecret(req)) {
-    return Response.json({ error: "Unauthorized." }, { status: 401 });
-  }
-  if (!isDbConfigured()) {
-    return Response.json(
-      { error: "Database not configured (DATABASE_URL not set)." },
-      { status: 503 },
-    );
-  }
-  return null;
-}
-
 export async function GET(req: Request): Promise<Response> {
-  const denied = guard(req);
-  if (denied) return denied;
+  const auth = guardAdmin(req, "draft");
+  if (!auth.ok) return auth.response;
 
   const sp = new URL(req.url).searchParams;
   try {
-    const candidates = await listVideoCandidates({
+    let candidates = await listVideoCandidates({
       status: sp.get("status") ?? undefined,
       platform: sp.get("platform") ?? undefined,
       restaurantSlug: sp.get("restaurantSlug") ?? undefined,
     });
-    return Response.json({ candidates });
+    const byRestaurant = sp.get("candidateRestaurantId");
+    if (byRestaurant) candidates = candidates.filter((c) => c.candidateRestaurantId === byRestaurant);
+    const associations = await getAssociationSummaries(candidates);
+    return adminJson({
+      candidates: candidates.map((c) => ({
+        ...c,
+        association: associations[c.id] ?? null,
+        adminUrl: adminUrl(req, "/admin/videos/candidates", { candidate: c.id }),
+      })),
+      adminScope: auth.scope,
+    });
   } catch {
-    return Response.json({ error: "Failed to list candidates." }, { status: 500 });
+    return adminError(500, "list_failed", "Failed to list candidates.", { retryable: true });
   }
 }
 
 export async function POST(req: Request): Promise<Response> {
-  const denied = guard(req);
-  if (denied) return denied;
+  const auth = guardAdmin(req, "draft");
+  if (!auth.ok) return auth.response;
 
   let body: unknown;
   try {
     body = await req.json();
   } catch {
-    return Response.json({ error: "Invalid JSON body." }, { status: 400 });
+    return adminError(400, "invalid_json", "Invalid JSON body.");
   }
-  const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+  const parsed = validateVideoCandidateBody(body, "create");
+  if (!parsed.ok) return validationError(parsed.errors);
+  const w = parsed.value;
 
-  const sourceUrl = typeof b.sourceUrl === "string" ? b.sourceUrl.trim() : "";
-  if (!sourceUrl) {
-    return Response.json({ error: "A `sourceUrl` is required." }, { status: 400 });
+  const association = await resolveAssociation(
+    { candidateRestaurantId: w.candidateRestaurantId, restaurantSlug: w.restaurantSlug },
+    { candidateById: getCandidateRef, publishedBySlug: getPublishedRefBySlug },
+  );
+  if (!association.ok) {
+    return validationError([{ field: association.field, code: association.code, message: association.message }]);
   }
 
-  const result = await resolveSocialVideo(sourceUrl);
+  const result = await resolveSocialVideo(w.sourceUrl!);
   if (!result.ok) {
-    return Response.json({ error: result.error }, { status: 422 });
+    return adminError(422, "unsupported_url", result.error, { field: "sourceUrl" });
   }
   const r = result.resolved;
 
@@ -86,31 +87,35 @@ export async function POST(req: Request): Promise<Response> {
       sourceUrl: r.sourceUrl,
       normalizedSourceUrl: r.normalizedSourceUrl,
       platformVideoId: r.platformVideoId,
-      creatorHandle: r.creatorHandle,
-      creatorName: r.creatorName,
-      caption: r.caption,
+      // Values the caller verified win over the resolver, which no longer returns a creator for TikTok.
+      creatorHandle: w.creatorHandle ?? r.creatorHandle,
+      creatorName: w.creatorName ?? r.creatorName,
+      caption: w.caption ?? r.caption,
       thumbnailUrl: r.thumbnailUrl,
       embedUrl: r.embedUrl,
-      attributionText: r.attributionText,
+      attributionText: w.attributionText ?? r.attributionText,
       publishedAt: r.publishedAt,
       sourceFetchedAt: r.sourceFetchedAt,
       legalDisplayStatus: r.legalDisplayStatus,
       resolverStatus: r.resolverStatus,
       resolverError: r.resolverError,
-      // Review-routing fields from the request body.
-      restaurantSlug: typeof b.restaurantSlug === "string" ? b.restaurantSlug : null,
-      candidateRestaurantId: typeof b.candidateRestaurantId === "string" ? b.candidateRestaurantId : null,
-      proposedRestaurantName: typeof b.proposedRestaurantName === "string" ? b.proposedRestaurantName : null,
-      reviewNotes: typeof b.reviewNotes === "string" ? b.reviewNotes : null,
+      restaurantSlug: association.restaurantSlug,
+      candidateRestaurantId: association.candidateRestaurantId,
+      proposedRestaurantName: w.proposedRestaurantName ?? null,
+      reviewNotes: w.reviewNotes ?? null,
     });
+    const link = adminUrl(req, "/admin/videos/candidates", { candidate: candidate.id });
     if (duplicate) {
-      return Response.json(
-        { error: "A candidate for this video already exists.", candidate },
-        { status: 409 },
-      );
+      return adminError(409, "duplicate_video", "A candidate for this video already exists.", {
+        candidate, existing: { id: candidate.id, status: candidate.status, adminUrl: link },
+      });
     }
-    return Response.json({ candidate }, { status: 201 });
+    const summaries = await getAssociationSummaries([candidate]);
+    const warnings = association.kind === "none"
+      ? [{ code: "no_restaurant_linked", message: "The video is not linked to a restaurant yet." }]
+      : [];
+    return adminJson({ candidate, id: candidate.id, adminUrl: link, association: summaries[candidate.id] ?? null, warnings }, 201);
   } catch {
-    return Response.json({ error: "Failed to create candidate." }, { status: 500 });
+    return adminError(500, "create_failed", "Failed to create candidate. Check the queue for it before retrying.", { retryable: false });
   }
 }

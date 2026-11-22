@@ -1,5 +1,4 @@
-import { hasValidAdminSecret, isAdminConfigured } from "@/lib/adminAuth";
-import { isDbConfigured } from "@/lib/db/candidates";
+import { guardAdmin } from "@/lib/adminGuard";
 import { listPublishedRestaurantsForAdmin } from "@/lib/db/restaurants";
 
 /*
@@ -10,21 +9,8 @@ import { listPublishedRestaurantsForAdmin } from "@/lib/db/restaurants";
   mirror the other admin routes: 503 no secret · 401 bad secret · 503 no DB.
 */
 export async function GET(req: Request): Promise<Response> {
-  if (!isAdminConfigured()) {
-    return Response.json(
-      { error: "Admin API is disabled (FOODSWIPE_ADMIN_SECRET not set)." },
-      { status: 503 },
-    );
-  }
-  if (!hasValidAdminSecret(req)) {
-    return Response.json({ error: "Unauthorized." }, { status: 401 });
-  }
-  if (!isDbConfigured()) {
-    return Response.json(
-      { error: "Database not configured (DATABASE_URL not set)." },
-      { status: 503 },
-    );
-  }
+  const auth = guardAdmin(req, "draft");
+  if (!auth.ok) return auth.response;
 
   try {
     const restaurants = await listPublishedRestaurantsForAdmin();

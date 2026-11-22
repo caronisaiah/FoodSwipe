@@ -8,6 +8,7 @@ import { filterCuisines, filterDietary, filterVibes } from "@/lib/vocab";
 import { getMarketOrigin, normalizeMarket, type Market } from "@/lib/markets";
 import { missingPromotionRequiredFields, type PromotionConflict } from "@/lib/candidateReadiness";
 import { cleanPublicReasonText, publicReasonTextOrFallback } from "@/lib/publicReasonText";
+import { validateLatLng } from "@/lib/adminValidation";
 import type { Cuisine, Dietary, PriceLevel, Restaurant, Vibe, Video } from "@/lib/types";
 
 export { isDbConfigured };
@@ -232,7 +233,7 @@ export type PromoteResult =
   | { ok: false; code: "no-db" }
   | { ok: false; code: "not-found" }
   | { ok: false; code: "not-approved"; status: string }
-  | { ok: false; code: "incomplete"; missingFields: string[] }
+  | { ok: false; code: "incomplete"; missingFields: string[]; invalidCoordinates?: { field: string; code: string; message: string }[] }
   | { ok: false; code: "already-promoted"; restaurant: PublishedRestaurantAdmin; heroSelectionWarning?: string }
   | { ok: false; code: "place-already-published"; restaurant: PublishedRestaurantAdmin }
   | { ok: false; code: "error" };
@@ -306,7 +307,10 @@ export async function promoteCandidateToRestaurant(candidateId: string): Promise
   }
 
   const missingFields = missingPromotionRequiredFields(candidate);
-  if (missingFields.length > 0) return { ok: false, code: "incomplete", missingFields };
+  if (missingFields.length > 0) {
+    const ll = typeof candidate.lat === "number" && typeof candidate.lng === "number" ? validateLatLng(candidate.lat, candidate.lng) : null;
+    return { ok: false, code: "incomplete", missingFields, invalidCoordinates: ll && !ll.ok ? ll.errors : undefined };
+  }
 
   // Dedupe: one published restaurant per candidate, and per Google Place ID.
   const existingBySource = await db
