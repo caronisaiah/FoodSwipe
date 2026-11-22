@@ -27,9 +27,35 @@ export const MIN_DRAFT_SECRET_LENGTH = 16;
 
 export type AdminScope = "draft" | "publish";
 
+/**
+ * Who an authenticated request is, for the audit log. A NON-SECRET label for the credential that
+ * matched, never the credential itself and never derived from the request body or headers other than
+ * by which secret matched. Two shared secrets exist, so at most two actors are distinguishable;
+ * everything done with the same secret is attributed to the same identity. `assurance` says so
+ * explicitly: this names a credential, not a verified person.
+ */
+export interface AdminActor {
+  identity: string;
+  scope: AdminScope;
+  assurance: "shared-credential";
+}
+
 export type AdminAuthResult =
-  | { ok: true; scope: AdminScope }
+  | { ok: true; scope: AdminScope; actor: AdminActor }
   | { ok: false; reason: "not-configured" | "unauthorized" };
+
+const LABEL_PATTERN = /^[a-z0-9][a-z0-9._-]{0,39}$/i;
+
+/**
+ * Optional operator-chosen, NON-SECRET label for a credential (`FOODSWIPE_ADMIN_PUBLISH_LABEL`,
+ * `FOODSWIPE_ADMIN_DRAFT_LABEL`), e.g. "caron" or "ingest-agent". Invalid values are ignored so a typo
+ * cannot put arbitrary text into the audit log. Default: "<scope>-credential".
+ */
+export function actorFor(scope: AdminScope): AdminActor {
+  const raw = (scope === "publish" ? process.env.FOODSWIPE_ADMIN_PUBLISH_LABEL : process.env.FOODSWIPE_ADMIN_DRAFT_LABEL)?.trim();
+  const identity = raw && LABEL_PATTERN.test(raw) ? raw : `${scope}-credential`;
+  return { identity, scope, assurance: "shared-credential" };
+}
 
 /** Admin routes are enabled only when the publish secret exists (draft access never enables them alone). */
 export function isAdminConfigured(): boolean {
@@ -63,8 +89,8 @@ export function authenticateAdmin(req: Request): AdminAuthResult {
   const isPublish = secretsMatch(provided, publish);
   const isDraft = draft ? secretsMatch(provided, draft) : false;
   if (provided.length === 0) return { ok: false, reason: "unauthorized" };
-  if (isPublish) return { ok: true, scope: "publish" };
-  if (isDraft) return { ok: true, scope: "draft" };
+  if (isPublish) return { ok: true, scope: "publish", actor: actorFor("publish") };
+  if (isDraft) return { ok: true, scope: "draft", actor: actorFor("draft") };
   return { ok: false, reason: "unauthorized" };
 }
 
