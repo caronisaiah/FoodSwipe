@@ -66,7 +66,14 @@ export type Cuisine =
   | "laotian"
   | "seafood"
   | "pizza"
-  | "bagels";
+  | "bagels"
+  // Phase 16 (Asian catalogue): specific cuisines the vocabulary lacked. "dim sum" is a food
+  // category like "ramen", "sushi" or "kebab" already are, so it sits in the same list instead of
+  // introducing a second taxonomy dimension.
+  | "chinese"
+  | "thai"
+  | "vietnamese"
+  | "dim sum";
 
 /** Controlled vocab for vibe / occasion tags. */
 export type Vibe =
