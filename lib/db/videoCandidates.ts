@@ -3,6 +3,8 @@ import type { LegalDisplayStatus, MatchConfidence, Platform, Video } from "@/lib
 import { LEGAL_STATUSES, normalizeVideo } from "@/lib/video";
 import { resolveAttachTarget } from "@/lib/videoAssociation";
 import { getDb, isDbConfigured } from "./index";
+import { VIDEO_RESTAURANT_RELATED, auditSql, auditedInsert, auditedUpdate, executeRows } from "./audit";
+import { AUDIT_FIELDS, type ActionRuleSet, type AuditContext } from "@/lib/adminAudit";
 import { getPublishedRefBySlug, getPublishedRefBySourceCandidate } from "./identity";
 import { candidateRestaurants, restaurants, restaurantVideos, videoCandidates, type VideoCandidateRow, type NewVideoCandidateRow } from "./schema";
 
@@ -152,9 +154,9 @@ function toDate(v: string | null | undefined): Date | null {
  */
 export async function createVideoCandidate(
   input: CreateVideoCandidateInput,
+  ctx: AuditContext,
 ): Promise<{ candidate: VideoCandidate; duplicate: boolean }> {
-  const db = getDb();
-  if (!db) throw new Error("DATABASE_URL not configured");
+  if (!getDb()) throw new Error("DATABASE_URL not configured");
 
   const existing = await findExisting(input.normalizedSourceUrl, input.platform, input.platformVideoId ?? null);
   if (existing) return { candidate: existing, duplicate: true };
@@ -196,13 +198,20 @@ export async function createVideoCandidate(
   };
 
   try {
-    const [row] = await db.insert(videoCandidates).values(values).returning();
+    // One statement: the candidate row and its `video_candidate.created` event commit together. If the event
+    // cannot be written the row is not created and this throws (it is NOT reported as a duplicate).
+    const { row } = await auditedInsert({
+      table: videoCandidates,
+      values,
+      audit: { ctx, resourceType: "video_candidate", fields: AUDIT_FIELDS.video_candidate, action: "video_candidate.created", related: { type: "restaurant_candidate", id: sql`cur.candidate_restaurant_id` } },
+    });
     return { candidate: rowToCandidate(row), duplicate: false };
-  } catch {
+  } catch (error) {
     // Lost a race on a unique index — return the existing candidate.
     const again = await findExisting(input.normalizedSourceUrl, input.platform, input.platformVideoId ?? null);
     if (again) return { candidate: again, duplicate: true };
-    throw new Error("Failed to create video candidate.");
+    // Anything else (including an audit event that could not be written) means NOTHING was created.
+    throw new Error("Failed to create video candidate.", { cause: error });
   }
 }
 
@@ -316,6 +325,12 @@ export async function getVideoCandidate(id: string): Promise<VideoCandidate | nu
   return rows[0] ? rowToCandidate(rows[0]) : null;
 }
 
+const VIDEO_CANDIDATE_ACTION_RULES: ActionRuleSet = [
+  { field: "status", to: "approved", action: "video_candidate.approved" },
+  { field: "status", to: "rejected", action: "video_candidate.rejected" },
+  { field: "status", action: "video_candidate.status_changed" },
+];
+
 /** Validated edit of a video candidate (see app/api/admin/videos/candidates/[id]). */
 export interface VideoCandidatePatch {
   status?: "needs_review" | "approved" | "rejected";
@@ -336,11 +351,10 @@ export interface VideoCandidatePatch {
  * identity (sourceUrl/normalizedSourceUrl/platform/platformVideoId/resolver*) is not part of the type.
  * Attached candidates are locked to their recorded target.
  */
-export async function patchVideoCandidate(id: string, patch: VideoCandidatePatch): Promise<
+export async function patchVideoCandidate(id: string, patch: VideoCandidatePatch, ctx: AuditContext): Promise<
   { ok: true; candidate: VideoCandidate } | { ok: false; code: "not-found" | "attached" }
 > {
-  const db = getDb();
-  if (!db) throw new Error("DATABASE_URL not configured");
+  if (!getDb()) throw new Error("DATABASE_URL not configured");
   const set: Partial<NewVideoCandidateRow> = { updatedAt: new Date() };
   // "attached" is reserved for the attach flow (which also writes restaurant_videos + attachedVideoId).
   if (patch.status !== undefined) set.status = patch.status;
@@ -355,12 +369,20 @@ export async function patchVideoCandidate(id: string, patch: VideoCandidatePatch
   if (patch.matchReasons !== undefined) set.matchReasons = patch.matchReasons;
   if (patch.reviewNotes !== undefined) set.reviewNotes = patch.reviewNotes;
 
-  const [row] = await db.update(videoCandidates).set(set).where(and(
-    eq(videoCandidates.id, id),
-    ne(videoCandidates.status, "attached"),
-    isNull(videoCandidates.attachedVideoId),
-  )).returning();
-  if (row) return { ok: true, candidate: rowToCandidate(row) };
+  const updated = await auditedUpdate({
+    table: videoCandidates,
+    where: and(
+      eq(videoCandidates.id, id),
+      ne(videoCandidates.status, "attached"),
+      isNull(videoCandidates.attachedVideoId),
+    )!,
+    set,
+    audit: {
+      ctx, resourceType: "video_candidate", fields: AUDIT_FIELDS.video_candidate, action: "video_candidate.updated",
+      rules: VIDEO_CANDIDATE_ACTION_RULES, related: { type: "restaurant_candidate", id: sql`cur.candidate_restaurant_id` },
+    },
+  });
+  if (updated) return { ok: true, candidate: rowToCandidate(updated.row) };
   return { ok: false, code: (await getVideoCandidate(id)) ? "attached" : "not-found" };
 }
 
@@ -414,9 +436,8 @@ function checkAttachmentState(candidate: VideoCandidate): AttachResult | null {
  * `expectedRestaurantSlug` is the slug the human confirmed on screen; it must equal the resolved target.
  * A retry for an already attached candidate returns the recorded video.
  */
-export async function attachVideoCandidate(id: string, expectedRestaurantSlug?: string): Promise<AttachResult> {
-  const db = getDb();
-  if (!db) return { ok: false, code: "no-db" };
+export async function attachVideoCandidate(id: string, expectedRestaurantSlug: string | undefined, ctx: AuditContext): Promise<AttachResult> {
+  if (!getDb()) return { ok: false, code: "no-db" };
 
   const candidate = await getVideoCandidate(id);
   if (!candidate) return { ok: false, code: "not-found" };
@@ -457,13 +478,14 @@ export async function attachVideoCandidate(id: string, expectedRestaurantSlug?: 
   });
   if (!video) return { ok: false, code: "invalid-video" };
 
-  // Neon HTTP runs this as ONE atomic statement. The target is locked (FOR SHARE) and re-checked inside
+  // Neon HTTP runs this as ONE atomic statement, which now also writes the `restaurant_video.attached` event
+  // (so the live video, the candidate's attached status and the event commit together or not at all). The target is locked (FOR SHARE) and re-checked inside
   // the statement: the restaurant must still be published at that slug, and an id-linked candidate must
   // still point at the restaurant it was published from. If any condition no longer holds, nothing is
   // written and the caller gets target-changed.
   const updatedAt = new Date();
   const linkedCandidateId = candidate.candidateRestaurantId;
-  const { rows } = await db.execute<{ id: string }>(sql`
+  const rows = await executeRows(sql`
     with target as (
       select slug, source_candidate_id from ${restaurants}
       where slug = ${target.slug} and status = 'published'
@@ -478,7 +500,7 @@ export async function attachVideoCandidate(id: string, expectedRestaurantSlug?: 
         and (candidate_restaurant_id is null or candidate_restaurant_id = (select source_candidate_id from target))
         and (restaurant_slug is null or restaurant_slug = (select slug from target))
       returning restaurant_slug
-    )
+    ), cur as (
     insert into ${restaurantVideos} (
       id, restaurant_id, platform, source_url, embed_url, creator_handle,
       creator_display_name, caption, thumbnail_url, attribution_text,
@@ -491,7 +513,12 @@ export async function attachVideoCandidate(id: string, expectedRestaurantSlug?: 
       ${video.publishedAt ?? null}, ${video.discoveredAt ?? null}, ${video.isRealSource},
       ${video.sourceType}, ${video.matchConfidence}, ${video.legalDisplayStatus}
     from claimed
-    returning id
+    returning *
+    ), ev as (${auditSql.eventInsert({
+      ctx, resourceType: "restaurant_video", fields: AUDIT_FIELDS.restaurant_video, action: "restaurant_video.attached",
+      related: VIDEO_RESTAURANT_RELATED, details: { videoCandidateId: id, restaurantSlug: target.slug },
+    }, "none", false)})
+    select id from cur
   `);
   if (rows.length > 0) {
     return {

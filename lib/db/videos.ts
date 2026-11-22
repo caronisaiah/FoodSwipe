@@ -1,7 +1,9 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, ne } from "drizzle-orm";
+import { AUDIT_FIELDS, type AuditContext } from "@/lib/adminAudit";
 import type { Video } from "@/lib/types";
 import { normalizeVideo } from "@/lib/video";
 import { getDb, isDbConfigured } from "./index";
+import { VIDEO_RESTAURANT_RELATED, auditedInsert, auditedUpdate } from "./audit";
 import { restaurantVideos, type RestaurantVideoRow } from "./schema";
 
 export { isDbConfigured };
@@ -66,48 +68,62 @@ export async function getRealVideoCounts(slugs: string[]): Promise<Map<string, n
   return counts;
 }
 
+const VIDEO_RELATED = VIDEO_RESTAURANT_RELATED;
+
 /**
  * Insert an already-normalized Video for a restaurant. A fresh row id is
  * generated so the same source video can be attached more than once (or to
  * multiple restaurants) without a primary-key collision.
+ * Used only for code-managed seed restaurants (no candidate lifecycle); the row and its
+ * `restaurant_video.added_direct` event commit together.
  */
 export async function insertVideo(
   restaurantId: string,
   video: Video,
+  ctx: AuditContext,
 ): Promise<Video> {
-  const db = getDb();
-  if (!db) throw new Error("DATABASE_URL not configured");
+  if (!getDb()) throw new Error("DATABASE_URL not configured");
   const id = crypto.randomUUID();
-  await db.insert(restaurantVideos).values({
-    id,
-    restaurantId,
-    platform: video.platform,
-    sourceUrl: video.sourceUrl ?? null,
-    embedUrl: video.embedUrl ?? null,
-    creatorHandle: video.creatorHandle,
-    creatorDisplayName: video.creatorDisplayName ?? null,
-    caption: video.caption,
-    thumbnailUrl: video.thumbnailUrl ?? null,
-    attributionText: video.attributionText,
-    publishedAt: video.publishedAt ?? null,
-    discoveredAt: video.discoveredAt ?? null,
-    isRealSource: video.isRealSource,
-    sourceType: video.sourceType,
-    matchConfidence: video.matchConfidence,
-    legalDisplayStatus: video.legalDisplayStatus,
-    status: "active",
+  await auditedInsert({
+    table: restaurantVideos,
+    audit: {
+      ctx, resourceType: "restaurant_video", fields: AUDIT_FIELDS.restaurant_video,
+      action: "restaurant_video.added_direct", related: VIDEO_RELATED,
+    },
+    values: {
+      id,
+      restaurantId,
+      platform: video.platform,
+      sourceUrl: video.sourceUrl ?? null,
+      embedUrl: video.embedUrl ?? null,
+      creatorHandle: video.creatorHandle,
+      creatorDisplayName: video.creatorDisplayName ?? null,
+      caption: video.caption,
+      thumbnailUrl: video.thumbnailUrl ?? null,
+      attributionText: video.attributionText,
+      publishedAt: video.publishedAt ?? null,
+      discoveredAt: video.discoveredAt ?? null,
+      isRealSource: video.isRealSource,
+      sourceType: video.sourceType,
+      matchConfidence: video.matchConfidence,
+      legalDisplayStatus: video.legalDisplayStatus,
+      status: "active",
+    },
   });
   return { ...video, id };
 }
 
-/** Soft-delete: mark a video hidden. Returns false if no row matched. */
-export async function hideVideo(id: string): Promise<boolean> {
+/** Soft-delete: mark a video hidden. Idempotent; returns false if no row matched. Writes one event on change. */
+export async function hideVideo(id: string, ctx: AuditContext): Promise<boolean> {
   const db = getDb();
   if (!db) throw new Error("DATABASE_URL not configured");
-  const updated = await db
-    .update(restaurantVideos)
-    .set({ status: "hidden", updatedAt: new Date() })
-    .where(eq(restaurantVideos.id, id))
-    .returning({ id: restaurantVideos.id });
-  return updated.length > 0;
+  const result = await auditedUpdate({
+    table: restaurantVideos,
+    where: and(eq(restaurantVideos.id, id), ne(restaurantVideos.status, "hidden"))!,
+    set: { status: "hidden", updatedAt: new Date() },
+    audit: { ctx, resourceType: "restaurant_video", fields: AUDIT_FIELDS.restaurant_video, action: "restaurant_video.hidden", related: VIDEO_RELATED },
+  });
+  if (result) return true;
+  const [existing] = await db.select({ id: restaurantVideos.id }).from(restaurantVideos).where(eq(restaurantVideos.id, id)).limit(1);
+  return Boolean(existing);
 }

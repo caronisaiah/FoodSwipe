@@ -1,4 +1,5 @@
-import { authenticateAdmin, type AdminScope } from "@/lib/adminAuth";
+import { authenticateAdmin, type AdminActor, type AdminScope } from "@/lib/adminAuth";
+import { newRequestId, type AuditContext } from "@/lib/adminAudit";
 import { adminError } from "@/lib/adminApi";
 import { isDbConfigured } from "@/lib/db";
 
@@ -11,7 +12,7 @@ import { isDbConfigured } from "@/lib/db";
  * "draft". A credential that fails authentication is never retried against another scope.
  */
 export type GuardResult =
-  | { ok: true; scope: AdminScope }
+  | { ok: true; scope: AdminScope; actor: AdminActor; requestId: string }
   | { ok: false; response: Response };
 
 export function guardAdmin(
@@ -46,5 +47,16 @@ export function guardAdmin(
       response: adminError(503, "database_unavailable", "Database not configured (DATABASE_URL not set)."),
     };
   }
-  return { ok: true, scope: auth.scope };
+  return { ok: true, scope: auth.scope, actor: auth.actor, requestId: newRequestId(req) };
+}
+
+/**
+ * The audit context for the mutations of this request. Every audited db function REQUIRES one, so a
+ * mutation cannot be written without saying who did it. `reason` is the optional human-supplied note.
+ */
+export function auditContext(
+  auth: Extract<GuardResult, { ok: true }>,
+  extra: { reason?: string | null; details?: Record<string, unknown> } = {},
+): AuditContext {
+  return { actor: auth.actor, requestId: auth.requestId, reason: extra.reason ?? null, details: extra.details };
 }

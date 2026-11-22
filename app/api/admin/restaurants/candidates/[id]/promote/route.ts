@@ -1,5 +1,5 @@
 import { adminError, adminJson, adminUrl } from "@/lib/adminApi";
-import { guardAdmin } from "@/lib/adminGuard";
+import { auditContext, guardAdmin } from "@/lib/adminGuard";
 import { promoteCandidateToRestaurant } from "@/lib/db/restaurants";
 
 /*
@@ -28,7 +28,7 @@ export async function POST(
   const { id } = await params;
   let result;
   try {
-    result = await promoteCandidateToRestaurant(id);
+    result = await promoteCandidateToRestaurant(id, auditContext(auth));
   } catch {
     return adminError(500, "promote_failed", "Failed to promote candidate.", { retryable: true });
   }

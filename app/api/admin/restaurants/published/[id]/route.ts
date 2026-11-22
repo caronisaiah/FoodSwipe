@@ -1,5 +1,6 @@
 import { adminError, adminJson, adminUrl, validationError } from "@/lib/adminApi";
-import { guardAdmin } from "@/lib/adminGuard";
+import { auditContext, guardAdmin } from "@/lib/adminGuard";
+import { splitAuditReason } from "@/lib/adminAudit";
 import { validatePublishedPatch } from "@/lib/adminValidation";
 import { updatePublishedRestaurant } from "@/lib/db/restaurants";
 
@@ -28,12 +29,15 @@ export async function PATCH(
   } catch {
     return adminError(400, "invalid_json", "Invalid JSON body.");
   }
-  const parsed = validatePublishedPatch(body);
+  const split = splitAuditReason(body);
+  if (!split.ok) return validationError([{ field: "auditReason", code: "invalid_reason", message: split.message }]);
+  const audit = auditContext(auth, { reason: split.reason });
+  const parsed = validatePublishedPatch(split.body);
   if (!parsed.ok) return validationError(parsed.errors);
 
   const { id } = await params;
   try {
-    const restaurant = await updatePublishedRestaurant(id, parsed.value);
+    const restaurant = await updatePublishedRestaurant(id, parsed.value, audit);
     if (!restaurant) return adminError(404, "not_found", "Published restaurant not found.");
     return adminJson({ restaurant, id: restaurant.id, adminUrl: adminUrl(req, "/admin/restaurants/published"), warnings: parsed.warnings });
   } catch {

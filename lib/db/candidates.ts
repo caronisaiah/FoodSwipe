@@ -1,7 +1,9 @@
 import { desc, eq } from "drizzle-orm";
+import { AUDIT_FIELDS, type ActionRuleSet, type AuditContext } from "@/lib/adminAudit";
 import { isAllowedMarket, normalizeMarket, type Market } from "@/lib/markets";
 import type { CandidateWrite } from "@/lib/adminValidation";
 import { getDb, isDbConfigured } from "./index";
+import { auditedInsert, auditedUpdate } from "./audit";
 import {
   candidateRestaurants,
   ingestionJobs,
@@ -268,17 +270,22 @@ function requireMarket(value: unknown): Market {
 
 export async function insertCandidateRestaurant(
   input: unknown,
+  ctx: AuditContext,
 ): Promise<CandidateRestaurant | null> {
-  const db = getDb();
-  if (!db) throw new Error("DATABASE_URL not configured");
+  if (!getDb()) throw new Error("DATABASE_URL not configured");
   const b = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
 
   const name = optStr(b.name);
   if (!name) return null;
 
-  const [row] = await db
-    .insert(candidateRestaurants)
-    .values({
+  // One statement: the candidate row and its `restaurant_candidate.created` event commit together.
+  const { row } = await auditedInsert({
+    table: candidateRestaurants,
+    audit: {
+      ctx, resourceType: "restaurant_candidate", fields: AUDIT_FIELDS.restaurant_candidate,
+      action: "restaurant_candidate.created",
+    },
+    values: {
       id: crypto.randomUUID(),
       slug: optStr(b.slug) ?? slugify(name),
       name,
@@ -310,18 +317,30 @@ export async function insertCandidateRestaurant(
       suggestionConfidence: optConfidence(b.suggestionConfidence),
       suggestionReasons: strArray(b.suggestionReasons),
       suggestedTags: optSnapshot(b.suggestedTags),
-    })
-    .returning();
+    },
+  });
   return rowToCandidate(row);
 }
+
+/**
+ * Which taxonomy action describes an edit, decided inside the audit statement from the real diff:
+ * approving or rejecting wins over a market change, which wins over a plain status move, which wins
+ * over an ordinary field edit. One event per request, carrying every changed field.
+ */
+const CANDIDATE_ACTION_RULES: ActionRuleSet = [
+  { field: "status", to: "approved", action: "restaurant_candidate.approved" },
+  { field: "status", to: "rejected", action: "restaurant_candidate.rejected" },
+  { field: "market", action: "restaurant_candidate.market_changed" },
+  { field: "status", action: "restaurant_candidate.status_changed" },
+];
 
 /** Apply a VALIDATED patch (see lib/adminValidation). Returns null if no row matched. */
 export async function updateCandidateRestaurant(
   id: string,
   write: CandidateWrite,
+  ctx: AuditContext,
 ): Promise<CandidateRestaurant | null> {
-  const db = getDb();
-  if (!db) throw new Error("DATABASE_URL not configured");
+  if (!getDb()) throw new Error("DATABASE_URL not configured");
   // `write` has already been validated by validateCandidateBody; only known keys are copied.
   const set: Partial<NewCandidateRestaurantRow> = { updatedAt: new Date() };
   const keys = [
@@ -332,33 +351,35 @@ export async function updateCandidateRestaurant(
   for (const key of keys) {
     if (key in write && write[key] !== undefined) (set as Record<string, unknown>)[key] = write[key];
   }
-  const [row] = await db
-    .update(candidateRestaurants)
-    .set(set)
-    .where(eq(candidateRestaurants.id, id))
-    .returning();
-  return row ? rowToCandidate(row) : null;
+  const result = await auditedUpdate({
+    table: candidateRestaurants,
+    where: eq(candidateRestaurants.id, id),
+    set,
+    audit: { ctx, resourceType: "restaurant_candidate", fields: AUDIT_FIELDS.restaurant_candidate, action: "restaurant_candidate.updated", rules: CANDIDATE_ACTION_RULES },
+  });
+  return result ? rowToCandidate(result.row) : null;
 }
 
 /** Convenience review action: set a candidate's status (+ optional notes). */
 export async function markCandidateRestaurantStatus(
   id: string,
   status: CandidateStatus,
-  notes?: string,
+  notes: string | undefined,
+  ctx: AuditContext,
 ): Promise<CandidateRestaurant | null> {
-  const db = getDb();
-  if (!db) throw new Error("DATABASE_URL not configured");
+  if (!getDb()) throw new Error("DATABASE_URL not configured");
   const set: Partial<NewCandidateRestaurantRow> = {
     status: inSet(CANDIDATE_STATUSES, status) ? status : "needs_review",
     updatedAt: new Date(),
   };
   if (notes !== undefined) set.reviewNotes = optStr(notes);
-  const [row] = await db
-    .update(candidateRestaurants)
-    .set(set)
-    .where(eq(candidateRestaurants.id, id))
-    .returning();
-  return row ? rowToCandidate(row) : null;
+  const result = await auditedUpdate({
+    table: candidateRestaurants,
+    where: eq(candidateRestaurants.id, id),
+    set,
+    audit: { ctx, resourceType: "restaurant_candidate", fields: AUDIT_FIELDS.restaurant_candidate, action: "restaurant_candidate.updated", rules: CANDIDATE_ACTION_RULES },
+  });
+  return result ? rowToCandidate(result.row) : null;
 }
 
 /**

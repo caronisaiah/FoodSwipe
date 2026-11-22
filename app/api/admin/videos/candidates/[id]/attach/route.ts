@@ -1,5 +1,5 @@
 import { adminError, adminJson, adminUrl } from "@/lib/adminApi";
-import { guardAdmin } from "@/lib/adminGuard";
+import { auditContext, guardAdmin } from "@/lib/adminGuard";
 import { attachVideoCandidate } from "@/lib/db/videoCandidates";
 
 /*
@@ -42,7 +42,7 @@ export async function POST(
   const { id } = await params;
   let result;
   try {
-    result = await attachVideoCandidate(id, expectedRestaurantSlug);
+    result = await attachVideoCandidate(id, expectedRestaurantSlug, auditContext(auth));
   } catch {
     return adminError(500, "attach_failed", "Could not confirm attachment. Refresh the queue and retry if it is still approved.", { retryable: true });
   }

@@ -1,5 +1,6 @@
 import { adminError, adminJson, adminUrl, validationError } from "@/lib/adminApi";
-import { guardAdmin } from "@/lib/adminGuard";
+import { auditContext, guardAdmin } from "@/lib/adminGuard";
+import { splitAuditReason } from "@/lib/adminAudit";
 import { DRAFT_VIDEO_STATUSES, validateVideoCandidateBody } from "@/lib/adminVideoValidation";
 import { getCandidateRef, getPublishedRefBySlug } from "@/lib/db/identity";
 import { getAssociationSummaries, getVideoCandidate, patchVideoCandidate, type VideoCandidatePatch } from "@/lib/db/videoCandidates";
@@ -33,6 +34,10 @@ export async function PATCH(
   } catch {
     return adminError(400, "invalid_json", "Invalid JSON body.");
   }
+  const split = splitAuditReason(body);
+  if (!split.ok) return validationError([{ field: "auditReason", code: "invalid_reason", message: split.message }]);
+  body = split.body;
+  const audit = auditContext(auth, { reason: split.reason });
   const { id } = await params;
   try {
     const before = await getVideoCandidate(id);
@@ -69,7 +74,7 @@ export async function PATCH(
       patch.restaurantSlug = association.restaurantSlug;
     }
 
-    const result = await patchVideoCandidate(id, patch);
+    const result = await patchVideoCandidate(id, patch, audit);
     if (!result.ok) {
       return result.code === "attached"
         ? adminError(409, "attached_locked", "Review edits are locked for attached candidates.")

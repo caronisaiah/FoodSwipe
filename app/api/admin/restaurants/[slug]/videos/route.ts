@@ -1,5 +1,6 @@
 import { adminError, adminJson, adminUrl, validationError } from "@/lib/adminApi";
-import { guardAdmin } from "@/lib/adminGuard";
+import { auditContext, guardAdmin } from "@/lib/adminGuard";
+import { splitAuditReason } from "@/lib/adminAudit";
 import { validateVideoCandidateBody } from "@/lib/adminVideoValidation";
 import { getActiveVideos, insertVideo } from "@/lib/db/videos";
 import { getAppRestaurantById } from "@/lib/db/restaurants";
@@ -22,8 +23,10 @@ import type { Platform } from "@/lib/types";
   (409 duplicate_video with a link to that record). Code-managed seed restaurants (non-production
   content mode) have no candidate lifecycle and keep the direct insert.
 
-  What this cannot prove: that a human really reviewed the video. That needs an audit trail with an
-  actor, which is deliberately a separate follow-up. Today the control is the credential boundary.
+  Audit: create, approve and attach are three separately atomic, audited steps that share one request id
+  (details.via = "direct_add"). If a later step fails the earlier events remain, truthfully describing
+  what did happen. What this cannot prove: that a human really reviewed the video. The events name the
+  publication credential that did it, not a person; the credential boundary is the control.
 */
 const PLATFORM_MAP: Record<string, Platform> = {
   tiktok: "TikTok",
@@ -44,7 +47,11 @@ export async function POST(
   } catch {
     return adminError(400, "invalid_json", "Invalid JSON body.");
   }
-  const parsed = validateVideoCandidateBody(body, "create");
+  const split = splitAuditReason(body);
+  if (!split.ok) return validationError([{ field: "auditReason", code: "invalid_reason", message: split.message }]);
+  // One request = one correlation id: create, approve and attach below are three events under it.
+  const audit = auditContext(auth, { reason: split.reason, details: { via: "direct_add" } });
+  const parsed = validateVideoCandidateBody(split.body, "create");
   if (!parsed.ok) return validationError(parsed.errors);
   const w = parsed.value;
   if (w.candidateRestaurantId !== undefined || w.restaurantSlug !== undefined) {
@@ -88,16 +95,16 @@ export async function POST(
         candidateRestaurantId: published.sourceCandidateId,
         proposedRestaurantName: published.name,
         reviewNotes: w.reviewNotes ?? "Added from the profile editor with the publication credential.",
-      });
+      }, audit);
       const link = adminUrl(req, "/admin/videos/candidates", { candidate: candidate.id });
       if (duplicate) {
         return adminError(409, "duplicate_video", `That video is already in the review queue (${candidate.status}). Resolve it there instead of adding it again.`, {
           existing: { id: candidate.id, status: candidate.status, adminUrl: link },
         });
       }
-      const approved = await patchVideoCandidate(candidate.id, { status: "approved" });
+      const approved = await patchVideoCandidate(candidate.id, { status: "approved" }, audit);
       if (!approved.ok) return adminError(500, "add_failed", "Could not approve the new candidate; it stays in the review queue.", { existing: { id: candidate.id, adminUrl: link } });
-      const attached = await attachVideoCandidate(candidate.id, published.slug);
+      const attached = await attachVideoCandidate(candidate.id, published.slug, audit);
       if (!attached.ok) {
         return adminError(409, "attach_failed", `The video was queued but could not be attached (${attached.code}); it stays approved in the review queue.`, {
           existing: { id: candidate.id, status: "approved", adminUrl: link },
@@ -131,7 +138,7 @@ export async function POST(
       legalDisplayStatus: r.legalDisplayStatus,
     });
     if (!video) return adminError(422, "invalid_video", "Could not build a valid video from that URL.");
-    const saved = await insertVideo(restaurant.id, video);
+    const saved = await insertVideo(restaurant.id, video, audit);
     return adminJson({ video: saved }, 201);
   } catch {
     return adminError(500, "add_failed", "Failed to add video. Check the restaurant's videos and the review queue before retrying.", { retryable: false });

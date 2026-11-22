@@ -1,5 +1,6 @@
 import { adminError, adminJson, adminUrl, validationError } from "@/lib/adminApi";
-import { guardAdmin } from "@/lib/adminGuard";
+import { auditContext, guardAdmin } from "@/lib/adminGuard";
+import { splitAuditReason } from "@/lib/adminAudit";
 import { DRAFT_STATUSES, validateCandidateBody } from "@/lib/adminValidation";
 import { findPossibleDuplicates } from "@/lib/duplicateWarnings";
 import { getCandidateRestaurant, getExistingCandidateSlugs, updateCandidateRestaurant } from "@/lib/db/candidates";
@@ -30,6 +31,10 @@ export async function PATCH(
   } catch {
     return adminError(400, "invalid_json", "Invalid JSON body.");
   }
+  const split = splitAuditReason(body);
+  if (!split.ok) return validationError([{ field: "auditReason", code: "invalid_reason", message: split.message }]);
+  body = split.body;
+  const audit = auditContext(auth, { reason: split.reason });
 
   const { id } = await params;
   try {
@@ -91,7 +96,7 @@ export async function PATCH(
       warnings.push(...notes.map((n) => ({ code: n.code, severity: n.severity, message: n.message, existing: n.existing })));
     }
 
-    const candidate = await updateCandidateRestaurant(id, write);
+    const candidate = await updateCandidateRestaurant(id, write, audit);
     if (!candidate) return adminError(404, "not_found", "Candidate not found.");
     const changedFields = Object.keys(write).filter(
       (key) => JSON.stringify((before as unknown as Record<string, unknown>)[key]) !== JSON.stringify((candidate as unknown as Record<string, unknown>)[key]),

@@ -1,5 +1,6 @@
 import { adminError, adminJson, adminUrl, validationError } from "@/lib/adminApi";
-import { guardAdmin } from "@/lib/adminGuard";
+import { auditContext, guardAdmin } from "@/lib/adminGuard";
+import { splitAuditReason } from "@/lib/adminAudit";
 import { validateVideoCandidateBody } from "@/lib/adminVideoValidation";
 import { getCandidateRef, getPublishedRefBySlug } from "@/lib/db/identity";
 import {
@@ -63,7 +64,10 @@ export async function POST(req: Request): Promise<Response> {
   } catch {
     return adminError(400, "invalid_json", "Invalid JSON body.");
   }
-  const parsed = validateVideoCandidateBody(body, "create");
+  const split = splitAuditReason(body);
+  if (!split.ok) return validationError([{ field: "auditReason", code: "invalid_reason", message: split.message }]);
+  const audit = auditContext(auth, { reason: split.reason });
+  const parsed = validateVideoCandidateBody(split.body, "create");
   if (!parsed.ok) return validationError(parsed.errors);
   const w = parsed.value;
 
@@ -103,7 +107,7 @@ export async function POST(req: Request): Promise<Response> {
       candidateRestaurantId: association.candidateRestaurantId,
       proposedRestaurantName: w.proposedRestaurantName ?? null,
       reviewNotes: w.reviewNotes ?? null,
-    });
+    }, audit);
     const link = adminUrl(req, "/admin/videos/candidates", { candidate: candidate.id });
     if (duplicate) {
       return adminError(409, "duplicate_video", "A candidate for this video already exists.", {

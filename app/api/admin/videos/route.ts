@@ -1,6 +1,6 @@
 import { getRestaurantById } from "@/lib/seed/restaurants";
 import { normalizeVideo } from "@/lib/video";
-import { guardAdmin } from "@/lib/adminGuard";
+import { auditContext, guardAdmin } from "@/lib/adminGuard";
 import { insertVideo } from "@/lib/db/videos";
 
 /*
@@ -34,7 +34,7 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   try {
-    const saved = await insertVideo(restaurantId, video);
+    const saved = await insertVideo(restaurantId, video, auditContext(auth));
     return Response.json({ video: saved }, { status: 201 });
   } catch {
     return Response.json({ error: "Failed to save video." }, { status: 500 });

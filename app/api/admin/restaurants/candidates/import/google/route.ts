@@ -1,5 +1,5 @@
 import { adminError, adminJson, adminUrl, validationError } from "@/lib/adminApi";
-import { guardAdmin } from "@/lib/adminGuard";
+import { auditContext, guardAdmin } from "@/lib/adminGuard";
 import { validateMarket } from "@/lib/adminValidation";
 import { findPossibleDuplicates } from "@/lib/duplicateWarnings";
 import { listIdentityRecords } from "@/lib/db/identity";
@@ -211,6 +211,7 @@ export async function POST(req: Request): Promise<Response> {
 async function importRequest(req: Request): Promise<Response> {
   const auth = guardAdmin(req, "draft");
   if (!auth.ok) return auth.response;
+  const audit = auditContext(auth, { details: { via: "google_places_import" } });
   if (!process.env.GOOGLE_MAPS_API_KEY) {
     return adminError(503, "google_not_configured", "Google Places is not configured (GOOGLE_MAPS_API_KEY not set).");
   }
@@ -406,7 +407,7 @@ async function importRequest(req: Request): Promise<Response> {
       usedSlugs.add(slug);
       const input = toCandidateInput(r, query, slug, fetchedAt, expiresAt, likelihood, market);
 
-      const candidate = await insertCandidateRestaurant(input);
+      const candidate = await insertCandidateRestaurant(input, audit);
       if (!candidate) throw new Error("No candidate returned");
       created.push(candidate);
       imported++;

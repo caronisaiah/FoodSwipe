@@ -1,5 +1,6 @@
 import { adminError, adminJson, adminUrl, validationError } from "@/lib/adminApi";
-import { guardAdmin } from "@/lib/adminGuard";
+import { auditContext, guardAdmin } from "@/lib/adminGuard";
+import { splitAuditReason } from "@/lib/adminAudit";
 import { validateCandidateBody } from "@/lib/adminValidation";
 import { findPossibleDuplicates } from "@/lib/duplicateWarnings";
 import {
@@ -97,6 +98,10 @@ export async function POST(req: Request): Promise<Response> {
   } catch {
     return adminError(400, "invalid_json", "Invalid JSON body.");
   }
+  const split = splitAuditReason(body);
+  if (!split.ok) return validationError([{ field: "auditReason", code: "invalid_reason", message: split.message }]);
+  body = split.body;
+  const audit = auditContext(auth, { reason: split.reason });
 
   const parsed = validateCandidateBody(body, "create");
   if (!parsed.ok) return validationError(parsed.errors);
@@ -140,7 +145,7 @@ export async function POST(req: Request): Promise<Response> {
       slug,
       status: write.status ?? "needs_review",
       source: "manual",
-    });
+    }, audit);
     if (!candidate) return adminError(422, "invalid_candidate", "Invalid candidate data.");
     // Provenance, kept separate from curated fields (best-effort).
     await addRestaurantSource(candidate.id, {

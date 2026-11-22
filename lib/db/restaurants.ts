@@ -1,5 +1,7 @@
-import { and, desc, eq, inArray, or } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
+import { AUDIT_FIELDS, type ActionRuleSet, type AuditContext } from "@/lib/adminAudit";
 import { getDb, isDbConfigured } from "./index";
+import { auditedInsert, auditedUpdate } from "./audit";
 import { restaurants, type RestaurantRow } from "./schema";
 import { getCandidateRestaurant, slugify } from "./candidates";
 import { cloneCandidateHeroSelectionToRestaurant } from "./heroMediaSelections";
@@ -296,7 +298,7 @@ export async function getCandidatePromotionConflictMap(
  * sourceCandidateId AND googlePlaceId, copies only reviewed/curated fields, sets
  * neutral metrics, and never publishes videos or mutates Google photo data.
  */
-export async function promoteCandidateToRestaurant(candidateId: string): Promise<PromoteResult> {
+export async function promoteCandidateToRestaurant(candidateId: string, ctx: AuditContext): Promise<PromoteResult> {
   const db = getDb();
   if (!db) return { ok: false, code: "no-db" };
 
@@ -319,7 +321,7 @@ export async function promoteCandidateToRestaurant(candidateId: string): Promise
     .where(eq(restaurants.sourceCandidateId, candidate.id))
     .limit(1);
   if (existingBySource[0]) {
-    const clone = await cloneCandidateHeroSelectionToRestaurant(candidate.id, existingBySource[0].id);
+    const clone = await cloneCandidateHeroSelectionToRestaurant(candidate.id, existingBySource[0].id, ctx);
     return {
       ok: false,
       code: "already-promoted",
@@ -337,6 +339,8 @@ export async function promoteCandidateToRestaurant(candidateId: string): Promise
       return { ok: false, code: "place-already-published", restaurant: rowToAdmin(existingByPlace[0]) };
     }
   }
+
+  const audit: AuditContext = ctx;
 
   const now = new Date();
   const lat = candidate.lat as number;
@@ -383,11 +387,17 @@ export async function promoteCandidateToRestaurant(candidateId: string): Promise
   for (let attempt = 0; attempt < 2; attempt++) {
     const slug = await uniquePublishedSlug(candidate.slug ?? candidate.name);
     try {
-      const [row] = await db
-        .insert(restaurants)
-        .values({ id: crypto.randomUUID(), slug, ...baseValues })
-        .returning();
-      const clone = await cloneCandidateHeroSelectionToRestaurant(candidate.id, row.id);
+      // One statement: the published restaurant and its `restaurant.promoted` event (resource = the new
+      // restaurant id, related = the source candidate id) commit together or not at all.
+      const { row } = await auditedInsert({
+        table: restaurants,
+        values: { id: crypto.randomUUID(), slug, ...baseValues },
+        audit: {
+          ctx: audit, resourceType: "restaurant", fields: AUDIT_FIELDS.restaurant, action: "restaurant.promoted",
+          related: { type: "restaurant_candidate", id: sql`cur.source_candidate_id` },
+        },
+      });
+      const clone = await cloneCandidateHeroSelectionToRestaurant(candidate.id, row.id, audit);
       return {
         ok: true,
         restaurant: rowToAdmin(row),
@@ -400,7 +410,7 @@ export async function promoteCandidateToRestaurant(candidateId: string): Promise
         .where(eq(restaurants.sourceCandidateId, candidate.id))
         .limit(1);
       if (bySource[0]) {
-        const clone = await cloneCandidateHeroSelectionToRestaurant(candidate.id, bySource[0].id);
+        const clone = await cloneCandidateHeroSelectionToRestaurant(candidate.id, bySource[0].id, ctx);
         return {
           ok: false,
           code: "already-promoted",
@@ -424,17 +434,28 @@ export async function promoteCandidateToRestaurant(candidateId: string): Promise
   return { ok: false, code: "error" };
 }
 
-/** Set a published restaurant's status to "hidden" (kept, not served to feed). */
-export async function hidePublishedRestaurant(id: string): Promise<PublishedRestaurantAdmin | null> {
+/**
+ * Set a published restaurant's status to "hidden" (kept, not served to feed). Idempotent: hiding an
+ * already hidden restaurant returns it unchanged and writes no event.
+ */
+export async function hidePublishedRestaurant(id: string, ctx: AuditContext): Promise<PublishedRestaurantAdmin | null> {
   const db = getDb();
   if (!db) throw new Error("DATABASE_URL not configured");
-  const [row] = await db
-    .update(restaurants)
-    .set({ status: "hidden", updatedAt: new Date() })
-    .where(eq(restaurants.id, id))
-    .returning();
-  return row ? rowToAdmin(row) : null;
+  const result = await auditedUpdate({
+    table: restaurants,
+    where: and(eq(restaurants.id, id), ne(restaurants.status, "hidden"))!,
+    set: { status: "hidden", updatedAt: new Date() },
+    audit: { ctx, resourceType: "restaurant", fields: AUDIT_FIELDS.restaurant, action: "restaurant.hidden" },
+  });
+  if (result) return rowToAdmin(result.row);
+  const [existing] = await db.select().from(restaurants).where(eq(restaurants.id, id)).limit(1);
+  return existing ? rowToAdmin(existing) : null;
 }
+
+const RESTAURANT_ACTION_RULES: ActionRuleSet = [
+  { field: "status", to: "hidden", action: "restaurant.hidden" },
+  { field: "status", to: "published", action: "restaurant.restored" },
+];
 
 /**
  * Edit a published restaurant (admin). Only fields present in the body are
@@ -445,6 +466,7 @@ export async function hidePublishedRestaurant(id: string): Promise<PublishedRest
 export async function updatePublishedRestaurant(
   id: string,
   patch: unknown,
+  ctx: AuditContext,
 ): Promise<PublishedRestaurantAdmin | null> {
   const db = getDb();
   if (!db) throw new Error("DATABASE_URL not configured");
@@ -506,12 +528,13 @@ export async function updatePublishedRestaurant(
   }
   if ("status" in b && (b.status === "published" || b.status === "hidden")) set.status = b.status;
 
-  const [row] = await db
-    .update(restaurants)
-    .set(set)
-    .where(eq(restaurants.id, id))
-    .returning();
-  return row ? rowToAdmin(row) : null;
+  const result = await auditedUpdate({
+    table: restaurants,
+    where: eq(restaurants.id, id),
+    set,
+    audit: { ctx, resourceType: "restaurant", fields: AUDIT_FIELDS.restaurant, action: "restaurant.updated", rules: RESTAURANT_ACTION_RULES },
+  });
+  return result ? rowToAdmin(result.row) : null;
 }
 
 /** Resolve a restaurant by public id. Seeds remain opt-out so admin tools that

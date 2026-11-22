@@ -1,4 +1,5 @@
-import { guardAdmin } from "@/lib/adminGuard";
+import { auditContext, guardAdmin } from "@/lib/adminGuard";
+import { readOptionalReason } from "@/lib/adminAudit";
 import { hidePublishedRestaurant } from "@/lib/db/restaurants";
 
 /*
@@ -16,8 +17,10 @@ export async function POST(
   if (!auth.ok) return auth.response;
 
   const { id } = await params;
+  const reason = await readOptionalReason(req);
+  if (!reason.ok) return Response.json({ error: reason.message, code: "invalid_reason" }, { status: 400 });
   try {
-    const restaurant = await hidePublishedRestaurant(id);
+    const restaurant = await hidePublishedRestaurant(id, auditContext(auth, { reason: reason.reason }));
     if (!restaurant) {
       return Response.json({ error: "Published restaurant not found." }, { status: 404 });
     }

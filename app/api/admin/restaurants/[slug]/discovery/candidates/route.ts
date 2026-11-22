@@ -1,4 +1,4 @@
-import { guardAdmin } from "@/lib/adminGuard";
+import { auditContext, guardAdmin } from "@/lib/adminGuard";
 import { getAppRestaurantById } from "@/lib/db/restaurants";
 import { getPublishedRefBySlug } from "@/lib/db/identity";
 import { createVideoCandidate, isDbConfigured } from "@/lib/db/videoCandidates";
@@ -60,6 +60,7 @@ export async function POST(
 ): Promise<Response> {
   const auth = guardAdmin(req, "draft");
   if (!auth.ok) return auth.response;
+  const audit = auditContext(auth, { details: { via: "discovery_search" } });
   // This slice WRITES, so (unlike the dry-run search/query routes) it requires a DB.
   if (!isDbConfigured()) {
     return Response.json(
@@ -198,7 +199,7 @@ export async function POST(
         matchConfidence,
         matchReasons: [...matchReasons, provenance],
         reviewNotes: reviewNote,
-      });
+      }, audit);
       const item: CreatedItem = {
         id: candidate.id,
         sourceUrl: candidate.sourceUrl,
