@@ -180,7 +180,8 @@ export default function AdminVideos() {
     try {
       const res = await fetch("/api/resolve/youtube", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        // The resolver now requires an admin credential (it spends the YouTube API quota).
+        headers: { "Content-Type": "application/json", "x-foodswipe-admin-secret": adminSecret },
         // URL only: the resolver fills fields from official metadata (or a
         // generic fallback) and the admin edits them afterward. Sending the
         // current form would let a previous resolve's values leak into the next
