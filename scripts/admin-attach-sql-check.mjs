@@ -40,6 +40,7 @@ function harness({ row, published, claimRows = 1 }) {
   } });
   return { state, mod: sb.load("lib/db/videoCandidates.ts") };
 }
+const CTX = { actor: { identity: "ops-admin", scope: "publish", assurance: "shared-credential" }, requestId: "req-attach-test", reason: null };
 const dialect = new PgDialect();
 const pubs = [
   { id: "p0", slug: "semma", name: "Another Semma", market: "dc", status: "published", sourceCandidateId: "c0" },
@@ -49,10 +50,10 @@ const pubs = [
 // 1. A restaurant promoted under a different slug: the video follows the stable id.
 {
   const h = harness({ row: candidateRow(), published: pubs });
-  const wrong = await h.mod.attachVideoCandidate("vc-1", "semma");
+  const wrong = await h.mod.attachVideoCandidate("vc-1", "semma", CTX);
   eq([wrong.ok, wrong.code], [false, "target-changed"], "confirming the typed slug 'semma' (another restaurant) is refused");
   eq(h.state.executed.length, 0, "…and nothing was written");
-  const res = await h.mod.attachVideoCandidate("vc-1", "semma-2");
+  const res = await h.mod.attachVideoCandidate("vc-1", "semma-2", CTX);
   eq([res.ok, res.restaurantSlug, res.alreadyAttached], [true, "semma-2", false], "attaches to the restaurant that was promoted from the candidate");
   eq(h.state.executed.length, 1, "exactly one atomic statement");
   const q = dialect.sqlToQuery(h.state.executed[0]);
@@ -72,35 +73,35 @@ const pubs = [
 {
   const legacy = candidateRow({ candidateRestaurantId: null, restaurantSlug: "semma-2" });
   const h = harness({ row: legacy, published: pubs });
-  const res = await h.mod.attachVideoCandidate("vc-1", "semma-2");
+  const res = await h.mod.attachVideoCandidate("vc-1", "semma-2", CTX);
   eq([res.ok, res.restaurantSlug], [true, "semma-2"]);
   const hid = harness({ row: legacy, published: [{ ...pubs[1], status: "hidden" }] });
-  const r2 = await hid.mod.attachVideoCandidate("vc-1", "semma-2");
+  const r2 = await hid.mod.attachVideoCandidate("vc-1", "semma-2", CTX);
   eq([r2.ok, r2.code, hid.state.executed.length], [false, "restaurant-not-found", 0], "a hidden restaurant is never a target");
   const none = harness({ row: candidateRow({ candidateRestaurantId: null, restaurantSlug: "semma" }), published: [] });
-  const r3 = await none.mod.attachVideoCandidate("vc-1", "semma");
+  const r3 = await none.mod.attachVideoCandidate("vc-1", "semma", CTX);
   eq([r3.ok, r3.code, none.state.executed.length], [false, "restaurant-not-found", 0], "a draft's slug is not a publishable target");
 }
 // 3. Guards that do not depend on the target.
 {
   const h = harness({ row: candidateRow({ status: "needs_review" }), published: pubs });
-  eq((await h.mod.attachVideoCandidate("vc-1", "semma-2")).code, "not-approved", "unapproved candidates never attach");
+  eq((await h.mod.attachVideoCandidate("vc-1", "semma-2", CTX)).code, "not-approved", "unapproved candidates never attach");
   const rej = harness({ row: candidateRow({ status: "rejected" }), published: pubs });
-  eq((await rej.mod.attachVideoCandidate("vc-1", "semma-2")).code, "not-approved");
+  eq((await rej.mod.attachVideoCandidate("vc-1", "semma-2", CTX)).code, "not-approved");
   const noSlug = harness({ row: candidateRow(), published: pubs });
-  eq((await noSlug.mod.attachVideoCandidate("vc-1")).code, "target-required", "the human must confirm the target slug");
+  eq((await noSlug.mod.attachVideoCandidate("vc-1", undefined, CTX)).code, "target-required", "the human must confirm the target slug");
   const unlinked = harness({ row: candidateRow({ candidateRestaurantId: null, restaurantSlug: null }), published: pubs });
-  eq((await unlinked.mod.attachVideoCandidate("vc-1", "semma-2")).code, "target-required", "an unlinked lead has no target");
+  eq((await unlinked.mod.attachVideoCandidate("vc-1", "semma-2", CTX)).code, "target-required", "an unlinked lead has no target");
   const unpublished = harness({ row: candidateRow({ candidateRestaurantId: "c-unpublished" }), published: pubs });
-  const u = await unpublished.mod.attachVideoCandidate("vc-1", "semma-2");
+  const u = await unpublished.mod.attachVideoCandidate("vc-1", "semma-2", CTX);
   eq([u.ok, u.code, unpublished.state.executed.length], [false, "restaurant-not-found", 0], "a draft restaurant cannot receive a video until it is published");
   const mismatch = harness({ row: candidateRow({ restaurantSlug: "semma" }), published: pubs });
-  eq((await mismatch.mod.attachVideoCandidate("vc-1", "semma-2")).code, "target-changed", "id and stored slug disagree -> refused");
+  eq((await mismatch.mod.attachVideoCandidate("vc-1", "semma-2", CTX)).code, "target-changed", "id and stored slug disagree -> refused");
   const attached = harness({ row: candidateRow({ status: "attached", attachedVideoId: "vc-vc-1", restaurantSlug: "semma-2" }), published: pubs });
-  const again = await attached.mod.attachVideoCandidate("vc-1", "semma-2");
+  const again = await attached.mod.attachVideoCandidate("vc-1", "semma-2", CTX);
   eq([again.ok, again.alreadyAttached, attached.state.executed.length], [true, true, 0], "a retry is idempotent and writes nothing");
   const raced = harness({ row: candidateRow(), published: pubs, claimRows: 0 });
-  const lost = await raced.mod.attachVideoCandidate("vc-1", "semma-2");
+  const lost = await raced.mod.attachVideoCandidate("vc-1", "semma-2", CTX);
   eq([lost.ok, lost.code], [false, "target-changed"], "if the target changed between check and write, nothing is attached");
 }
 console.log(`Attach resolution checks passed (${checks} assertions; real code + real Drizzle dialect rendering; SQL not executed, no database).`);

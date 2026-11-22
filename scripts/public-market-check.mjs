@@ -70,7 +70,7 @@ function harness(env, rows = [], dbAvailable = true, policyResponses = {}, initi
       if (relative === "lib/db/restaurants.ts") {
         if (name === "./index") return { getDb: () => dbAvailable ? db : null };
         if (name === "./schema") return { restaurants: table };
-        if (["./candidates", "./heroMediaSelections", "@/lib/candidateReadiness"].includes(name)) return {};
+        if (["./candidates", "./heroMediaSelections", "./audit", "./identity", "@/lib/candidateReadiness", "@/lib/adminAudit", "@/lib/publicationChecks"].includes(name)) return {};
       }
       if (relative === "lib/db/restaurantLocations.ts") {
         if (name === "./index") return { getDb: () => dbAvailable ? db : null };

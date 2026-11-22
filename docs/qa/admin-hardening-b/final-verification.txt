@@ -1,0 +1,19 @@
+Final verification before commit (2026-11-22T20:42:49Z), node v24.22.3
+[PASS] tsc --noEmit (strict) :: 
+[PASS] eslint :: 0 problems (after removing one unused directive)
+[PASS] scripts/admin-authz-check.mjs :: Admin authorization checks passed (835 assertions across 27 routes; synthetic credentials, no network or database). 
+[PASS] scripts/admin-api-check.mjs :: Admin API checks passed (264 assertions; real routes and libraries, in-memory fakes, no network or database). 
+[PASS] scripts/admin-attach-sql-check.mjs :: Attach resolution checks passed (25 assertions; real code + real Drizzle dialect rendering; SQL not executed, no database). 
+[PASS] scripts/restaurant-import-check.mjs :: Selective import checks passed (320 assertions; synthetic fixtures, no network or DB). 
+[PASS] scripts/admin-mapping-check.mjs :: Association mapping checks passed (6 assertions). 
+[PASS] scripts/admin-audit-unit-check.mjs :: admin-audit-unit-check: 210 checks passed. 
+[PASS] scripts/admin-audit-integration-check.mjs :: admin-audit-integration-check: 277 checks passed (61 audit events written on PostgreSQL PostgreSQL 18.7 via PGlite). 
+[PASS] scripts/photo-attribution-check.mjs :: ℹ tests 10 ℹ pass 10 ℹ fail 0 
+[PASS] scripts/photo-reliability-check.mjs :: Photo reliability checks passed (1881 assertions; no network, database or browser). 
+[PASS] scripts/public-market-check.mjs :: Public market checks passed (648 assertions; isolated DB fixtures, no network). 
+[PASS] scripts/favorites-storage-check.mjs :: Favorites checks passed (235 assertions, isolated storage and a modelled IndexedDB device). Real-browser cross-tab and hang behavior is covered in browser QA. 
+[PASS] scripts/reviews-v2-check.mjs :: ℹ tests 7 ℹ pass 7 ℹ fail 0 
+[PASS] scripts/photo-gallery-check.mjs :: ℹ tests 13 ℹ pass 13 ℹ fail 0 
+[PASS] scripts/gallery-ui-check.mjs :: ℹ tests 22 ℹ pass 22 ℹ fail 0 
+[PASS] scripts/map-v2-check.mjs :: ℹ tests 8 ℹ pass 8 ℹ fail 0 
+[PASS] next build :: ○  (Static)   prerendered as static content ƒ  (Dynamic)  server-rendered on demand  

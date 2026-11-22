@@ -27,7 +27,7 @@ function load(path, dependencies = {}, globals = {}) {
 
 const contract = load("lib/placePhoto");
 const client = load("lib/clientHeroMedia", { "@/lib/placePhoto": contract });
-const dbSelection = load("lib/db/heroMediaSelections", { "drizzle-orm": {}, "./index": {}, "./schema": {} });
+const dbSelection = load("lib/db/heroMediaSelections", { "drizzle-orm": {}, "./index": {}, "./schema": {}, "./audit": {}, "@/lib/adminAudit": {} });
 const id = "fixture-place";
 const key = "fixture-header-only";
 const logo = "https://logo.example/fallback";
@@ -229,8 +229,10 @@ test("admin preview/approval retains original ordinals and only persists a valid
     "@/lib/places": places,
     // The scoped guard itself is covered by admin-authz-check.mjs; this route test only needs allow/deny.
     "@/lib/adminGuard": { guardAdmin: req => req.headers.get("x-test-auth") === "authorized"
-      ? { ok: true, scope: "draft" }
-      : { ok: false, response: Response.json({ error: "Unauthorized." }, { status: 401 }) } },
+      ? { ok: true, scope: "draft", actor: { identity: "draft-credential", scope: "draft", assurance: "shared-credential" }, requestId: "req-test" }
+      : { ok: false, response: Response.json({ error: "Unauthorized." }, { status: 401 }) },
+      auditContext: (auth) => ({ actor: auth.actor, requestId: auth.requestId, reason: null }) },
+    "@/lib/adminAudit": { cleanReason: (v) => ({ ok: true, reason: typeof v === "string" ? v : null }), readOptionalReason: async () => ({ ok: true, reason: null }) },
     "@/lib/db/candidates": { isDbConfigured: () => true, getCandidateRestaurant: () => ({ id: "c", googlePlaceId: id }) },
     "@/lib/db/heroMediaSelections": {
       validHeroPhotoOrdinal: dbSelection.validHeroPhotoOrdinal,

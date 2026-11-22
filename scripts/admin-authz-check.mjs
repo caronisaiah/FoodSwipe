@@ -35,11 +35,13 @@ const POLICY = {
   "app/api/admin/restaurants/published/[id]/hide/route.ts": { POST: "publish" },
   "app/api/admin/restaurants/published/[id]/route.ts": { PATCH: "publish" },
   "app/api/admin/restaurants/published/route.ts": { GET: "draft" },
-  "app/api/admin/videos/[id]/route.ts": { DELETE: "publish" },
+  "app/api/admin/audit/events/route.ts": { GET: "publish" }, // audit history: administrators only
+  "app/api/admin/videos/[id]/restore/route.ts": { POST: "publish" },
+  "app/api/admin/videos/[id]/route.ts": { GET: "publish", PATCH: "publish", DELETE: "publish" },
   "app/api/admin/videos/candidates/[id]/attach/route.ts": { POST: "publish" },
   "app/api/admin/videos/candidates/[id]/route.ts": { PATCH: "draft" }, // approve/reject/edit-approved rules checked in the API suite
   "app/api/admin/videos/candidates/route.ts": { GET: "draft", POST: "draft" },
-  "app/api/admin/videos/route.ts": { POST: "publish" },
+  "app/api/admin/videos/route.ts": { GET: "publish", POST: "publish" },
   "app/api/resolve/youtube/route.ts": { POST: "draft" },
 };
 
@@ -141,8 +143,8 @@ for (const [file, methods] of Object.entries(POLICY)) {
 const auth = createSandbox({ root, env }).load("lib/adminAuth.ts");
 const req = (s) => new Request("https://x.test", { headers: s === undefined ? {} : { "x-foodswipe-admin-secret": s } });
 Object.assign(env, { FOODSWIPE_ADMIN_SECRET: PUBLISH, FOODSWIPE_ADMIN_DRAFT_SECRET: DRAFT });
-eq(auth.authenticateAdmin(req(PUBLISH)), { ok: true, scope: "publish" });
-eq(auth.authenticateAdmin(req(DRAFT)), { ok: true, scope: "draft" });
+eq(auth.authenticateAdmin(req(PUBLISH)), { ok: true, scope: "publish", actor: { identity: "publish-credential", scope: "publish", assurance: "shared-credential" } }, "publish credential -> non-secret credential identity");
+eq(auth.authenticateAdmin(req(DRAFT)), { ok: true, scope: "draft", actor: { identity: "draft-credential", scope: "draft", assurance: "shared-credential" } }, "draft credential -> non-secret credential identity");
 eq(auth.authenticateAdmin(req("nope")), { ok: false, reason: "unauthorized" });
 eq(auth.hasValidAdminSecret(req(DRAFT)), false, "legacy helper never accepts the draft credential");
 eq(auth.hasValidAdminSecret(req(PUBLISH)), true);

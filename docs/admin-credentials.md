@@ -18,6 +18,9 @@ Approve or reject a restaurant candidate or video candidate; edit a candidate or
 ## Route matrix
 The authoritative list is `POLICY` in `scripts/admin-authz-check.mjs`, which fails if an admin route is added without a declared scope.
 
+## Audit attribution (Admin Hardening B)
+Every consequential change is written to the append-only `admin_events` table in the same SQL statement as the change (see [admin-audit-log.md](admin-audit-log.md)). The actor recorded is a **non-secret label for the credential that authenticated the request**: `publish-credential` or `draft-credential` by default, or an operator-chosen label from the optional env vars `FOODSWIPE_ADMIN_PUBLISH_LABEL` / `FOODSWIPE_ADMIN_DRAFT_LABEL` (letters, digits, `.`, `_`, `-`; max 40; anything else is ignored). The label is not a secret and is never derived from one. Every event also records `actorAssurance: "shared-credential"`: the log proves *which credential* acted, **not which person**. Reading the audit history needs the publication credential; the draft credential is refused.
+
 ## Notes
-- The shared secrets are still bearer secrets. Rotate by changing the env var and redeploying. Per-agent revocation and an audit trail with an actor are the follow-up task; until then do not run unattended or large-batch ingestion.
-- Never paste a secret into chat or a command line. Read it from an environment variable.
+- The shared secrets are still bearer secrets. Rotate by changing the env var and redeploying. Per-agent revocation and per-person identity are the follow-up task; until then two agents sharing the draft secret are indistinguishable in the log, and do not run unattended or large-batch ingestion.
+- Never paste a secret into chat or a command line. Read it from an environment variable. A reason typed into `auditReason` that contains a configured secret is refused.
