@@ -106,3 +106,57 @@ export function validateVideoCandidateBody(body: unknown, mode: "create" | "patc
   if (errors.length) return { ok: false, errors };
   return { ok: true, value: out, warnings: [] };
 }
+
+const CORRECTION_FIELDS = new Set(["creatorHandle", "creatorDisplayName", "attributionText", "auditReason"]);
+const CORRECTION_IMMUTABLE = new Set([
+  "platform", "sourceUrl", "embedUrl", "thumbnailUrl", "legalDisplayStatus", "sourceType", "matchConfidence",
+  "isRealSource", "restaurantId", "restaurantSlug", "status", "id", "caption",
+]);
+
+export interface VideoCorrectionWrite {
+  creatorHandle?: string;
+  creatorDisplayName?: string | null;
+  attributionText?: string;
+}
+
+/**
+ * Strict validation of a correction to a PUBLISHED video. Only the creator handle, creator display name
+ * and attribution text can change. Source identity, caption, legal display status and the restaurant are
+ * refused by name so a correction can never re-point a video or loosen a display restriction; status
+ * changes go through the hide/restore routes. `auditReason` is handled by the route, not stored here.
+ */
+export function validateVideoCorrection(body: unknown): Validated<VideoCorrectionWrite> {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, errors: [{ field: "body", code: "invalid_body", message: "Request body must be a JSON object." }] };
+  }
+  const b = body as Record<string, unknown>;
+  const errors: FieldError[] = [];
+  for (const key of Object.keys(b)) {
+    if (CORRECTION_FIELDS.has(key)) continue;
+    errors.push({
+      field: key, code: "unknown_field",
+      message: CORRECTION_IMMUTABLE.has(key) ? `${key} cannot be changed on a published video.` : `Unknown field "${key}".`,
+    });
+  }
+  const out: VideoCorrectionWrite = {};
+  if ("creatorHandle" in b) {
+    const v = b.creatorHandle;
+    if (typeof v !== "string" || !HANDLE_RE.test(v.trim())) {
+      errors.push({ field: "creatorHandle", code: "invalid_handle", message: "creatorHandle must start with @ followed by letters, digits, dots, underscores or hyphens." });
+    } else out.creatorHandle = v.trim();
+  }
+  if ("creatorDisplayName" in b) {
+    const v = text(b.creatorDisplayName, "creatorDisplayName", 200, errors);
+    if (v !== undefined) out.creatorDisplayName = v;
+  }
+  if ("attributionText" in b) {
+    const v = text(b.attributionText, "attributionText", 300, errors);
+    if (v === null) errors.push({ field: "attributionText", code: "empty_value", message: "attributionText cannot be empty: every video needs visible attribution." });
+    else if (v !== undefined) out.attributionText = v;
+  }
+  if (errors.length === 0 && Object.keys(out).length === 0) {
+    errors.push({ field: "body", code: "empty_patch", message: "No correctable fields were provided (creatorHandle, creatorDisplayName, attributionText)." });
+  }
+  if (errors.length) return { ok: false, errors };
+  return { ok: true, value: out, warnings: [] };
+}

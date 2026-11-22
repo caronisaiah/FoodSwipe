@@ -4,6 +4,8 @@ import { getDb, isDbConfigured } from "./index";
 import { auditedInsert, auditedUpdate } from "./audit";
 import { restaurants, type RestaurantRow } from "./schema";
 import { getCandidateRestaurant, slugify } from "./candidates";
+import { listIdentityRecords } from "./identity";
+import { evaluatePublicationChecks, unresolvedWarnings, type PublicationCheck, type PublicationOverride } from "@/lib/publicationChecks";
 import { cloneCandidateHeroSelectionToRestaurant } from "./heroMediaSelections";
 import { RESTAURANTS, getRestaurantById } from "@/lib/seed/restaurants";
 import { filterCuisines, filterDietary, filterVibes } from "@/lib/vocab";
@@ -238,6 +240,7 @@ export type PromoteResult =
   | { ok: false; code: "incomplete"; missingFields: string[]; invalidCoordinates?: { field: string; code: string; message: string }[] }
   | { ok: false; code: "already-promoted"; restaurant: PublishedRestaurantAdmin; heroSelectionWarning?: string }
   | { ok: false; code: "place-already-published"; restaurant: PublishedRestaurantAdmin }
+  | { ok: false; code: "publication-checks"; checks: PublicationCheck[]; unresolved: PublicationCheck[] }
   | { ok: false; code: "error" };
 
 export interface CandidatePromotionConflict {
@@ -298,7 +301,11 @@ export async function getCandidatePromotionConflictMap(
  * sourceCandidateId AND googlePlaceId, copies only reviewed/curated fields, sets
  * neutral metrics, and never publishes videos or mutates Google photo data.
  */
-export async function promoteCandidateToRestaurant(candidateId: string, ctx: AuditContext): Promise<PromoteResult> {
+export async function promoteCandidateToRestaurant(
+  candidateId: string,
+  ctx: AuditContext,
+  override: PublicationOverride | null = null,
+): Promise<PromoteResult> {
   const db = getDb();
   if (!db) return { ok: false, code: "no-db" };
 
@@ -340,7 +347,21 @@ export async function promoteCandidateToRestaurant(candidateId: string, ctx: Aud
     }
   }
 
-  const audit: AuditContext = ctx;
+  // Publication-readiness: suspicious (not invalid) records need a documented human override. Read-only
+  // checks; the acknowledged codes and the reason are written into the promotion's audit event.
+  const checks = evaluatePublicationChecks(candidate, await listIdentityRecords());
+  const unresolved = unresolvedWarnings(checks, override);
+  if (unresolved.length > 0) return { ok: false, code: "publication-checks", checks, unresolved };
+  const audit: AuditContext = {
+    ...ctx,
+    reason: override?.reason ?? ctx.reason ?? null,
+    details: {
+      ...(ctx.details ?? {}),
+      publicationChecks: checks.map((c) => c.code),
+      // Only codes the server itself raised are stored; client-supplied extras are dropped.
+      ...(override ? { override: { acknowledged: override.acknowledged.filter((code) => checks.some((c) => c.code === code)) } } : {}),
+    },
+  };
 
   const now = new Date();
   const lat = candidate.lat as number;

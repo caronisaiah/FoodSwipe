@@ -1262,10 +1262,15 @@ function CandidateEditor({
   const [promoting, setPromoting] = useState(false);
   const [promoteMsg, setPromoteMsg] = useState<Msg>(null);
   const [promotedSlug, setPromotedSlug] = useState<string | null>(null);
+  // Publication-readiness: warnings the server wants a human to acknowledge, with a written reason.
+  const [pubChecks, setPubChecks] = useState<{ code: string; severity: string; message: string }[] | null>(null);
+  const [pubUnresolved, setPubUnresolved] = useState<string[]>([]);
+  const [overrideReason, setOverrideReason] = useState("");
+  const [overrideConfirmed, setOverrideConfirmed] = useState(false);
 
   const snap = candidate.suggestedTags;
 
-  async function promote() {
+  async function promote(withOverride = false) {
     if (promoting) return;
     if (!secret.trim()) {
       setPromoteMsg({ type: "err", text: "Enter the admin secret first." });
@@ -1276,15 +1281,31 @@ function CandidateEditor({
     try {
       const res = await fetch(`/api/admin/restaurants/candidates/${candidate.id}/promote`, {
         method: "POST",
-        headers: { "x-foodswipe-admin-secret": secret },
+        headers: withOverride
+          ? { "x-foodswipe-admin-secret": secret, "Content-Type": "application/json" }
+          : { "x-foodswipe-admin-secret": secret },
+        body: withOverride
+          ? JSON.stringify({ override: { acknowledge: pubUnresolved, reason: overrideReason.trim() } })
+          : undefined,
       });
       const data = (await res.json()) as {
         restaurant?: { slug?: string };
         heroSelectionWarning?: string;
         error?: string;
+        code?: string;
         missingFields?: string[];
+        checks?: { code: string; severity: string; message: string }[];
+        unresolved?: string[];
       };
+      if (res.status === 409 && data.code === "publication_checks_failed" && data.checks) {
+        setPubChecks(data.checks);
+        setPubUnresolved(data.unresolved ?? []);
+        setOverrideConfirmed(false);
+        setPromoteMsg({ type: "err", text: "Not published yet: these need a human decision (see below)." });
+        return;
+      }
       if (res.ok && data.restaurant?.slug) {
+        setPubChecks(null);
         setPromotedSlug(data.restaurant.slug);
         setPromoteMsg({
           type: data.heroSelectionWarning ? "err" : "ok",
@@ -1569,6 +1590,9 @@ function CandidateEditor({
             <p className="flex items-center gap-1.5 text-[11px] font-semibold text-cream">
               <MaterialIcon name="rocket_launch" className="text-sm" />
               Promote to live feed
+              <a href={`/admin/audit?resource=${encodeURIComponent(candidate.id)}`} target="_blank" rel="noopener noreferrer" className="ml-auto text-[10px] font-normal text-haze underline-offset-2 hover:underline">
+                History
+              </a>
             </p>
             {candidate.status === "approved" ? (
               <>
@@ -1597,6 +1621,47 @@ function CandidateEditor({
               <p className={`mt-1 text-[11px] ${promoteMsg.type === "ok" ? "text-mint" : "text-chili-soft"}`}>
                 {promoteMsg.text}
               </p>
+            )}
+            {pubChecks && !promotedSlug && (
+              <div className="mt-1.5 rounded-md bg-saffron/10 p-2 ring-1 ring-inset ring-saffron/30" data-testid="publication-checks">
+                <p className="text-[11px] font-semibold text-saffron">Publication checks</p>
+                <ul className="mt-1 space-y-1 text-[11px] text-cream/90">
+                  {pubChecks.map((c, i) => (
+                    <li key={`${c.code}-${i}`} className="flex gap-1.5">
+                      <span className={c.severity === "warning" ? "text-saffron" : "text-haze"}>
+                        {c.severity === "warning" ? "Needs a decision" : "FYI"}
+                      </span>
+                      <span>{c.message}</span>
+                    </li>
+                  ))}
+                </ul>
+                {pubUnresolved.length > 0 && (
+                  <div className="mt-2 space-y-1.5">
+                    <label className="block text-[10px] text-haze">
+                      Why is publishing correct anyway? (recorded in the audit log with the credential used)
+                      <textarea
+                        value={overrideReason}
+                        onChange={(e) => setOverrideReason(e.target.value)}
+                        rows={2}
+                        maxLength={1000}
+                        className="mt-0.5 w-full rounded-md bg-surface-2 px-2 py-1 text-xs text-cream outline-none ring-1 ring-inset ring-white/10 focus:ring-saffron/60"
+                      />
+                    </label>
+                    <label className="flex items-center gap-1.5 text-[11px] text-cream">
+                      <input type="checkbox" checked={overrideConfirmed} onChange={(e) => setOverrideConfirmed(e.target.checked)} />
+                      I have reviewed these warnings ({pubUnresolved.join(", ")}).
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void promote(true)}
+                      disabled={promoting || !canPublish || !overrideConfirmed || overrideReason.trim().length < 10}
+                      className="rounded-md bg-saffron px-3 py-1.5 text-xs font-bold text-ink disabled:opacity-40"
+                    >
+                      {promoting ? "Publishing…" : "Publish with recorded override"}
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
             {promotedSlug && (
               <a

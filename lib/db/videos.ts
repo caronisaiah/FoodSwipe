@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, ne } from "drizzle-orm";
-import { AUDIT_FIELDS, type AuditContext } from "@/lib/adminAudit";
+import { AUDIT_FIELDS, type AuditAction, type AuditContext } from "@/lib/adminAudit";
 import type { Video } from "@/lib/types";
 import { normalizeVideo } from "@/lib/video";
 import { getDb, isDbConfigured } from "./index";
@@ -113,17 +113,137 @@ export async function insertVideo(
   return { ...video, id };
 }
 
-/** Soft-delete: mark a video hidden. Idempotent; returns false if no row matched. Writes one event on change. */
-export async function hideVideo(id: string, ctx: AuditContext): Promise<boolean> {
+/** A live (or hidden) video as the admin sees it: attribution fields plus status. Source identity is read-only. */
+export interface PublishedVideoAdmin {
+  id: string;
+  /** The restaurant's PUBLIC slug (restaurant_videos.restaurant_id holds the slug). */
+  restaurantSlug: string;
+  platform: string;
+  sourceUrl: string | null;
+  creatorHandle: string;
+  creatorDisplayName: string | null;
+  caption: string;
+  attributionText: string;
+  status: "active" | "hidden";
+  legalDisplayStatus: string;
+  sourceType: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function rowToAdminVideo(row: RestaurantVideoRow): PublishedVideoAdmin {
+  return {
+    id: row.id,
+    restaurantSlug: row.restaurantId,
+    platform: row.platform,
+    sourceUrl: row.sourceUrl ?? null,
+    creatorHandle: row.creatorHandle,
+    creatorDisplayName: row.creatorDisplayName ?? null,
+    caption: row.caption,
+    attributionText: row.attributionText,
+    status: row.status === "hidden" ? "hidden" : "active",
+    legalDisplayStatus: row.legalDisplayStatus,
+    sourceType: row.sourceType,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+/** Videos for the admin (active AND hidden), newest first, optionally for one restaurant slug or status. */
+export async function listVideosForAdmin(filters: { restaurantSlug?: string; status?: "active" | "hidden"; limit?: number } = {}): Promise<PublishedVideoAdmin[]> {
+  const db = getDb();
+  if (!db) return [];
+  const conds = [];
+  if (filters.restaurantSlug) conds.push(eq(restaurantVideos.restaurantId, filters.restaurantSlug));
+  if (filters.status) conds.push(eq(restaurantVideos.status, filters.status));
+  const rows = await db
+    .select()
+    .from(restaurantVideos)
+    .where(conds.length ? and(...conds) : undefined)
+    .orderBy(desc(restaurantVideos.createdAt))
+    .limit(Math.min(Math.max(filters.limit ?? 100, 1), 200));
+  return rows.map(rowToAdminVideo);
+}
+
+export async function getVideoForAdmin(id: string): Promise<PublishedVideoAdmin | null> {
+  const db = getDb();
+  if (!db) return null;
+  const [row] = await db.select().from(restaurantVideos).where(eq(restaurantVideos.id, id)).limit(1);
+  return row ? rowToAdminVideo(row) : null;
+}
+
+/**
+ * The ONLY fields of a published video an admin can correct. Source identity (platform, source URL,
+ * embed URL), the caption, the legal display status and provenance are not part of this type, so a
+ * correction can never loosen a legal-display restriction or re-point a video at different content.
+ */
+export interface PublishedVideoCorrection {
+  creatorHandle?: string;
+  creatorDisplayName?: string | null;
+  attributionText?: string;
+}
+
+/** Correct attribution fields. Returns null when the video does not exist; no event when nothing changed. */
+export async function updatePublishedVideo(
+  id: string,
+  correction: PublishedVideoCorrection,
+  ctx: AuditContext,
+): Promise<{ video: PublishedVideoAdmin; changed: boolean } | null> {
+  const db = getDb();
+  if (!db) throw new Error("DATABASE_URL not configured");
+  const set: Partial<typeof restaurantVideos.$inferInsert> = { updatedAt: new Date() };
+  if (correction.creatorHandle !== undefined) set.creatorHandle = correction.creatorHandle;
+  if (correction.creatorDisplayName !== undefined) set.creatorDisplayName = correction.creatorDisplayName;
+  if (correction.attributionText !== undefined) set.attributionText = correction.attributionText;
+  const result = await auditedUpdate({
+    table: restaurantVideos,
+    where: eq(restaurantVideos.id, id),
+    set,
+    audit: {
+      ctx, resourceType: "restaurant_video", fields: AUDIT_FIELDS.restaurant_video,
+      action: "restaurant_video.updated", related: VIDEO_RELATED,
+    },
+  });
+  if (!result) return null;
+  return { video: rowToAdminVideo(result.row), changed: result.eventId !== null };
+}
+
+const VIDEO_STATUS_ACTIONS: Record<"hidden" | "active", AuditAction> = {
+  hidden: "restaurant_video.hidden",
+  active: "restaurant_video.restored",
+};
+
+/**
+ * Soft-delete (hidden) or recovery (active). Idempotent: setting the status it already has writes
+ * nothing and no event. Never hard-deletes; the row, its source identity and its association survive.
+ */
+export async function setVideoStatus(
+  id: string,
+  status: "hidden" | "active",
+  ctx: AuditContext,
+): Promise<{ video: PublishedVideoAdmin; changed: boolean } | null> {
   const db = getDb();
   if (!db) throw new Error("DATABASE_URL not configured");
   const result = await auditedUpdate({
     table: restaurantVideos,
-    where: and(eq(restaurantVideos.id, id), ne(restaurantVideos.status, "hidden"))!,
-    set: { status: "hidden", updatedAt: new Date() },
-    audit: { ctx, resourceType: "restaurant_video", fields: AUDIT_FIELDS.restaurant_video, action: "restaurant_video.hidden", related: VIDEO_RELATED },
+    where: and(eq(restaurantVideos.id, id), ne(restaurantVideos.status, status))!,
+    set: { status, updatedAt: new Date() },
+    audit: {
+      ctx, resourceType: "restaurant_video", fields: AUDIT_FIELDS.restaurant_video,
+      action: VIDEO_STATUS_ACTIONS[status], related: VIDEO_RELATED,
+    },
   });
-  if (result) return true;
-  const [existing] = await db.select({ id: restaurantVideos.id }).from(restaurantVideos).where(eq(restaurantVideos.id, id)).limit(1);
-  return Boolean(existing);
+  if (result) return { video: rowToAdminVideo(result.row), changed: true };
+  const existing = await getVideoForAdmin(id);
+  return existing ? { video: existing, changed: false } : null;
+}
+
+/** Soft-delete: mark a video hidden. Returns false if no row matched (already hidden counts as found). */
+export async function hideVideo(id: string, ctx: AuditContext): Promise<boolean> {
+  return (await setVideoStatus(id, "hidden", ctx)) !== null;
+}
+
+/** Recovery: make a hidden video active again. Returns null if no row matched. */
+export async function restoreVideo(id: string, ctx: AuditContext) {
+  return setVideoStatus(id, "active", ctx);
 }
