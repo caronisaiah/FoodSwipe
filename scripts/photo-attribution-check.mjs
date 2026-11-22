@@ -227,7 +227,10 @@ test("admin preview/approval retains original ordinals and only persists a valid
   const writes = [];
   const deps = {
     "@/lib/places": places,
-    "@/lib/adminAuth": { isAdminConfigured: () => true, hasValidAdminSecret: req => req.headers.get("x-test-auth") === "authorized" },
+    // The scoped guard itself is covered by admin-authz-check.mjs; this route test only needs allow/deny.
+    "@/lib/adminGuard": { guardAdmin: req => req.headers.get("x-test-auth") === "authorized"
+      ? { ok: true, scope: "draft" }
+      : { ok: false, response: Response.json({ error: "Unauthorized." }, { status: 401 }) } },
     "@/lib/db/candidates": { isDbConfigured: () => true, getCandidateRestaurant: () => ({ id: "c", googlePlaceId: id }) },
     "@/lib/db/heroMediaSelections": {
       validHeroPhotoOrdinal: dbSelection.validHeroPhotoOrdinal,
