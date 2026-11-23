@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useReducer, useRef, useState } from "react";
 import Link from "next/link";
 import MaterialIcon from "@/components/MaterialIcon";
+import { REASON_MAX_LENGTH, reasonForRequest, reasonReducer } from "@/lib/adminReasonField";
 
 /*
   Corrections and recovery for PUBLISHED videos (INTERNAL, publication credential).
@@ -142,7 +143,7 @@ export default function AdminPublishedVideos() {
       ) : (
         <ul className="divide-y divide-line overflow-hidden rounded-xl ring-1 ring-inset ring-white/10" data-testid="videos">
           {videos.map((v) => (
-            <VideoRow key={`${v.id}-${v.updatedAt}`} video={v} secret={secret} open={openId === v.id}
+            <VideoRow key={`${v.id}-${v.updatedAt}-${v.status}`} video={v} secret={secret} open={openId === v.id}
               onToggle={() => setOpenId((id) => (id === v.id ? null : v.id))} onChanged={replace} onError={(text) => setNotice({ type: "err", text })} />
           ))}
         </ul>
@@ -158,7 +159,8 @@ function VideoRow({ video, secret, open, onToggle, onChanged, onError }: {
   const [handle, setHandle] = useState(video.creatorHandle);
   const [display, setDisplay] = useState(video.creatorDisplayName ?? "");
   const [attribution, setAttribution] = useState(video.attributionText);
-  const [reason, setReason] = useState("");
+  // The reason belongs to the single action it was typed for (see lib/adminReasonField).
+  const [reason, dispatchReason] = useReducer(reasonReducer, "");
   const [busy, setBusy] = useState(false);
   const hidden = video.status === "hidden";
 
@@ -176,6 +178,7 @@ function VideoRow({ video, secret, open, onToggle, onChanged, onError }: {
         onError(data.errors?.length ? data.errors.map((e) => `${e.field}: ${e.message}`).join(" ") : data.error ?? `Failed (${res.status}).`);
         return;
       }
+      dispatchReason({ type: "action-succeeded" }); // never reuse this reason for the next action
       ok(data);
     } catch {
       onError("Network error — nothing was changed. Refresh before retrying.");
@@ -184,7 +187,7 @@ function VideoRow({ video, secret, open, onToggle, onChanged, onError }: {
     }
   }
 
-  const auditReason = reason.trim() || undefined;
+  const auditReason = reasonForRequest(reason);
   const save = () =>
     call(`/api/admin/videos/${video.id}`, "PATCH",
       { creatorHandle: handle.trim(), creatorDisplayName: display.trim() || null, attributionText: attribution.trim(), auditReason },
@@ -197,7 +200,7 @@ function VideoRow({ video, secret, open, onToggle, onChanged, onError }: {
 
   return (
     <li className="bg-surface-1 p-2.5" data-testid="video-row">
-      <button type="button" onClick={onToggle} className="flex w-full items-center gap-2 text-left" aria-expanded={open}>
+      <button type="button" onClick={() => { if (open) dispatchReason({ type: "collapsed" }); onToggle(); }} className="flex w-full items-center gap-2 text-left" aria-expanded={open}>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-semibold text-cream">{video.creatorHandle}{video.creatorDisplayName ? ` · ${video.creatorDisplayName}` : ""}</span>
           <span className="block truncate text-[11px] text-haze">{video.platform} · /{video.restaurantSlug} · {video.attributionText}</span>
@@ -222,8 +225,8 @@ function VideoRow({ video, secret, open, onToggle, onChanged, onError }: {
           <label className="block text-[11px] text-haze">Attribution text
             <input value={attribution} onChange={(e) => setAttribution(e.target.value)} className="mt-0.5 w-full rounded-md bg-surface-2 px-2 py-1 text-xs text-cream ring-1 ring-inset ring-white/10 focus:ring-saffron/60" />
           </label>
-          <label className="block text-[11px] text-haze">Reason (optional, recorded)
-            <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={1000} className="mt-0.5 w-full rounded-md bg-surface-2 px-2 py-1 text-xs text-cream ring-1 ring-inset ring-white/10 focus:ring-saffron/60" />
+          <label className="block text-[11px] text-haze">Reason for the next action (optional, recorded once)
+            <input value={reason} onChange={(e) => dispatchReason({ type: "edited", value: e.target.value })} maxLength={REASON_MAX_LENGTH} className="mt-0.5 w-full rounded-md bg-surface-2 px-2 py-1 text-xs text-cream ring-1 ring-inset ring-white/10 focus:ring-saffron/60" />
           </label>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => void save()} disabled={busy}

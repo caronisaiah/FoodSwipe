@@ -18,6 +18,7 @@ const audit = sb.load("lib/adminAudit.ts");
 const auth = sb.load("lib/adminAuth.ts");
 const videoValidation = sb.load("lib/adminVideoValidation.ts");
 const checksLib = sb.load("lib/publicationChecks.ts");
+const reasonField = sb.load("lib/adminReasonField.ts");
 
 // ---- taxonomy ----
 eq(new Set(audit.AUDIT_ACTIONS).size, audit.AUDIT_ACTIONS.length, "actions are unique");
@@ -123,6 +124,36 @@ ok(!checksLib.parsePublicationOverride({ acknowledge: ["a"], reason: "short" }).
 ok(!checksLib.parsePublicationOverride("yes").ok, "non-object override refused");
 eq(checksLib.parsePublicationOverride(undefined), { ok: true, override: null }, "no override is fine");
 eq(checksLib.parsePublicationOverride({ acknowledge: ["a", "a", "b"], reason: " a proper reason " }).override, { acknowledged: ["a", "b"], reason: "a proper reason" }, "override is normalised");
+
+// ---- REGRESSION: a reason typed for one action must never be recorded on the next (Hide -> Restore) ----
+{
+  const { reasonReducer: step, reasonForRequest: send, REASON_MAX_LENGTH } = reasonField;
+  let box = "";
+  box = step(box, { type: "edited", value: "  Wrong restaurant  " });
+  eq(send(box), "Wrong restaurant", "the reason sent is exactly what was typed, trimmed");
+  eq(send(step("", { type: "edited", value: "   " })), undefined, "a blank reason sends no reason (nothing is invented)");
+  eq(send(""), undefined, "an empty box sends no reason");
+  eq(step(box, { type: "action-failed" }), box, "a failed action keeps the text so the person can retry");
+  eq(step(box, { type: "action-succeeded" }), "", "a completed action clears the reason");
+  eq(step(box, { type: "collapsed" }), "", "collapsing the row clears the reason");
+  eq(step(box, { type: "record-changed" }), "", "a changed record clears the reason");
+  eq(step("", { type: "edited", value: "x".repeat(REASON_MAX_LENGTH + 50) }).length, REASON_MAX_LENGTH, "the box never holds more than the server accepts");
+  // The scenario from release QA: type a reason, Hide succeeds, then Restore with nothing typed.
+  let state = step("", { type: "edited", value: "Hidden for QA" });
+  const hideRequest = send(state);
+  state = step(state, { type: "action-succeeded" });
+  const restoreRequest = send(state);
+  eq([hideRequest, restoreRequest], ["Hidden for QA", undefined], "Hide records its reason; the following Restore records none");
+  // Static guard on the screen itself: it must use the lifecycle, not a plain sticky state.
+  const screen = readFileSync(join(root, "components/AdminPublishedVideos.tsx"), "utf8");
+  ok(/useReducer\(reasonReducer, ""\)/.test(screen) && !/setReason\b/.test(screen), "the video screen keeps its reason in the reducer, not in sticky state");
+  ok(/auditReason = reasonForRequest\(reason\)/.test(screen) && !/auditReason:\s*reason\b/.test(screen), "requests send only reasonForRequest(reason)");
+  const callBody = screen.slice(screen.indexOf("async function call("), screen.indexOf("const auditReason"));
+  ok(callBody.indexOf('dispatchReason({ type: "action-succeeded" })') > -1 && callBody.indexOf('dispatchReason({ type: "action-succeeded" })') < callBody.indexOf("ok(data)"), "a successful save, hide or restore clears the reason before the row updates");
+  ok(!/dispatchReason\(\{ type: "action-succeeded" \}\)[\s\S]*?catch/.test(callBody.slice(callBody.indexOf("catch"))), "a failure path never clears the reason");
+  ok(/dispatchReason\(\{ type: "collapsed" \}\)/.test(screen), "collapsing a row clears its reason");
+  ok(/key=\{`\$\{v\.id\}-\$\{v\.updatedAt\}-\$\{v\.status\}`\}/.test(screen), "a status change (hide/restore) remounts the row, so no field state survives it");
+}
 
 // ---- static guard: audited tables are only written through the audited helpers ----
 const AUDITED_TABLES = ["candidateRestaurants", "restaurants", "videoCandidates", "restaurantVideos", "restaurantHeroMediaSelections", "adminEvents"];

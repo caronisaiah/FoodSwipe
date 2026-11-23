@@ -541,6 +541,12 @@ eq((await call(restoreRoute.POST, "/api/admin/videos/x/restore", { method: "POST
 eq(await count("restaurant_videos", `id = '${attach.videoId}' and status = 'active' and restaurant_id = 'semma-2'`), 1, "route: the restored video keeps its restaurant association");
 const restoredEvent = (await events("where action = 'restaurant_video.restored'")).at(-1);
 eq([restoredEvent.reason, restoredEvent.actor_identity], ["Hidden by mistake", "ops-admin"], "route: restore event carries reason and actor");
+// REGRESSION (release QA): a Restore sent WITHOUT a reason records no reason, never the one given for the earlier Hide.
+eq((await call(videoRoute.DELETE, "/api/admin/videos/x", { method: "DELETE", secret: PUBLISH, id: attach.videoId, body: { auditReason: "Hidden for the stale-reason regression" } })).status, 200, "route: hide with a reason");
+const restoreNoReason = await call(restoreRoute.POST, "/api/admin/videos/x/restore", { method: "POST", secret: PUBLISH, id: attach.videoId, body: {} });
+eq([restoreNoReason.status, restoreNoReason.json.changed], [200, true], "route: restore with an empty body");
+const staleCheck = (await events(`where resource_id = '${attach.videoId}' and action in ('restaurant_video.hidden', 'restaurant_video.restored')`)).slice(-2);
+eq([staleCheck[0].action, staleCheck[0].reason, staleCheck[1].action, staleCheck[1].reason], ["restaurant_video.hidden", "Hidden for the stale-reason regression", "restaurant_video.restored", null], "REGRESSION: the restore event holds no reason; only the hide holds the one supplied for it");
 
 // hero + hide routes pass context through
 eq((await call(publishedHide.POST, "/api/admin/restaurants/published/x/hide", { method: "POST", secret: PUBLISH, id: okPromo.restaurant.id, body: { auditReason: "Closed for renovation" } })).status, 200, "route: hide restaurant");
