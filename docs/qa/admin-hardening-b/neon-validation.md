@@ -3,7 +3,7 @@
 Run on a disposable, copy-on-write Neon branch of the production project, created with the owner's approval for this purpose and deleted afterwards. Production was never read or written. Connection strings, role names, endpoint hosts and project or branch identifiers are intentionally left out of this file.
 
 ## What was run
-- Migration 0013 applied in one transaction. Result: 2 append-only triggers, 0 events backfilled.
+- Migration 0013 applied in one transaction (through a transaction-wrapped API call; neither psql nor the SQL Editor was used). Result: 2 append-only triggers, 0 events backfilled.
 - Fingerprints (row count and md5 of all rows) of candidate restaurants, video candidates, restaurants, restaurant videos, the three Phase 16 restaurant drafts and the eight Phase 16 video leads were identical before the migration, after it, and after all tests.
 - Column counts of all 10 tables in the live copy match the 0013 schema snapshot.
 - Real Neon HTTP driver (`@neondatabase/serverless` 1.1.0) on PostgreSQL 18.7, running the app's real modules and route handlers: **108 of 108 checks**. Covers validation (market, coordinates, cuisine tags, duplicate Place ID), approval, promotion with a changed slug, video association by stable candidate id following the changed slug, cross-market refusal, attribution edit, hide, restore, no-op edits not bumping `updated_at`, an audit event per consequential action, and rollback of every mutation type when the audit write fails.

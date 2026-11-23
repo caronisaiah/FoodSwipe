@@ -45,7 +45,20 @@ File: `drizzle/0013_admin_events.sql` (+ journal entry and snapshot). Creates `a
 
 ### Release order: migration first, code second
 1. **Back up** (a Neon branch of production taken immediately before; the plan's point-in-time window is short).
-2. **Apply the migration** with the whole file in ONE transaction: `psql "$DATABASE_URL" -1 -f drizzle/0013_admin_events.sql`, or paste the whole file into the Neon SQL editor as one script. Do **not** use `drizzle-kit push`: it would create the table but not the triggers.
+2. **Apply the migration as ONE transaction.** The entire script must run as a single transaction that either commits completely or not at all. It must **never** run as independently committed statements: a failure part-way would leave a half-built table without its append-only triggers. Do **not** use `drizzle-kit push` (it would create the table but not the triggers).
+   - **Preferred: psql.** Take the connection string from your password manager or environment (never paste it into chat or commit it) and run:
+     ```bash
+     psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 --single-transaction -f drizzle/0013_admin_events.sql
+     ```
+     `--single-transaction` wraps the whole file in `BEGIN` / `COMMIT`, and `ON_ERROR_STOP=1` stops at the first error so nothing is committed. The `--> statement-breakpoint` markers in the file are ordinary SQL comments.
+   - **Neon SQL Editor: UNVERIFIED, use psql instead.** Atomic execution of a pasted script through the SQL Editor has not been verified (the editor may submit or split statements on its own). If you must use it, wrap the script explicitly, with `BEGIN;` as the first line, the **entire** file unchanged, and `COMMIT;` as the last line:
+     ```sql
+     BEGIN;
+     -- paste the complete contents of drizzle/0013_admin_events.sql here
+     COMMIT;
+     ```
+     If any statement errors, do not continue: PostgreSQL rolls an errored transaction back at `COMMIT`. Whatever the outcome, run the verification in step 3 and treat any missing table, function or trigger (or a table without both triggers) as a failed migration (recovery B below).
+   - What was validated: on a disposable database the exact file was applied and verified inside one transaction using a transaction-wrapped call, and the PostgreSQL tests show that a migration failing part-way leaves nothing behind. psql itself was not run in that validation environment.
 3. **Verify**: `select count(*) from pg_trigger where tgrelid = 'admin_events'::regclass and not tgisinternal;` returns 2, and `select count(*) from admin_events;` returns 0.
 4. **Only then deploy the code.**
 
@@ -57,7 +70,7 @@ File: `drizzle/0013_admin_events.sql` (+ journal entry and snapshot). Creates `a
 Redeploy the previous build (or revert the merge). **Leave migration 0013 applied.** The table, every existing event, the indexes and both triggers stay exactly as they are, so the audit history is preserved and still tamper-protected. Older code never reads or writes `admin_events`, so it runs correctly against a database that has the table. Do not `DROP` the table and do not rename it: dropping destroys the history, and renaming it makes the new code fail closed on every admin write if it is redeployed later (and leaves an untracked table behind). Note for the incident record: while the older code runs, admin changes are **not** audited, so the log has a gap for that period; the log resumes when the audited code is deployed again.
 
 **B. Recovering from a failed migration.**
-The file is applied in one transaction, so a failure leaves nothing behind (no table, no function, no triggers; verified by failing 0013 part-way and re-applying). Fix the cause and run the whole file again. Only if it was applied statement-by-statement outside a transaction (do not do this) and stopped part-way can partial objects exist. That is safe to clean up **only while the table is empty** (run as the database owner), because nothing can have been audited yet. This guard refuses to run once any event exists:
+Applied as one transaction (step 2), a failure leaves nothing behind (no table, no function, no triggers; verified by failing 0013 part-way and re-applying). Fix the cause and run the whole file again. Only if it was applied as independently committed statements (for example through the SQL Editor without the explicit `BEGIN;` / `COMMIT;` wrapper working as intended) and stopped part-way can partial objects exist. That is safe to clean up **only while the table is empty** (run as the database owner), because nothing can have been audited yet. This guard refuses to run once any event exists:
 ```sql
 BEGIN;
 DO $$ BEGIN
