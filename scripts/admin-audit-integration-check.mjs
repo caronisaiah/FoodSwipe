@@ -95,22 +95,57 @@ const ENV = {
     eq((await client2.query("select to_regclass('admin_events') as t")).rows[0].t, "admin_events", "after fixing the cause, the same migration applies cleanly");
     await client2.close();
 
-    // A4: the documented rollback works, leaves the rest of the schema intact, and the migration re-applies.
+    // A4: the documented recoveries (docs/admin-audit-log.md): A) code rollback preserves the history,
+    //     B) the guarded cleanup of an INCOMPLETE migration refuses once events exist, C) new code without 0013 fails closed.
     const client3 = new PGlite();
     const db3 = drizzle(client3);
     await migrate(db3, { migrationsFolder: join(root, "drizzle") });
     await client3.exec(`insert into restaurants (id, slug, name, market, status) values ('r1', 'r1', 'R1', 'dc', 'published')`);
-    await client3.exec(`
+    const trig = async () => (await client3.query("select count(*)::int as n from pg_trigger where tgrelid = 'admin_events'::regclass and not tgisinternal")).rows[0].n;
+    for (let i = 0; i < 3; i++) await client3.query(`insert into admin_events (id, action, resource_type, resource_id, actor_identity, auth_scope, request_id) values ($1, 'restaurant.updated', 'restaurant', 'r1', 'ops-admin', 'publish', $2)`, [`keep-${i}`, `req-keep-0${i}`]);
+    const history = async () => JSON.stringify((await client3.query("select * from admin_events order by seq")).rows);
+    const historyBefore = await history();
+
+    // A) Rolling the CODE back = older code keeps working against the migrated database and never touches admin_events.
+    await client3.exec(`update restaurants set reason_text = 'edited by older code' where id = 'r1'; insert into restaurants (id, slug, name, market, status) values ('r2', 'r2', 'R2', 'dc', 'published')`);
+    eq(await history(), historyBefore, "code rollback: older-code writes leave every audit event byte-for-byte unchanged");
+    eq(await trig(), 2, "code rollback: both append-only triggers are still attached");
+    await rejects(() => client3.query("delete from admin_events"), /append-only/, "code rollback: the history is still tamper-protected");
+    eq((await client3.query("select to_regclass('admin_events') as t")).rows[0].t, "admin_events", "code rollback: the table stays in place (never dropped or renamed)");
+
+    // B) The guarded cleanup refuses to drop a table that holds events, and works (then re-applies) while it is empty.
+    const guarded = `
       BEGIN;
-      DROP TABLE admin_events;
-      DROP FUNCTION admin_events_reject_change();
-      DELETE FROM drizzle.__drizzle_migrations WHERE id = (select max(id) from drizzle.__drizzle_migrations);
-      COMMIT;`);
-    eq((await client3.query("select to_regclass('admin_events') as t")).rows[0].t, null, "rollback: admin_events is gone");
-    eq((await client3.query("select count(*)::int as n from restaurants")).rows[0].n, 1, "rollback: existing data is untouched");
-    eq((await client3.query("select count(*)::int as n from pg_proc where proname = 'admin_events_reject_change'")).rows[0].n, 0, "rollback: no stray function");
-    await migrate(db3, { migrationsFolder: join(root, "drizzle") });
-    eq((await client3.query("select to_regclass('admin_events') as t")).rows[0].t, "admin_events", "rollback: the migration re-applies afterwards");
+      DO $$ BEGIN
+        IF to_regclass('admin_events') IS NOT NULL AND (SELECT count(*) FROM admin_events) > 0 THEN
+          RAISE EXCEPTION 'admin_events already holds events: do not drop it. Use the code rollback (A) instead.';
+        END IF;
+      END $$;
+      DROP TABLE IF EXISTS admin_events;
+      DROP FUNCTION IF EXISTS admin_events_reject_change();
+      COMMIT;`;
+    await rejects(() => client3.exec(guarded), /already holds events/, "incomplete-migration cleanup refuses to run once events exist");
+    await client3.exec("ROLLBACK").catch(() => {});
+    eq(await history(), historyBefore, "refused cleanup: the history is intact");
+    const client4 = new PGlite();
+    const db4 = drizzle(client4);
+    await migrate(db4, { migrationsFolder: join(root, "drizzle") });
+    await client4.exec(guarded);
+    eq((await client4.query("select to_regclass('admin_events') as t")).rows[0].t, null, "empty-table cleanup removes the incomplete objects");
+    eq((await client4.query("select count(*)::int as n from pg_proc where proname = 'admin_events_reject_change'")).rows[0].n, 0, "empty-table cleanup leaves no stray function");
+    await client4.exec(readFileSync(join(root, "drizzle/0013_admin_events.sql"), "utf8").replaceAll("--> statement-breakpoint", ""));
+    eq((await client4.query("select to_regclass('admin_events') as t")).rows[0].t, "admin_events", "the complete migration file re-applies after the cleanup");
+    await client4.close();
+
+    // C) New code WITHOUT migration 0013 fails closed: the write is refused and nothing is changed.
+    const client5 = new PGlite();
+    const db5 = drizzle(client5);
+    await migrate(db5, { migrationsFolder: tmp }); // up to 0012: no admin_events
+    const sb5 = createAppSandbox(db5, { env: ENV });
+    const candidates5 = sb5.load("lib/db/candidates.ts");
+    await assert.rejects(() => candidates5.insertCandidateRestaurant({ name: "No Table", slug: "no-table", market: "dc" }, { actor: { identity: "ingest-agent", scope: "draft", assurance: "shared-credential" }, requestId: "req-no-table", reason: null }), dbError(/admin_events/), "without 0013 an audited write throws"); checks++;
+    eq((await client5.query("select count(*)::int as n from candidate_restaurants")).rows[0].n, 0, "without 0013: nothing was written (no unaudited success)");
+    await client5.close();
     await client3.close();
   } finally {
     rmSync(tmp, { recursive: true, force: true });

@@ -40,20 +40,42 @@ At promotion (`lib/publicationChecks.ts`, read-only). A *warning* needs `overrid
 ## Published video corrections and recovery
 `PATCH /api/admin/videos/[id]` changes only `creatorHandle`, `creatorDisplayName`, `attributionText`. Source URL, platform, embed URL, caption, legal display status and the restaurant are refused by name. `DELETE` hides (soft), `POST /api/admin/videos/[id]/restore` restores; both idempotent. Screen: `/admin/videos/published`.
 
-## Migration 0013
-File: `drizzle/0013_admin_events.sql` (+ journal entry and snapshot). Creates `admin_events` (constraints, 5 indexes) and the append-only trigger function and triggers. It touches no existing table and writes no rows.
+## Migration 0013 and release sequence
+File: `drizzle/0013_admin_events.sql` (+ journal entry and snapshot). Creates `admin_events` (constraints, 5 indexes) and the append-only trigger function and triggers. It touches no existing table and writes no rows. Production's schema is not managed by the drizzle migrator (there is no `drizzle.__drizzle_migrations` table there), and `next build` runs no migrations, so the file must be applied by hand.
 
-**Apply** with the whole file, in one transaction: `psql "$DATABASE_URL" -1 -f drizzle/0013_admin_events.sql` (or run it in the Neon SQL editor as one script). Do **not** rely on `drizzle-kit push`: it would create the table but not the triggers. Verify afterwards: `select count(*) from pg_trigger where tgrelid = 'admin_events'::regclass and not tgisinternal;` returns 2 (the audit screen also shows "Append-only protection active").
-**Order:** apply the migration **before** deploying this code. Until the table exists every audited mutation fails closed (500) rather than succeeding unaudited.
-**Roll back** (only if no events must be kept; this destroys the audit history):
+### Release order: migration first, code second
+1. **Back up** (a Neon branch of production taken immediately before; the plan's point-in-time window is short).
+2. **Apply the migration** with the whole file in ONE transaction: `psql "$DATABASE_URL" -1 -f drizzle/0013_admin_events.sql`, or paste the whole file into the Neon SQL editor as one script. Do **not** use `drizzle-kit push`: it would create the table but not the triggers.
+3. **Verify**: `select count(*) from pg_trigger where tgrelid = 'admin_events'::regclass and not tgisinternal;` returns 2, and `select count(*) from admin_events;` returns 0.
+4. **Only then deploy the code.**
+
+**What happens if the new code runs without migration 0013.** Every audited admin write (create, edit, approve, promote, attach, hide, restore, direct add, hero selection) fails closed: the request returns a 500, **nothing is changed** and nothing succeeds unaudited. Public pages and read endpoints are unaffected, and the audit-history screen reports an error. No data is damaged, so the fix is simply to apply the migration (or roll the code back, below). The migration is not re-runnable once the table exists (`CREATE TABLE` would fail), so check `select to_regclass('admin_events');` first when in doubt.
+
+### Three different recoveries (do not mix them up)
+
+**A. Rolling back the application code (the normal production rollback).**
+Redeploy the previous build (or revert the merge). **Leave migration 0013 applied.** The table, every existing event, the indexes and both triggers stay exactly as they are, so the audit history is preserved and still tamper-protected. Older code never reads or writes `admin_events`, so it runs correctly against a database that has the table. Do not `DROP` the table and do not rename it: dropping destroys the history, and renaming it makes the new code fail closed on every admin write if it is redeployed later (and leaves an untracked table behind). Note for the incident record: while the older code runs, admin changes are **not** audited, so the log has a gap for that period; the log resumes when the audited code is deployed again.
+
+**B. Recovering from a failed migration.**
+The file is applied in one transaction, so a failure leaves nothing behind (no table, no function, no triggers; verified by failing 0013 part-way and re-applying). Fix the cause and run the whole file again. Only if it was applied statement-by-statement outside a transaction (do not do this) and stopped part-way can partial objects exist. That is safe to clean up **only while the table is empty** (run as the database owner), because nothing can have been audited yet. This guard refuses to run once any event exists:
 ```sql
 BEGIN;
-DROP TABLE admin_events;            -- drops its triggers and indexes
-DROP FUNCTION admin_events_reject_change();
-DELETE FROM drizzle.__drizzle_migrations WHERE id = (SELECT max(id) FROM drizzle.__drizzle_migrations);  -- only if the migrator recorded 0013 (it is the latest row)
+DO $$ BEGIN
+  IF to_regclass('admin_events') IS NOT NULL AND (SELECT count(*) FROM admin_events) > 0 THEN
+    RAISE EXCEPTION 'admin_events already holds events: do not drop it. Use the code rollback (A) instead.';
+  END IF;
+END $$;
+DROP TABLE IF EXISTS admin_events;
+DROP FUNCTION IF EXISTS admin_events_reject_change();
 COMMIT;
 ```
-Rolling the **code** back without dropping the table is safe: older code never touches `admin_events`.
+then re-run the complete migration file. This is a recovery for an incomplete migration. It is never a production rollback once events exist.
+
+**C. Recovering from a deployed application defect.**
+- *Defect in application behaviour, data not damaged:* roll the code back (A) or ship a forward fix. Keep `admin_events`.
+- *Bad data written through the admin screens or API:* correct it with the audited recovery actions (restore a hidden video, edit or hide the restaurant, correct attribution). Each correction is its own event, and the history (`from`/`to` values) shows exactly what to undo. Never edit or delete events: the triggers refuse it, and the log must show both the mistake and the fix.
+- *Defect in auditing itself (events wrong or audited writes failing):* roll the code back (A) rather than disabling triggers or touching the table. Events already written stay immutable; describe the faulty period in the incident record.
+- *Restoring the whole database to an earlier point:* a last resort. It rewinds `admin_events` along with everything else, losing every event after the restore point. Export first (`COPY (SELECT * FROM admin_events ORDER BY seq) TO ...`) so the history can be kept alongside the restored data.
 
 ## Tests
 `npm run test:admin-audit` (pure checks + PostgreSQL integration on PGlite, an in-process real PostgreSQL; no network, no production). `npm run test:admin-authz` covers the route/credential matrix including the new routes.

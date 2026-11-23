@@ -994,6 +994,11 @@ The app deploys cleanly to Vercel:
    `LOGODEV_TOKEN`) only if you want those features; each degrades cleanly when unset.
 3. Create the `restaurant_videos` table once — via the Neon SQL editor using the
    committed migration, or `db:push` from a non-intercepted network.
+4. Admin audit log (Admin Hardening B): apply `drizzle/0013_admin_events.sql` in one
+   transaction **before** deploying the code that writes to it, and not with `db:push`
+   (it would skip the append-only triggers). The normal rollback is to redeploy the
+   previous code and keep the table. See
+   [docs/admin-audit-log.md](docs/admin-audit-log.md).
 
 The build does not require a database; routes read environment variables at
 request time. Because deployment runs on a clean network, the Neon driver

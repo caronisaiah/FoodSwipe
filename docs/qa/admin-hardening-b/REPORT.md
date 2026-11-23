@@ -4,7 +4,7 @@ Status: implemented, verified and committed locally (four commits) in a separate
 
 ## 1. Base and branch
 - Worktree: `/Users/caronmcpherson/Documents/ChatGPT/FoodSwipe/engineering-admin-hardening-b`
-- Branch `engineering/admin-hardening-b`, based on committed Hardening A: **`f77e54a3cbfa2938e1386d997384c5a4d7ffc0fd`** (HEAD is still that SHA; all work is uncommitted: 34 modified, 16 new paths).
+- Branch `engineering/admin-hardening-b`, based on committed Hardening A: **`f77e54a3cbfa2938e1386d997384c5a4d7ffc0fd`** (four local commits followed, then a final corrections commit; see the release-readiness section at the end).
 
 ## 2. Files and migration
 Migration (versioned, drizzle journal idx 13): `drizzle/0013_admin_events.sql`, `drizzle/meta/0013_snapshot.json`, `drizzle/meta/_journal.json`.
@@ -40,20 +40,20 @@ Real PostgreSQL was available only as PGlite (approved dependency); the Neon HTT
 tsc strict clean · ESLint clean (0 problems) · `next build` OK (new routes/pages present) · Hardening A authz 835 · admin API 264 · attach 25 · import 320 · mapping 6 · audit unit 210 · audit integration 277 · public-market 648 · photo-attribution 10 · photo-reliability 1881 · favorites 235 · reviews-v2 7 · photo-gallery 13 · gallery-ui 22 · map-v2 8. Raw log: `final-verification.txt`. (Five older suites needed their stubs updated for the new contracts; one, `public-market-check`, failed until its isolated-dependency list was updated — fixed.)
 
 ## 11. Migration and rollback
-Migration safety proven on PGlite: applying 0013 on a database as production is today (rows incl. three `needs_review` restaurant drafts and an unattached video candidate) leaves every row byte-identical; no events backfilled (history starts empty, nothing implies historical actors); a migration that fails part-way leaves no table, no triggers and no migration record; the documented rollback leaves data intact and the migration re-applies. **Not applied anywhere real.** Apply the whole file in one transaction (`psql -1 -f` or the Neon SQL editor as one script), *not* `db:push` (it would skip the triggers), **before** deploying the code (until then audited mutations fail closed). Rollback SQL and verification query are in `docs/admin-audit-log.md`.
+Migration safety proven on PGlite: applying 0013 on a database as production is today (rows incl. three `needs_review` restaurant drafts and an unattached video candidate) leaves every row byte-identical; no events backfilled (history starts empty, nothing implies historical actors); a migration that fails part-way leaves no table, no triggers and no migration record. Apply the whole file in one transaction (`psql -1 -f` or the Neon SQL editor as one script), *not* `db:push` (it would skip the triggers), **before** deploying the code (until then audited mutations fail closed, tested). **Recoveries** (full text in `docs/admin-audit-log.md`): rolling back the *code* keeps `admin_events`, its events and triggers (the normal production rollback; never `DROP` or rename the table); a failed migration leaves nothing behind and is re-run, with an owner-run cleanup that refuses once events exist; a deployed defect is corrected with new audited changes, never by editing events.
 Phase 16: three restaurant drafts and eight TikTok leads untouched (no production access; the mapping script was not run). No credentials created, rotated or changed.
 
 ## 12. Remaining risks
 1. Identity is a credential, not a person (above).
 2. Writes outside the app (SQL editor, `admin-video-association-mapping.mjs --apply`, `stage-nyc-map-approvals.sql`) bypass the log.
 3. Anyone with DDL rights on the database can drop the triggers/table; consider external log shipping.
-4. Neon HTTP not run here: the SQL is standard and the `db.execute(...).rows` / `to_jsonb` pattern matches the already-shipped attach statement, but run the integration checks against a **Neon branch** before production.
-5. Concurrent-edit behavior is designed (row lock ordering) but only single-connection tested.
+4. (Resolved) The Neon HTTP driver, concurrent connections and the deployed-style HTTP authorization matrix were exercised on a disposable Neon branch; see `neon-validation.md`. Still to do in the deployed environment: the authorization and audit smoke tests.
+5. (Resolved) Concurrent edit, promote, attach, duplicate-submit and hide/restore races were run over separate HTTP connections on Neon; see `neon-validation.md`.
 6. (Resolved before commit) A genuine no-op edit no longer touches the row or bumps `updated_at`; regression-tested.
 7. Publication checks add friction (candidates without a Place ID now need a written override); the 60-mile radius is a heuristic.
 8. `x-request-id` supplied by a caller is used for correlation only; it can be reused and is not an integrity control.
 9. Free-text reasons are stored as typed (only configured secrets are refused). No retention policy.
-10. Browser QA used the real handlers behind a fetch redirect, not Neon; the draft-credential video-correction UI error path was covered by API tests, not clicked.
+10. Original browser QA used the real handlers behind a fetch redirect; the Neon-branch round (see `neon-validation.md`) clicked the audit screen (draft refused, publish reads) and Hide/Restore. The draft-credential video-correction UI error path is covered by API tests.
 
 ## Recommendation
 Ready for **local commit after your review**. Suggested commits: (1) migration, schema, audit core, actor identity; (2) audited mutations and route wiring; (3) video correction/restore, audit API and screens, publication checks; (4) tests and docs. Before any production deploy: apply 0013 to a Neon branch, run the integration checks against it, then apply to production before the code.
@@ -69,4 +69,9 @@ Ready for **local commit after your review**. Suggested commits: (1) migration, 
 8. **Checks:** all pass after the corrections (see `final-verification.txt`).
 
 ## Before any production deployment (not done here)
-Test migration 0013 on an isolated Neon branch; exercise the real Neon driver and concurrent operations; verify rollback without destroying existing audit history (the documented rollback drops the table: for a live system prefer disabling writes / keeping the table); confirm the Hardening A + B branch chain; recheck authorization in the deployed environment; verify the three restaurant drafts and eight video leads are unchanged.
+Done on a disposable Neon branch (see `neon-validation.md`): migration 0013, the real Neon driver, concurrent operations, the Hardening A + B chain, authorization over real HTTP, and the three restaurant drafts and eight video leads unchanged. **Still to do, with separate authorization:** a `pre-audit-0013` backup branch of production, applying 0013 in production, deploying the code after it, and rechecking authorization and audit behaviour in the deployed environment.
+
+## Release-readiness corrections (after the Neon validation)
+- **Rollback documentation corrected.** The earlier text recommended `DROP TABLE admin_events`, which destroys the history. `docs/admin-audit-log.md` now separates rolling back the application code (the normal rollback, which preserves `admin_events`, its events and triggers), recovering from a failed migration, and recovering from a deployed defect, and documents the migration-before-code order and what happens without 0013. Table renaming is not recommended for normal rollback. Tested on PostgreSQL (PGlite): code rollback leaves history byte-identical and triggers attached; the empty-table cleanup refuses once events exist; new code without 0013 fails closed with nothing written.
+- **Stale audit reason fixed.** On the published-videos screen a Reason typed for Hide stayed in the box, so a following Restore was recorded with it. The reason is now tied to the single action: it clears after a completed action, on collapse and when the record changes, and is kept only when an action fails. An empty box sends no reason. Regression tests: unit (reason lifecycle and a static guard on the screen) and integration (a Restore with no reason records none).
+- **Artifact whitespace fixed** in `final-verification.txt`, which was regenerated from this round's runs.
