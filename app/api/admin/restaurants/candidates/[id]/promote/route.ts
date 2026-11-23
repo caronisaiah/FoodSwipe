@@ -1,4 +1,4 @@
-import { adminError, adminJson, adminUrl, validationError } from "@/lib/adminApi";
+import { adminError, adminJson, adminUrl, candidateReviewUrl, validationError } from "@/lib/adminApi";
 import { parsePublicationOverride } from "@/lib/publicationChecks";
 import { auditContext, guardAdmin } from "@/lib/adminGuard";
 import { promoteCandidateToRestaurant } from "@/lib/db/restaurants";
@@ -58,7 +58,7 @@ export async function POST(
         restaurant: result.restaurant, heroSelectionWarning: result.heroSelectionWarning,
         id: result.restaurant.id, slug: result.restaurant.slug,
         adminUrl: adminUrl(req, "/admin/restaurants/published"),
-        candidateAdminUrl: adminUrl(req, "/admin/restaurants/candidates", { candidate: id }),
+        candidateAdminUrl: candidateReviewUrl(req, id),
       },
       201,
     );

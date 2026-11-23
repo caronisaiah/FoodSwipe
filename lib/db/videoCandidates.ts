@@ -261,6 +261,24 @@ export async function listVideoCandidates(filters: ListVideoCandidateFilters = {
   return rows.map(rowToCandidate);
 }
 
+/**
+ * Every video lead that belongs to one restaurant draft, oldest first. READ-ONLY.
+ * A lead belongs to the draft when it is linked by the draft's stable id, or (legacy) when it has no id link but
+ * carries the draft's slug. Slug-only leads are returned so a reviewer sees them next to their restaurant; the
+ * association summary tells them apart, and nothing here changes how a lead is linked.
+ */
+export async function listVideoCandidatesForRestaurant(candidateId: string, slug: string | null): Promise<VideoCandidate[]> {
+  const db = getDb();
+  if (!db || !candidateId) return [];
+  const bySlug = slug ? and(isNull(videoCandidates.candidateRestaurantId), eq(videoCandidates.restaurantSlug, slug)) : undefined;
+  const rows = await db
+    .select()
+    .from(videoCandidates)
+    .where(bySlug ? or(eq(videoCandidates.candidateRestaurantId, candidateId), bySlug) : eq(videoCandidates.candidateRestaurantId, candidateId))
+    .orderBy(videoCandidates.createdAt, videoCandidates.id);
+  return rows.map(rowToCandidate);
+}
+
 /** Batch review-video signal for candidate readiness; read-only, no resolving/attach. */
 export async function getCandidateVideoMetaMap(
   candidates: { id: string; slug?: string | null }[],

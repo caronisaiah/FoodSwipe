@@ -1,4 +1,4 @@
-import { adminError, adminJson, adminUrl, validationError } from "@/lib/adminApi";
+import { adminError, adminJson, candidateReviewUrl, validationError } from "@/lib/adminApi";
 import { auditContext, guardAdmin } from "@/lib/adminGuard";
 import { splitAuditReason } from "@/lib/adminAudit";
 import { DRAFT_STATUSES, validateCandidateBody } from "@/lib/adminValidation";
@@ -104,7 +104,7 @@ export async function PATCH(
     return adminJson({
       candidate,
       id: candidate.id,
-      adminUrl: adminUrl(req, "/admin/restaurants/candidates", { candidate: candidate.id }),
+      adminUrl: candidateReviewUrl(req, candidate.id),
       changedFields,
       warnings,
     });

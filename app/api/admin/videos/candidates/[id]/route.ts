@@ -1,4 +1,4 @@
-import { adminError, adminJson, adminUrl, validationError } from "@/lib/adminApi";
+import { adminError, adminJson, adminUrl, reviewUrlFor, validationError } from "@/lib/adminApi";
 import { auditContext, guardAdmin } from "@/lib/adminGuard";
 import { splitAuditReason } from "@/lib/adminAudit";
 import { DRAFT_VIDEO_STATUSES, validateVideoCandidateBody } from "@/lib/adminVideoValidation";
@@ -87,6 +87,7 @@ export async function PATCH(
     );
     return adminJson({
       candidate, id: candidate.id, adminUrl: adminUrl(req, "/admin/videos/candidates", { candidate: candidate.id }),
+      restaurantReviewUrl: reviewUrlFor(req, candidate.candidateRestaurantId, summaries[candidate.id]),
       association: summaries[candidate.id] ?? null, changedFields,
     });
   } catch {

@@ -121,7 +121,7 @@ const GOOD = { name: "Semma", market: "nyc" };
   let r = await send(route, "POST", { name: "Semma", market: " NYC ", cuisineTags: ["indian", "thai", "chinese", "vietnamese", "dim sum"], priceLevel: 4, lat: 40.7359, lng: -74.0012, googlePlaceId: "PLACE-1", address: "60 Greenwich Ave, New York, NY 10011, USA" });
   eq(r.status, 201); eq(r.body.candidate.market, "nyc", "market normalized to lowercase");
   ok(r.body.id && r.body.id === r.body.candidate.id, "returns the persisted record id");
-  ok(r.body.adminUrl.startsWith(`${ORIGIN}/admin/restaurants/candidates?candidate=${r.body.id}`), "returns a direct admin URL on the request origin");
+  ok(r.body.adminUrl === `${ORIGIN}/admin/restaurants/candidates/${r.body.id}`, "returns the direct review-page URL on the request origin");
   eq(r.body.candidate.status, "needs_review", "drafts start in needs_review");
   eq(r.body.candidate.cuisineTags, ["indian", "thai", "chinese", "vietnamese", "dim sum"], "the new Asian cuisines are accepted");
   const first = r.body.candidate;
@@ -193,7 +193,7 @@ const GOOD = { name: "Semma", market: "nyc" };
   r = await send(route, "PATCH", { status: "needs_review", priceLevel: null, cuisineTags: ["thai", "diner"], dietaryTags: [], vibeTags: ["casual"], bestFor: [], dishHighlights: ["Pad thai"], reasonText: "", reviewNotes: "checked" }, { id: c.id });
   eq(r.status, 200, "existing UI payload accepted"); eq(r.body.candidate.cuisineTags, ["thai", "diner"], "response carries the persisted values");
   eq(r.body.changedFields.sort(), ["cuisineTags", "dishHighlights", "reviewNotes", "vibeTags"].sort());
-  ok(r.body.adminUrl.includes(`candidate=${c.id}`) && r.body.id === c.id);
+  ok(r.body.adminUrl.endsWith(`/admin/restaurants/candidates/${c.id}`) && r.body.id === c.id);
   // market correction before publication
   r = await send(route, "PATCH", { market: "dc" }, { id: c.id });
   eq([r.status, r.body.candidate.market, r.body.changedFields], [200, "dc", ["market"]], "a candidate's market can be corrected before publication");
@@ -231,6 +231,7 @@ const GOOD = { name: "Semma", market: "nyc" };
   eq([r.body.candidate.candidateRestaurantId, r.body.candidate.restaurantSlug, r.body.candidate.status], [nyc.id, null, "needs_review"], "linked by stable id; the typed slug is not stored; always needs_review");
   eq([r.body.candidate.creatorHandle, r.body.candidate.creatorName], ["@jyu.eats", "jyu.eats"], "creator display name can be saved");
   ok(r.body.adminUrl.includes("/admin/videos/candidates?candidate=") && r.body.id);
+  eq(r.body.restaurantReviewUrl, `${ORIGIN}/admin/restaurants/candidates/${nyc.id}`, "a lead linked by id points at its restaurant's review page");
   eq(r.body.warnings, []);
   const vc1 = r.body.candidate;
 
