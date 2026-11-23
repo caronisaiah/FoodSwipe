@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { normalizePlacePhoto, type PlacePhoto } from "@/lib/placePhoto";
 import type { PlacePhotoCandidate as HeroPhotoCandidate } from "@/lib/places";
@@ -42,6 +42,25 @@ type ReadinessFilter = "all" | "ready" | "needs_hero" | "missing_price" | "missi
 const READINESS_FILTERS: ReadinessFilter[] = ["all", "ready", "needs_hero", "missing_price", "missing_tags", "missing_evidence", "needs_media"];
 
 type MarketFilter = "all" | string;
+
+/**
+ * Which credential the loaded session uses. The server enforces the boundary on every route; this only
+ * greys out controls the draft credential could never use, so a draft session is not offered dead ends.
+ */
+type AdminScope = "draft" | "publish";
+const AdminScopeContext = createContext<AdminScope | null>(null);
+function useCanPublish(): boolean {
+  return useContext(AdminScopeContext) !== "draft";
+}
+const DRAFT_HINT = "The draft credential cannot do this. Sign in with the publication credential.";
+
+interface ApiErrorBody { error?: string; errors?: { field: string; message: string }[] }
+/** The API returns { error, errors[] }: show every field problem, not just the first. */
+function apiErrorText(data: ApiErrorBody, fallback: string): string {
+  const list = (data.errors ?? []).map((e) => `${e.field}: ${e.message}`);
+  if (list.length > 1) return `${data.error ?? fallback} — ${list.join(" · ")}`;
+  return data.error ?? fallback;
+}
 
 const LABEL: Record<string, string> = {
   all: "All",
@@ -216,6 +235,7 @@ interface PreviewRow {
   duplicateOfStatus?: string | null;
   duplicateOfKind?: "candidate" | "restaurant" | "preview" | null;
   importError?: string;
+  duplicateWarnings?: { code: string; severity: "warning" | "info"; message: string }[];
 }
 
 interface ImportOutcome {
@@ -423,7 +443,9 @@ export default function AdminCandidates() {
   // Google import
   const [query, setQuery] = useState("");
   const [maxResults, setMaxResults] = useState("10");
-  const [market, setMarket] = useState("dc");
+  // No default market: the operator must choose, so a NYC restaurant can never be filed under DC by accident.
+  const [market, setMarket] = useState("");
+  const [adminScope, setAdminScope] = useState<AdminScope | null>(null);
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState<Msg>(null);
   const [preview, setPreview] = useState<PreviewRow[] | null>(null);
@@ -434,6 +456,8 @@ export default function AdminCandidates() {
   const eligibleIds = [...new Set((preview ?? [])
     .filter((row) => row.googlePlaceId && !row.isDuplicate)
     .map((row) => row.googlePlaceId!))];
+
+  const deepLinkHandled = useRef(false);
 
   function clearPreview() {
     setPreview(null);
@@ -464,14 +488,23 @@ export default function AdminCandidates() {
       const res = await fetch("/api/admin/restaurants/candidates", {
         headers: { "x-foodswipe-admin-secret": secret },
       });
-      const data = (await res.json()) as { candidates?: Candidate[]; error?: string };
+      const data = (await res.json()) as { candidates?: Candidate[]; error?: string; adminScope?: AdminScope };
       if (seq !== loadSeq.current) return; // superseded by a newer load
       if (!res.ok) {
         setCandidates([]);
         setListError(data.error ?? `Load failed (${res.status}).`);
         return;
       }
-      setCandidates(Array.isArray(data.candidates) ? data.candidates.map(normalizeCandidate) : []);
+      const loaded = Array.isArray(data.candidates) ? data.candidates.map(normalizeCandidate) : [];
+      setCandidates(loaded);
+      // Direct links (…/candidates?candidate=<id>) open that record once, after the first load.
+      const wanted = typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("candidate");
+      if (wanted && !deepLinkHandled.current && loaded.some((c) => c.id === wanted)) {
+        deepLinkHandled.current = true;
+        setExpandedId(wanted);
+        requestAnimationFrame(() => document.getElementById(`candidate-${wanted}`)?.scrollIntoView({ block: "center" }));
+      }
+      setAdminScope(data.adminScope === "draft" || data.adminScope === "publish" ? data.adminScope : null);
       setLoadedOnce(true);
     } catch {
       if (seq === loadSeq.current) setListError("Network error — could not reach the admin API.");
@@ -525,6 +558,10 @@ export default function AdminCandidates() {
       setImportMsg({ type: "err", text: "Enter the admin secret first." });
       return;
     }
+    if (!market) {
+      setImportMsg({ type: "err", text: "Choose a market first (there is no default)." });
+      return;
+    }
     if (!query.trim()) {
       setImportMsg({ type: "err", text: "Enter a search query." });
       return;
@@ -553,9 +590,10 @@ export default function AdminCandidates() {
         failed?: number;
         outcomes?: ImportOutcome[];
         error?: string;
+        errors?: { field: string; message: string }[];
       };
       if (!res.ok) {
-        setImportMsg({ type: "err", text: data.error ?? `Import failed (${res.status}).` });
+        setImportMsg({ type: "err", text: apiErrorText(data, `Import failed (${res.status}).`) });
         return;
       }
       if (data.dryRun) {
@@ -626,6 +664,7 @@ export default function AdminCandidates() {
   }
 
   return (
+    <AdminScopeContext.Provider value={adminScope}>
     <div className="mx-auto min-h-dvh w-full max-w-3xl px-3 pb-16 pt-[max(env(safe-area-inset-top),0.75rem)]">
       {/* Internal banner */}
       <div className="mb-4 rounded-xl border border-chili/40 bg-chili/10 p-2.5 text-xs text-cream">
@@ -659,6 +698,13 @@ export default function AdminCandidates() {
         <Field label="Admin secret" hint="session only — not stored">
           <TextInput value={secret} onChange={setSecret} placeholder="FOODSWIPE_ADMIN_SECRET" type="password" />
         </Field>
+        {adminScope && (
+          <p data-testid="admin-scope" className={`mt-1 text-[11px] font-semibold ${adminScope === "draft" ? "text-saffron" : "text-mint"}`}>
+            {adminScope === "draft"
+              ? "Draft credential: you can read and prepare records. Approving, rejecting, promoting and choosing heroes need the publication credential."
+              : "Publication credential: full access."}
+          </p>
+        )}
       </div>
 
       {/* Google import panel */}
@@ -685,15 +731,18 @@ export default function AdminCandidates() {
                 <TextInput
                   value={query}
                   onChange={(value) => { setQuery(value); clearPreview(); }}
-                  placeholder={market === "nyc" ? "pizza in Williamsburg, Brooklyn" : "brunch in Shaw, Washington DC"}
+                  placeholder={market === "nyc" ? "pizza in Williamsburg, Brooklyn" : market === "dc" ? "brunch in Shaw, Washington DC" : "cuisine + neighborhood"}
                 />
               </Field>
               <Field label="Market" hint="where these restaurants are">
                 <select
                   value={market}
                   onChange={(e) => { setMarket(e.target.value); clearPreview(); }}
+                  required
+                  aria-required="true"
                   className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 focus:ring-saffron/60"
                 >
+                  <option value="" disabled>Select a market…</option>
                   {markets.map((mkt) => (
                     <option key={mkt.id} value={mkt.id}>
                       {mkt.displayName}
@@ -701,6 +750,9 @@ export default function AdminCandidates() {
                   ))}
                 </select>
               </Field>
+              <p data-testid="import-market-indicator" className={`text-[11px] font-semibold ${market ? "text-mint" : "text-saffron"}`}>
+                {market ? `Importing into: ${markets.find((m) => m.id === market)?.displayName ?? market}` : "No market selected. Choose one to enable the preview."}
+              </p>
               <div>
                 <Field label="Max results" hint="1–20">
                   <input
@@ -719,7 +771,7 @@ export default function AdminCandidates() {
               </div>
               <button
                 type="submit"
-                disabled={importing}
+                disabled={importing || !market}
                 className="w-full rounded-lg bg-white/10 py-2 text-sm font-bold text-cream ring-1 ring-inset ring-white/15 transition hover:bg-white/20 disabled:opacity-40"
               >
                 {importing ? "Working…" : "Preview candidates"}
@@ -892,6 +944,7 @@ export default function AdminCandidates() {
         </>
       )}
     </div>
+    </AdminScopeContext.Provider>
   );
 }
 
@@ -1063,7 +1116,7 @@ function CandidateRow({
   const readiness = readinessFor(candidate);
 
   return (
-    <li className="bg-surface">
+    <li id={`candidate-${candidate.id}`} className="bg-surface">
       {/* Collapsed summary row */}
       <button
         type="button"
@@ -1075,6 +1128,9 @@ function CandidateRow({
         <div className="min-w-0 flex-1">
           <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-cream">
             {candidate.name}
+            <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-bold text-cream" data-testid="market-chip" title="Market">
+              {candidate.market.toUpperCase()}
+            </span>
             {candidate.suggestionConfidence && (
               <span
                 className={`text-[10px] font-medium ${CONFIDENCE_TONE[candidate.suggestionConfidence] ?? "text-haze"}`}
@@ -1190,6 +1246,8 @@ function CandidateEditor({
   secret: string;
   onSaved: (updated: Candidate) => void;
 }) {
+  const canPublish = useCanPublish();
+  const [marketDraft, setMarketDraft] = useState<string>(candidate.market);
   const [status, setStatus] = useState<string>(candidate.status);
   const [cuisine, setCuisine] = useState(candidate.cuisineTags.join(", "));
   const [dietary, setDietary] = useState(candidate.dietaryTags.join(", "));
@@ -1204,10 +1262,15 @@ function CandidateEditor({
   const [promoting, setPromoting] = useState(false);
   const [promoteMsg, setPromoteMsg] = useState<Msg>(null);
   const [promotedSlug, setPromotedSlug] = useState<string | null>(null);
+  // Publication-readiness: warnings the server wants a human to acknowledge, with a written reason.
+  const [pubChecks, setPubChecks] = useState<{ code: string; severity: string; message: string }[] | null>(null);
+  const [pubUnresolved, setPubUnresolved] = useState<string[]>([]);
+  const [overrideReason, setOverrideReason] = useState("");
+  const [overrideConfirmed, setOverrideConfirmed] = useState(false);
 
   const snap = candidate.suggestedTags;
 
-  async function promote() {
+  async function promote(withOverride = false) {
     if (promoting) return;
     if (!secret.trim()) {
       setPromoteMsg({ type: "err", text: "Enter the admin secret first." });
@@ -1218,15 +1281,31 @@ function CandidateEditor({
     try {
       const res = await fetch(`/api/admin/restaurants/candidates/${candidate.id}/promote`, {
         method: "POST",
-        headers: { "x-foodswipe-admin-secret": secret },
+        headers: withOverride
+          ? { "x-foodswipe-admin-secret": secret, "Content-Type": "application/json" }
+          : { "x-foodswipe-admin-secret": secret },
+        body: withOverride
+          ? JSON.stringify({ override: { acknowledge: pubUnresolved, reason: overrideReason.trim() } })
+          : undefined,
       });
       const data = (await res.json()) as {
         restaurant?: { slug?: string };
         heroSelectionWarning?: string;
         error?: string;
+        code?: string;
         missingFields?: string[];
+        checks?: { code: string; severity: string; message: string }[];
+        unresolved?: string[];
       };
+      if (res.status === 409 && data.code === "publication_checks_failed" && data.checks) {
+        setPubChecks(data.checks);
+        setPubUnresolved(data.unresolved ?? []);
+        setOverrideConfirmed(false);
+        setPromoteMsg({ type: "err", text: "Not published yet: these need a human decision (see below)." });
+        return;
+      }
       if (res.ok && data.restaurant?.slug) {
+        setPubChecks(null);
         setPromotedSlug(data.restaurant.slug);
         setPromoteMsg({
           type: data.heroSelectionWarning ? "err" : "ok",
@@ -1307,6 +1386,7 @@ function CandidateEditor({
         method: "PATCH",
         headers: { "Content-Type": "application/json", "x-foodswipe-admin-secret": secret },
         body: JSON.stringify({
+          ...(marketDraft !== candidate.market ? { market: marketDraft } : {}),
           status: nextStatus,
           priceLevel: pricePayload(priceLevel),
           cuisineTags: parseList(cuisine),
@@ -1318,9 +1398,9 @@ function CandidateEditor({
           reviewNotes,
         }),
       });
-      const data = (await res.json()) as { candidate?: Candidate; error?: string };
+      const data = (await res.json()) as { candidate?: Candidate; error?: string; errors?: { field: string; message: string }[] };
       if (!res.ok || !data.candidate) {
-        setMsg({ type: "err", text: data.error ?? `Save failed (${res.status}).` });
+        setMsg({ type: "err", text: apiErrorText(data, `Save failed (${res.status}).`) });
         return;
       }
       setPromoteMsg(null);
@@ -1453,6 +1533,27 @@ function CandidateEditor({
           {/* Quality controls */}
           <div className="flex flex-wrap items-center gap-1.5 border-t border-line pt-2.5">
             <label className="mr-1 flex items-center gap-1 text-[11px] text-haze">
+              Market
+              <select
+                value={marketDraft}
+                data-testid="market-select"
+                onChange={(e) => setMarketDraft(e.target.value)}
+                disabled={Boolean(promotedSlug) || candidate.status === "approved" && !canPublish}
+                className="rounded-md bg-surface-2 px-2 py-1 text-xs text-cream outline-none ring-1 ring-inset ring-white/10 focus:ring-saffron/60"
+              >
+                {listMarkets().map((m) => (
+                  <option key={m.id} value={m.id} className="bg-surface">
+                    {m.shortName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {marketDraft !== candidate.market && (
+              <span role="status" className="text-[10px] font-semibold text-saffron">
+                Market will change from {candidate.market.toUpperCase()} to {marketDraft.toUpperCase()} when you Save (not allowed after publication).
+              </span>
+            )}
+            <label className="mr-1 flex items-center gap-1 text-[11px] text-haze">
               Status
               <select
                 value={status}
@@ -1460,7 +1561,7 @@ function CandidateEditor({
                 className="rounded-md bg-surface-2 px-2 py-1 text-xs text-cream outline-none ring-1 ring-inset ring-white/10 focus:ring-saffron/60"
               >
                 {STATUSES.map((s) => (
-                  <option key={s} value={s} className="bg-surface">
+                  <option key={s} value={s} className="bg-surface" disabled={!canPublish && (s === "approved" || s === "rejected")}>
                     {s}
                   </option>
                 ))}
@@ -1471,8 +1572,9 @@ function CandidateEditor({
               {saving ? "Saving…" : "Save"}
             </button>
             <Action onClick={() => void save("needs_review")} disabled={saving} icon="flag">Needs review</Action>
-            <Action onClick={() => void save("approved")} disabled={saving} icon="check_circle" tone="mint">Approve</Action>
-            <Action onClick={() => void save("rejected")} disabled={saving} icon="cancel" tone="chili">Reject</Action>
+            <Action onClick={() => void save("approved")} disabled={saving || !canPublish} icon="check_circle" tone="mint">Approve</Action>
+            <Action onClick={() => void save("rejected")} disabled={saving || !canPublish} icon="cancel" tone="chili">Reject</Action>
+            {!canPublish && <span className="text-[10px] text-saffron">{DRAFT_HINT}</span>}
             {msg && (
               <span className={`ml-1 text-[11px] ${msg.type === "ok" ? "text-mint" : "text-chili-soft"}`}>
                 {msg.text}
@@ -1488,13 +1590,17 @@ function CandidateEditor({
             <p className="flex items-center gap-1.5 text-[11px] font-semibold text-cream">
               <MaterialIcon name="rocket_launch" className="text-sm" />
               Promote to live feed
+              <a href={`/admin/audit?resource=${encodeURIComponent(candidate.id)}`} target="_blank" rel="noopener noreferrer" className="ml-auto text-[10px] font-normal text-haze underline-offset-2 hover:underline">
+                History
+              </a>
             </p>
             {candidate.status === "approved" ? (
               <>
                 <button
                   type="button"
                   onClick={() => void promote()}
-                  disabled={promoting}
+                  disabled={promoting || !canPublish}
+                  title={!canPublish ? DRAFT_HINT : undefined}
                   className="mt-1.5 flex items-center gap-1 rounded-md bg-brand-gradient px-3 py-1.5 text-xs font-bold text-ink transition active:scale-[0.98] disabled:opacity-40"
                 >
                   <MaterialIcon name="publish" className="text-sm" />
@@ -1515,6 +1621,47 @@ function CandidateEditor({
               <p className={`mt-1 text-[11px] ${promoteMsg.type === "ok" ? "text-mint" : "text-chili-soft"}`}>
                 {promoteMsg.text}
               </p>
+            )}
+            {pubChecks && !promotedSlug && (
+              <div className="mt-1.5 rounded-md bg-saffron/10 p-2 ring-1 ring-inset ring-saffron/30" data-testid="publication-checks">
+                <p className="text-[11px] font-semibold text-saffron">Publication checks</p>
+                <ul className="mt-1 space-y-1 text-[11px] text-cream/90">
+                  {pubChecks.map((c, i) => (
+                    <li key={`${c.code}-${i}`} className="flex gap-1.5">
+                      <span className={c.severity === "warning" ? "text-saffron" : "text-haze"}>
+                        {c.severity === "warning" ? "Needs a decision" : "FYI"}
+                      </span>
+                      <span>{c.message}</span>
+                    </li>
+                  ))}
+                </ul>
+                {pubUnresolved.length > 0 && (
+                  <div className="mt-2 space-y-1.5">
+                    <label className="block text-[10px] text-haze">
+                      Why is publishing correct anyway? (recorded in the audit log with the credential used)
+                      <textarea
+                        value={overrideReason}
+                        onChange={(e) => setOverrideReason(e.target.value)}
+                        rows={2}
+                        maxLength={1000}
+                        className="mt-0.5 w-full rounded-md bg-surface-2 px-2 py-1 text-xs text-cream outline-none ring-1 ring-inset ring-white/10 focus:ring-saffron/60"
+                      />
+                    </label>
+                    <label className="flex items-center gap-1.5 text-[11px] text-cream">
+                      <input type="checkbox" checked={overrideConfirmed} onChange={(e) => setOverrideConfirmed(e.target.checked)} />
+                      I have reviewed these warnings ({pubUnresolved.join(", ")}).
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void promote(true)}
+                      disabled={promoting || !canPublish || !overrideConfirmed || overrideReason.trim().length < 10}
+                      className="rounded-md bg-saffron px-3 py-1.5 text-xs font-bold text-ink disabled:opacity-40"
+                    >
+                      {promoting ? "Publishing…" : "Publish with recorded override"}
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
             {promotedSlug && (
               <a
@@ -1569,6 +1716,12 @@ function PreviewCard({ row, selected, disabled, onToggle }: {
         </p>
       )}
       {row.importError && <p role="status" className="mt-1 text-[11px] text-chili-soft">Import failed — {row.importError}</p>}
+      {(row.duplicateWarnings ?? []).map((n, i) => (
+        <p key={i} data-testid="duplicate-hint" className={`mt-1 flex items-start gap-1 text-[11px] ${n.severity === "warning" ? "text-saffron" : "text-haze"}`}>
+          <MaterialIcon name={n.severity === "warning" ? "warning" : "info"} className="text-xs" />
+          <span>{n.message}</span>
+        </p>
+      ))}
       {warn && (
         <p className="mt-1 flex items-center gap-1 text-[11px] text-saffron">
           <MaterialIcon name="warning" className="text-xs" />
@@ -1865,6 +2018,7 @@ function HeroPhotoCandidateCard({
   disabled: boolean;
   onUse: () => void;
 }) {
+  const canPublish = useCanPublish();
   const image = usePlacePhotoImage(candidate.status === "ok" ? normalizePlacePhoto(candidate) : null);
   const subject = `${restaurantName}, candidate ${candidate.ordinal}`;
   const unavailable = photoUnavailableMessage(candidate.status);
@@ -1921,7 +2075,8 @@ function HeroPhotoCandidateCard({
         <button
           type="button"
           onClick={onUse}
-          disabled={disabled || selected || !image.displayed}
+          disabled={disabled || selected || !image.displayed || !canPublish}
+          title={!canPublish ? DRAFT_HINT : undefined}
           className={`inline-flex w-full items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-bold transition active:scale-[0.98] disabled:opacity-45 ${
             selected
               ? "bg-mint/15 text-mint ring-1 ring-inset ring-mint/25"

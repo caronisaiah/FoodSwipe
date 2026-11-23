@@ -71,6 +71,7 @@ function harness() {
       if (name === "node:crypto") return require(name);
       if (relative === "lib/db/candidates.ts") {
         if (name === "drizzle-orm") return {};
+        if (name === "./audit" || name === "@/lib/adminAudit") return {};
         if (name === "./schema") return { restaurants: "synthetic-restaurant-table" };
         if (name === "./index") return { isDbConfigured: () => state.dbAvailable, getDb: () => state.dbAvailable ? {
           select: () => ({ from: async (table) => {
@@ -79,16 +80,21 @@ function harness() {
           } }),
         } : null };
       }
-      if (name === "@/lib/adminAuth") return {
-        isAdminConfigured: () => state.configured,
-        hasValidAdminSecret: () => state.authorized,
-      };
+      // The real guard is covered by admin-authz-check.mjs; here it only reports the synthetic state.
+      if (name === "@/lib/adminGuard") return { guardAdmin: () => {
+        const deny = (status, code) => ({ ok: false, response: Response.json({ error: code, code }, { status }) });
+        if (!state.configured) return deny(503, "admin_disabled");
+        if (!state.authorized) return deny(401, "unauthorized");
+        if (!state.dbAvailable) return deny(503, "database_unavailable");
+        return { ok: true, scope: "draft", actor: { identity: "draft-credential", scope: "draft", assurance: "shared-credential" }, requestId: "req-test" };
+      }, auditContext: (auth, extra = {}) => ({ actor: auth.actor, requestId: auth.requestId, reason: null, details: extra.details }) };
+      if (name === "@/lib/db/identity") return { listIdentityRecords: async () => [] };
       if (name === "@/lib/db/candidates") return db;
       if (name === "@/lib/places") return { searchPlacesText: async (query, maxResults) => {
         state.searches.push({ query, maxResults });
         return { status: state.googleStatus, results: state.results };
       } };
-      const allowed = ["markets", "restaurantImportPreview", "reviewLikelihood", "candidateTagger", "seed/restaurants", "video"];
+      const allowed = ["markets", "restaurantImportPreview", "reviewLikelihood", "candidateTagger", "seed/restaurants", "video", "adminApi", "adminValidation", "duplicateWarnings", "vocab", "adminAudit"];
       if (allowed.some((path) => name === `@/lib/${path}`)) return load(`${name.slice(2)}.ts`);
       throw new Error(`Unexpected isolated dependency: ${relative}: ${name}`);
     }
@@ -176,16 +182,26 @@ for (const selected of [["A"], ["A", "D", "F", "J"], [..."ABCDEFGHIJ"], ["A", "A
   equal(h.state.writes.length, 1);
 }
 
-// Arbitrary browser fields are ignored; omitted market still defaults to DC.
+// Arbitrary browser fields are ignored. The market is REQUIRED: omitting it is a structured 422, never a DC default.
 {
   const h = harness();
-  const ctx = { query: context.query, maxResults: 10 };
+  const missing = await h.request({ query: context.query, maxResults: 10 });
+  equal([missing.status, missing.body.code, missing.body.errors[0].code], [422, "validation_failed", "market_required"]);
+  equal(h.state.searches.length, 0);
+  equal((await h.request({ query: context.query, maxResults: 10, market: "" })).body.errors[0].code, "market_required");
+  equal((await h.request({ query: context.query, maxResults: 10, market: "Washington" })).body.errors[0].code, "invalid_market");
+  equal(h.state.searches.length, 0);
+  equal(h.state.writes.length, 0);
+}
+{
+  const h = harness();
+  const ctx = { query: context.query, maxResults: 10, market: "nyc" };
   const p = await preview(h, ctx);
   const res = await h.request({ ...writeBody(p, ["A"], ctx), name: "Forged name", source: "manual",
     candidates: [{ googlePlaceId: "outside-preview", name: "Forged row" }], status: "published" });
   counts(res, 1, 0, 0);
   equal([h.state.writes[0].name, h.state.writes[0].source, h.state.writes[0].status, h.state.writes[0].market],
-    ["Pizza A", "google_places", "needs_review", "dc"]);
+    ["Pizza A", "google_places", "needs_review", "nyc"]);
   equal(ids(h.state.writes), ["A"]);
 }
 
@@ -214,7 +230,7 @@ for (const selected of [["A"], ["A", "D", "F", "J"], [..."ABCDEFGHIJ"], ["A", "A
   equal(h.state.searches.length, 1);
   equal(h.state.writes.length, 0);
   equal(h.state.jobs.length, 0);
-  equal((await h.request({ ...context, market: "invalid" })).status, 400);
+  equal((await h.request({ ...context, market: "invalid" })).status, 422);
   h.state.authorized = false;
   equal((await h.request(context)).status, 401);
   h.state.authorized = true;

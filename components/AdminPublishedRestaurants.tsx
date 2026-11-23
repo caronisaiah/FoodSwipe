@@ -128,9 +128,11 @@ export default function AdminPublishedRestaurants() {
 
       <header className="mb-3 flex items-center justify-between">
         <h1 className="font-display text-xl font-bold text-cream">Published restaurants</h1>
-        <Link href="/admin/restaurants/candidates" className="text-xs text-haze underline-offset-2 hover:underline">
-          ← Candidates
-        </Link>
+        <nav className="flex gap-3 text-xs text-haze">
+          <Link href="/admin/audit" className="underline-offset-2 hover:underline">Audit history</Link>
+          <Link href="/admin/videos/published" className="underline-offset-2 hover:underline">Published videos</Link>
+          <Link href="/admin/restaurants/candidates" className="underline-offset-2 hover:underline">← Candidates</Link>
+        </nav>
       </header>
 
       <div className="mb-4">

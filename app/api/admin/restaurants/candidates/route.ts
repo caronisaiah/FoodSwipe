@@ -1,12 +1,18 @@
-import { hasValidAdminSecret, isAdminConfigured } from "@/lib/adminAuth";
+import { adminError, adminJson, adminUrl, validationError } from "@/lib/adminApi";
+import { auditContext, guardAdmin } from "@/lib/adminGuard";
+import { splitAuditReason } from "@/lib/adminAudit";
+import { validateCandidateBody } from "@/lib/adminValidation";
+import { findPossibleDuplicates } from "@/lib/duplicateWarnings";
 import {
   CANDIDATE_STATUSES,
   addRestaurantSource,
+  getExistingCandidateSlugs,
   insertCandidateRestaurant,
-  isDbConfigured,
   listCandidateRestaurants,
+  slugify,
   type CandidateStatus,
 } from "@/lib/db/candidates";
+import { findPlaceIdConflict, listIdentityRecords } from "@/lib/db/identity";
 import { getCandidateEvidenceMetaMap } from "@/lib/db/restaurantEvidence";
 import { getApprovedHeroSelectionMapForCandidates } from "@/lib/db/heroMediaSelections";
 import { getCandidatePromotionConflictMap } from "@/lib/db/restaurants";
@@ -14,46 +20,34 @@ import { getCandidateVideoMetaMap } from "@/lib/db/videoCandidates";
 import { computeCandidateReadiness } from "@/lib/candidateReadiness";
 
 /*
-  Restaurant candidate ingestion (Phase 1) — INTERNAL, admin-secret protected.
-  These routes manage a REVIEW staging area only; candidates never reach `/feed`
-  (the app still serves seed restaurants). Same guards as /api/admin/videos:
-    - 503 if FOODSWIPE_ADMIN_SECRET is unset (admin API disabled)
-    - 401 if the x-foodswipe-admin-secret header is missing/wrong
-    - 503 if DATABASE_URL is unset
+  Restaurant candidate ingestion — INTERNAL, admin credential required. These routes manage a REVIEW
+  staging area only; candidates never reach `/feed`.
+
+  Credentials (see lib/adminAuth): the draft credential may read, list and create drafts; it can never
+  approve or promote. Guard order: config 503 -> unauthenticated 401 -> insufficient scope 403 -> DB 503.
 
   GET  /api/admin/restaurants/candidates[?status=candidate|approved|rejected|needs_review]
-  POST /api/admin/restaurants/candidates   Body: manual candidate fields (name required)
+  POST /api/admin/restaurants/candidates
+       Body: { name, market, ...optional fields }. `market` is REQUIRED (there is no default).
+       Unknown fields, bad enums, unknown cuisine/vibe/dietary tags, invalid price or coordinates -> 422
+       { error, code: "validation_failed", errors: [{ field, code, message }] }.
+       A Google Place ID that already exists -> 409 { code: "place_id_conflict", existing }.
+       Possible duplicates by name/address are returned as non-blocking `warnings`; branches are never merged.
+       201 -> { candidate, id, adminUrl, warnings }.
 */
 
-/** Shared guard — returns an error Response, or null when the request may proceed. */
-function adminGuard(req: Request): Response | null {
-  if (!isAdminConfigured()) {
-    return Response.json(
-      { error: "Admin API is disabled (FOODSWIPE_ADMIN_SECRET not set)." },
-      { status: 503 },
-    );
-  }
-  if (!hasValidAdminSecret(req)) {
-    return Response.json({ error: "Unauthorized." }, { status: 401 });
-  }
-  if (!isDbConfigured()) {
-    return Response.json(
-      { error: "Database not configured (DATABASE_URL not set)." },
-      { status: 503 },
-    );
-  }
-  return null;
-}
-
 export async function GET(req: Request): Promise<Response> {
-  const denied = adminGuard(req);
-  if (denied) return denied;
+  const auth = guardAdmin(req, "draft");
+  if (!auth.ok) return auth.response;
 
   const statusParam = new URL(req.url).searchParams.get("status");
   const status: CandidateStatus | undefined =
     statusParam && (CANDIDATE_STATUSES as readonly string[]).includes(statusParam)
       ? (statusParam as CandidateStatus)
       : undefined;
+  if (statusParam && !status) {
+    return adminError(422, "invalid_status", `status must be one of: ${CANDIDATE_STATUSES.join(", ")}.`, { field: "status" });
+  }
 
   try {
     const candidates = await listCandidateRestaurants(status);
@@ -72,6 +66,7 @@ export async function GET(req: Request): Promise<Response> {
       const hasApprovedHeroSelection = Boolean(heroMediaSelection);
       return {
         ...candidate,
+        adminUrl: adminUrl(req, "/admin/restaurants/candidates", { candidate: candidate.id }),
         websiteEvidenceMeta,
         videoMeta: video,
         promotionConflict,
@@ -87,49 +82,97 @@ export async function GET(req: Request): Promise<Response> {
         }),
       };
     });
-    return Response.json({ candidates: enriched });
+    return adminJson({ candidates: enriched, adminScope: auth.scope });
   } catch {
-    return Response.json({ error: "Failed to list candidates." }, { status: 500 });
+    return adminError(500, "list_failed", "Failed to list candidates.", { retryable: true });
   }
 }
 
 export async function POST(req: Request): Promise<Response> {
-  const denied = adminGuard(req);
-  if (denied) return denied;
+  const auth = guardAdmin(req, "draft");
+  if (!auth.ok) return auth.response;
 
   let body: unknown;
   try {
     body = await req.json();
   } catch {
-    return Response.json({ error: "Invalid JSON body." }, { status: 400 });
+    return adminError(400, "invalid_json", "Invalid JSON body.");
   }
-  const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+  const split = splitAuditReason(body);
+  if (!split.ok) return validationError([{ field: "auditReason", code: "invalid_reason", message: split.message }]);
+  body = split.body;
+  const audit = auditContext(auth, { reason: split.reason });
 
-  if (typeof b.name !== "string" || b.name.trim() === "") {
-    return Response.json({ error: "A restaurant `name` is required." }, { status: 422 });
-  }
+  const parsed = validateCandidateBody(body, "create");
+  if (!parsed.ok) return validationError(parsed.errors);
+  const write = parsed.value;
+  const warnings: unknown[] = [...parsed.warnings];
 
   try {
-    const candidate = await insertCandidateRestaurant(b);
-    if (!candidate) {
-      return Response.json({ error: "Invalid candidate data." }, { status: 422 });
+    if (write.googlePlaceId) {
+      const existing = await findPlaceIdConflict(write.googlePlaceId);
+      if (existing) {
+        return adminError(409, "place_id_conflict", `A ${existing.kind} (“${existing.name}”) already uses this Google Place ID.`, {
+          field: "googlePlaceId",
+          existing: {
+            kind: existing.kind, id: existing.id, name: existing.name, slug: existing.slug, status: existing.status, market: existing.market,
+            adminUrl: existing.kind === "candidate" ? adminUrl(req, "/admin/restaurants/candidates", { candidate: existing.id }) : undefined,
+          },
+        });
+      }
     }
-    // Record provenance separately from the curated candidate fields (best-effort).
+
+    const index = await listIdentityRecords();
+    const duplicateNotes = findPossibleDuplicates(
+      { name: write.name!, address: write.address ?? null, market: write.market!, googlePlaceId: write.googlePlaceId ?? null },
+      index,
+    );
+    warnings.push(...duplicateNotes.map((n) => ({ code: n.code, severity: n.severity, message: n.message, existing: n.existing })));
+
+    const used = await getExistingCandidateSlugs();
+    let slug = write.slug ?? null;
+    if (slug && used.has(slug)) {
+      return adminError(409, "slug_conflict", `Another candidate already uses the slug "${slug}".`, { field: "slug" });
+    }
+    if (!slug) {
+      const base = slugify(write.name!) || "restaurant";
+      slug = base;
+      for (let i = 2; used.has(slug); i++) slug = `${base}-${i}`;
+    }
+
+    const candidate = await insertCandidateRestaurant({
+      ...write,
+      slug,
+      status: write.status ?? "needs_review",
+      source: "manual",
+    }, audit);
+    if (!candidate) return adminError(422, "invalid_candidate", "Invalid candidate data.");
+    // Provenance, kept separate from curated fields (best-effort).
     await addRestaurantSource(candidate.id, {
-      sourceType: candidate.source,
+      sourceType: "manual",
       externalId: candidate.googlePlaceId,
-      rawName: typeof b.name === "string" ? b.name : null,
-      rawAddress: typeof b.address === "string" ? b.address : null,
-      url: typeof b.websiteDomain === "string" ? b.websiteDomain : null,
-      notes:
-        typeof b.notes === "string"
-          ? b.notes
-          : typeof b.reviewNotes === "string"
-            ? b.reviewNotes
-            : null,
+      rawName: write.name ?? null,
+      rawAddress: write.address ?? null,
+      url: write.websiteDomain ?? null,
+      notes: write.reviewNotes ?? null,
     });
-    return Response.json({ candidate }, { status: 201 });
+    return adminJson(
+      { candidate, id: candidate.id, adminUrl: adminUrl(req, "/admin/restaurants/candidates", { candidate: candidate.id }), warnings },
+      201,
+    );
   } catch {
-    return Response.json({ error: "Failed to create candidate." }, { status: 500 });
+    // A lost race on the Place ID unique index looks like any other insert failure: re-check before giving up.
+    if (write.googlePlaceId) {
+      try {
+        const existing = await findPlaceIdConflict(write.googlePlaceId);
+        if (existing) {
+          return adminError(409, "place_id_conflict", `A ${existing.kind} (“${existing.name}”) already uses this Google Place ID.`, {
+            field: "googlePlaceId",
+            existing: { kind: existing.kind, id: existing.id, name: existing.name, slug: existing.slug, status: existing.status, market: existing.market },
+          });
+        }
+      } catch { /* fall through to the generic error */ }
+    }
+    return adminError(500, "create_failed", "Could not create the candidate. Nothing was confirmed; check for it before retrying.", { retryable: false });
   }
 }

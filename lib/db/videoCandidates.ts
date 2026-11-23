@@ -1,8 +1,12 @@
 import { and, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import type { LegalDisplayStatus, MatchConfidence, Platform, Video } from "@/lib/types";
 import { LEGAL_STATUSES, normalizeVideo } from "@/lib/video";
+import { resolveAttachTarget } from "@/lib/videoAssociation";
 import { getDb, isDbConfigured } from "./index";
-import { restaurants, restaurantVideos, videoCandidates, type VideoCandidateRow, type NewVideoCandidateRow } from "./schema";
+import { VIDEO_RESTAURANT_RELATED, auditSql, auditedInsert, auditedUpdate, executeRows } from "./audit";
+import { AUDIT_FIELDS, type ActionRuleSet, type AuditContext } from "@/lib/adminAudit";
+import { getPublishedRefBySlug, getPublishedRefBySourceCandidate } from "./identity";
+import { candidateRestaurants, restaurants, restaurantVideos, videoCandidates, type VideoCandidateRow, type NewVideoCandidateRow } from "./schema";
 
 export { isDbConfigured };
 
@@ -150,9 +154,9 @@ function toDate(v: string | null | undefined): Date | null {
  */
 export async function createVideoCandidate(
   input: CreateVideoCandidateInput,
+  ctx: AuditContext,
 ): Promise<{ candidate: VideoCandidate; duplicate: boolean }> {
-  const db = getDb();
-  if (!db) throw new Error("DATABASE_URL not configured");
+  if (!getDb()) throw new Error("DATABASE_URL not configured");
 
   const existing = await findExisting(input.normalizedSourceUrl, input.platform, input.platformVideoId ?? null);
   if (existing) return { candidate: existing, duplicate: true };
@@ -194,13 +198,20 @@ export async function createVideoCandidate(
   };
 
   try {
-    const [row] = await db.insert(videoCandidates).values(values).returning();
+    // One statement: the candidate row and its `video_candidate.created` event commit together. If the event
+    // cannot be written the row is not created and this throws (it is NOT reported as a duplicate).
+    const { row } = await auditedInsert({
+      table: videoCandidates,
+      values,
+      audit: { ctx, resourceType: "video_candidate", fields: AUDIT_FIELDS.video_candidate, action: "video_candidate.created", related: { type: "restaurant_candidate", id: sql`cur.candidate_restaurant_id` } },
+    });
     return { candidate: rowToCandidate(row), duplicate: false };
-  } catch {
+  } catch (error) {
     // Lost a race on a unique index — return the existing candidate.
     const again = await findExisting(input.normalizedSourceUrl, input.platform, input.platformVideoId ?? null);
     if (again) return { candidate: again, duplicate: true };
-    throw new Error("Failed to create video candidate.");
+    // Anything else (including an audit event that could not be written) means NOTHING was created.
+    throw new Error("Failed to create video candidate.", { cause: error });
   }
 }
 
@@ -314,40 +325,65 @@ export async function getVideoCandidate(id: string): Promise<VideoCandidate | nu
   return rows[0] ? rowToCandidate(rows[0]) : null;
 }
 
+const VIDEO_CANDIDATE_ACTION_RULES: ActionRuleSet = [
+  { field: "status", to: "approved", action: "video_candidate.approved" },
+  { field: "status", to: "rejected", action: "video_candidate.rejected" },
+  { field: "status", action: "video_candidate.status_changed" },
+];
+
+/** Validated edit of a video candidate (see app/api/admin/videos/candidates/[id]). */
+export interface VideoCandidatePatch {
+  status?: "needs_review" | "approved" | "rejected";
+  restaurantSlug?: string | null;
+  candidateRestaurantId?: string | null;
+  proposedRestaurantName?: string | null;
+  creatorHandle?: string | null;
+  creatorName?: string | null;
+  caption?: string | null;
+  attributionText?: string | null;
+  matchConfidence?: number | null;
+  matchReasons?: string[];
+  reviewNotes?: string | null;
+}
+
 /**
- * Additive patch — only the editable review fields are written. Immutable source
- * identity (sourceUrl/normalizedSourceUrl/platform/platformVideoId/resolver*) is
- * NOT editable here. Attached candidates are locked to their recorded target.
+ * Apply an ALREADY VALIDATED patch. Only the editable review fields can be written; immutable source
+ * identity (sourceUrl/normalizedSourceUrl/platform/platformVideoId/resolver*) is not part of the type.
+ * Attached candidates are locked to their recorded target.
  */
-export async function patchVideoCandidate(id: string, patch: unknown): Promise<
+export async function patchVideoCandidate(id: string, patch: VideoCandidatePatch, ctx: AuditContext): Promise<
   { ok: true; candidate: VideoCandidate } | { ok: false; code: "not-found" | "attached" }
 > {
-  const db = getDb();
-  if (!db) throw new Error("DATABASE_URL not configured");
-  const b = (patch && typeof patch === "object" ? patch : {}) as Record<string, unknown>;
-
+  if (!getDb()) throw new Error("DATABASE_URL not configured");
   const set: Partial<NewVideoCandidateRow> = { updatedAt: new Date() };
-  // "attached" is reserved for the attach flow (which also writes restaurant_videos
-  // + attachedVideoId) — a reviewer can only move between the review states here.
-  if ("status" in b && inSet(["needs_review", "approved", "rejected"] as const, b.status)) {
-    set.status = b.status;
-  }
-  if ("restaurantSlug" in b) set.restaurantSlug = optStr(b.restaurantSlug);
-  if ("proposedRestaurantName" in b) set.proposedRestaurantName = optStr(b.proposedRestaurantName);
-  if ("creatorHandle" in b) set.creatorHandle = optStr(b.creatorHandle);
-  if ("caption" in b) set.caption = optStr(b.caption);
-  if ("attributionText" in b) set.attributionText = optStr(b.attributionText);
-  if ("matchConfidence" in b) set.matchConfidence = optConfidence(b.matchConfidence);
-  if ("matchReasons" in b) set.matchReasons = strArray(b.matchReasons);
-  if ("reviewNotes" in b) set.reviewNotes = optStr(b.reviewNotes);
+  // "attached" is reserved for the attach flow (which also writes restaurant_videos + attachedVideoId).
+  if (patch.status !== undefined) set.status = patch.status;
+  if (patch.restaurantSlug !== undefined) set.restaurantSlug = patch.restaurantSlug;
+  if (patch.candidateRestaurantId !== undefined) set.candidateRestaurantId = patch.candidateRestaurantId;
+  if (patch.proposedRestaurantName !== undefined) set.proposedRestaurantName = patch.proposedRestaurantName;
+  if (patch.creatorHandle !== undefined) set.creatorHandle = patch.creatorHandle;
+  if (patch.creatorName !== undefined) set.creatorName = patch.creatorName;
+  if (patch.caption !== undefined) set.caption = patch.caption;
+  if (patch.attributionText !== undefined) set.attributionText = patch.attributionText;
+  if (patch.matchConfidence !== undefined) set.matchConfidence = patch.matchConfidence;
+  if (patch.matchReasons !== undefined) set.matchReasons = patch.matchReasons;
+  if (patch.reviewNotes !== undefined) set.reviewNotes = patch.reviewNotes;
 
-  const [row] = await db.update(videoCandidates).set(set).where(and(
-    eq(videoCandidates.id, id),
-    ne(videoCandidates.status, "attached"),
-    isNull(videoCandidates.attachedVideoId),
-  )).returning();
-  if (row) return { ok: true, candidate: rowToCandidate(row) };
-  return { ok: false, code: await getVideoCandidate(id) ? "attached" : "not-found" };
+  const updated = await auditedUpdate({
+    table: videoCandidates,
+    where: and(
+      eq(videoCandidates.id, id),
+      ne(videoCandidates.status, "attached"),
+      isNull(videoCandidates.attachedVideoId),
+    )!,
+    set,
+    audit: {
+      ctx, resourceType: "video_candidate", fields: AUDIT_FIELDS.video_candidate, action: "video_candidate.updated",
+      rules: VIDEO_CANDIDATE_ACTION_RULES, related: { type: "restaurant_candidate", id: sql`cur.candidate_restaurant_id` },
+    },
+  });
+  if (updated) return { ok: true, candidate: rowToCandidate(updated.row) };
+  return { ok: false, code: (await getVideoCandidate(id)) ? "attached" : "not-found" };
 }
 
 /* ---- attach (candidate → restaurant_videos), explicit + gated ---- */
@@ -367,7 +403,7 @@ function toVideoMatchConfidence(n: number | null): MatchConfidence {
 }
 
 export type AttachResult =
-  | { ok: true; videoId: string; candidate: VideoCandidate; alreadyAttached: boolean }
+  | { ok: true; videoId: string; candidate: VideoCandidate; alreadyAttached: boolean; restaurantSlug: string }
   | { ok: false; code: "no-db" }
   | { ok: false; code: "not-found" }
   | { ok: false; code: "target-changed" }
@@ -377,12 +413,10 @@ export type AttachResult =
   | { ok: false; code: "restaurant-not-found"; slug: string }
   | { ok: false; code: "invalid-video" };
 
-function checkAttachmentTarget(candidate: VideoCandidate, expectedSlug?: string): AttachResult | null {
-  if (expectedSlug !== undefined && candidate.restaurantSlug !== expectedSlug) {
-    return { ok: false, code: "target-changed" };
-  }
+/** Status checks that do not depend on the target (idempotent retry, approved-only). */
+function checkAttachmentState(candidate: VideoCandidate): AttachResult | null {
   if (candidate.status === "attached" && candidate.attachedVideoId) {
-    return { ok: true, videoId: candidate.attachedVideoId, candidate, alreadyAttached: true };
+    return { ok: true, videoId: candidate.attachedVideoId, candidate, alreadyAttached: true, restaurantSlug: candidate.restaurantSlug ?? "" };
   }
   if (candidate.status === "attached" || candidate.attachedVideoId) {
     return { ok: false, code: "attachment-inconsistent" };
@@ -394,23 +428,37 @@ function checkAttachmentTarget(candidate: VideoCandidate, expectedSlug?: string)
 }
 
 /**
- * Attach an approved candidate to its confirmed, published restaurant.
+ * Attach an approved candidate to the published restaurant it is LINKED to.
+ *
+ * The target is resolved from the candidate's stable `candidateRestaurantId` through
+ * `restaurants.source_candidate_id` (so promotion, a suffixed slug, or a later restaurant reusing the
+ * slug cannot redirect it), or from a stored published slug for restaurants with no candidate of origin.
+ * `expectedRestaurantSlug` is the slug the human confirmed on screen; it must equal the resolved target.
  * A retry for an already attached candidate returns the recorded video.
  */
-export async function attachVideoCandidate(id: string, expectedRestaurantSlug?: string): Promise<AttachResult> {
-  const db = getDb();
-  if (!db) return { ok: false, code: "no-db" };
+export async function attachVideoCandidate(id: string, expectedRestaurantSlug: string | undefined, ctx: AuditContext): Promise<AttachResult> {
+  if (!getDb()) return { ok: false, code: "no-db" };
 
   const candidate = await getVideoCandidate(id);
   if (!candidate) return { ok: false, code: "not-found" };
-  const blocked = checkAttachmentTarget(candidate, expectedRestaurantSlug);
+  const blocked = checkAttachmentState(candidate);
   if (blocked) return blocked;
   if (!expectedRestaurantSlug) return { ok: false, code: "target-required" };
 
+  const target = await resolveAttachTarget(candidate, {
+    publishedBySourceCandidate: getPublishedRefBySourceCandidate,
+    publishedBySlug: getPublishedRefBySlug,
+  });
+  if (!target.ok) {
+    if (target.code === "target-required") return { ok: false, code: "target-required" };
+    if (target.code === "target-mismatch") return { ok: false, code: "target-changed" };
+    return { ok: false, code: "restaurant-not-found", slug: candidate.restaurantSlug ?? expectedRestaurantSlug };
+  }
+  if (target.slug !== expectedRestaurantSlug) return { ok: false, code: "target-changed" };
+
   const platform = PLATFORM_MAP[candidate.platform];
-  // normalizeVideo + enforceVideoInvariants apply the legal-safe rules: YouTube
-  // keeps its nocookie embed; TikTok/Instagram (no allowlisted embed) become a
-  // source-link-only real post that links out — never an iframe of their content.
+  // normalizeVideo + enforceVideoInvariants apply the legal-safe rules (embed allowlist, link-only
+  // fallbacks, no URLs for blocked statuses). Unchanged by this assignment.
   const video: Video | null = normalizeVideo({
     id: `vc-${candidate.id}`,
     platform,
@@ -430,22 +478,29 @@ export async function attachVideoCandidate(id: string, expectedRestaurantSlug?: 
   });
   if (!video) return { ok: false, code: "invalid-video" };
 
-  // Neon HTTP can run this as one atomic PostgreSQL statement. Lock the target
-  // against a concurrent hide, then only insert if the candidate update won.
-  // A failed insert rolls back the status and pointer along with the video.
+  // Neon HTTP runs this as ONE atomic statement, which now also writes the `restaurant_video.attached` event
+  // (so the live video, the candidate's attached status and the event commit together or not at all). The target is locked (FOR SHARE) and re-checked inside
+  // the statement: the restaurant must still be published at that slug, and an id-linked candidate must
+  // still point at the restaurant it was published from. If any condition no longer holds, nothing is
+  // written and the caller gets target-changed.
   const updatedAt = new Date();
-  const { rows } = await db.execute<{ id: string }>(sql`
+  const linkedCandidateId = candidate.candidateRestaurantId;
+  const rows = await executeRows(sql`
     with target as (
-      select slug from ${restaurants}
-      where slug = ${expectedRestaurantSlug} and status = 'published'
+      select slug, source_candidate_id from ${restaurants}
+      where slug = ${target.slug} and status = 'published'
+        and (${linkedCandidateId}::text is null or source_candidate_id = ${linkedCandidateId}::text)
       for share
     ), claimed as (
       update ${videoCandidates}
-      set status = 'attached', attached_video_id = ${video.id}, updated_at = ${updatedAt.toISOString()}
+      set status = 'attached', attached_video_id = ${video.id},
+          restaurant_slug = (select slug from target), updated_at = ${updatedAt.toISOString()}
       where id = ${id} and status = 'approved' and attached_video_id is null
-        and restaurant_slug = (select slug from target)
+        and exists (select 1 from target)
+        and (candidate_restaurant_id is null or candidate_restaurant_id = (select source_candidate_id from target))
+        and (restaurant_slug is null or restaurant_slug = (select slug from target))
       returning restaurant_slug
-    )
+    ), cur as (
     insert into ${restaurantVideos} (
       id, restaurant_id, platform, source_url, embed_url, creator_handle,
       creator_display_name, caption, thumbnail_url, attribution_text,
@@ -458,19 +513,95 @@ export async function attachVideoCandidate(id: string, expectedRestaurantSlug?: 
       ${video.publishedAt ?? null}, ${video.discoveredAt ?? null}, ${video.isRealSource},
       ${video.sourceType}, ${video.matchConfidence}, ${video.legalDisplayStatus}
     from claimed
-    returning id
+    returning *
+    ), ev as (${auditSql.eventInsert({
+      ctx, resourceType: "restaurant_video", fields: AUDIT_FIELDS.restaurant_video, action: "restaurant_video.attached",
+      related: VIDEO_RESTAURANT_RELATED, details: { videoCandidateId: id, restaurantSlug: target.slug },
+    }, "none", false)})
+    select id from cur
   `);
   if (rows.length > 0) {
     return {
       ok: true,
       videoId: video.id,
-      candidate: { ...candidate, status: "attached", attachedVideoId: video.id, updatedAt: updatedAt.toISOString() },
+      candidate: { ...candidate, status: "attached", attachedVideoId: video.id, restaurantSlug: target.slug, updatedAt: updatedAt.toISOString() },
       alreadyAttached: false,
+      restaurantSlug: target.slug,
     };
   }
 
   const current = await getVideoCandidate(id);
   if (!current) return { ok: false, code: "not-found" };
-  return checkAttachmentTarget(current, expectedRestaurantSlug)
-    ?? { ok: false, code: "restaurant-not-found", slug: expectedRestaurantSlug };
+  return checkAttachmentState(current) ?? { ok: false, code: "target-changed" };
+}
+
+/* ---- association summaries (read-only, for the admin UI and the migration mapping) ---- */
+
+export interface AssociationSummary {
+  kind: "candidate" | "published" | "legacy-slug" | "none";
+  candidate: { id: string; name: string; slug: string | null; market: string; status: string } | null;
+  publishedSlug: string | null;
+  publishedStatus: string | null;
+  /** True when attach could resolve a published restaurant right now. */
+  attachable: boolean;
+  /** For a slug-only (legacy) link: the single draft whose slug matches, offered as the ID to link to. */
+  proposedCandidate: { id: string; name: string; slug: string | null; market: string; status: string } | null;
+  problems: string[];
+}
+
+export async function getAssociationSummaries(
+  candidates: VideoCandidate[],
+): Promise<Record<string, AssociationSummary>> {
+  const db = getDb();
+  const out: Record<string, AssociationSummary> = {};
+  if (!db || candidates.length === 0) return out;
+  const ids = [...new Set(candidates.map((c) => c.candidateRestaurantId).filter((x): x is string => Boolean(x)))];
+  const slugs = [...new Set(candidates.filter((c) => !c.candidateRestaurantId).map((c) => c.restaurantSlug).filter((x): x is string => Boolean(x)))];
+  const candRows = ids.length || slugs.length
+    ? await db.select().from(candidateRestaurants)
+        .where(or(ids.length ? inArray(candidateRestaurants.id, ids) : undefined, slugs.length ? inArray(candidateRestaurants.slug, slugs) : undefined))
+    : [];
+  const pubRows = ids.length || slugs.length
+    ? await db.select().from(restaurants)
+        .where(or(ids.length ? inArray(restaurants.sourceCandidateId, ids) : undefined, slugs.length ? inArray(restaurants.slug, slugs) : undefined))
+    : [];
+  const brief = (r: (typeof candRows)[number]) => ({ id: r.id, name: r.name, slug: r.slug, market: r.market, status: r.status });
+  const candById = new Map(candRows.map((r) => [r.id, r]));
+  const pubBySource = new Map(pubRows.filter((r) => r.sourceCandidateId).map((r) => [r.sourceCandidateId as string, r]));
+  const pubBySlug = new Map(pubRows.map((r) => [r.slug, r]));
+  for (const c of candidates) {
+    const problems: string[] = [];
+    if (c.candidateRestaurantId) {
+      const cand = candById.get(c.candidateRestaurantId) ?? null;
+      const pub = pubBySource.get(c.candidateRestaurantId) ?? null;
+      if (!cand) problems.push("The linked restaurant candidate no longer exists.");
+      if (cand && c.restaurantSlug && pub && pub.slug !== c.restaurantSlug) problems.push("The stored slug differs from the published slug.");
+      out[c.id] = {
+        kind: pub ? "published" : "candidate",
+        candidate: cand ? brief(cand) : null,
+        publishedSlug: pub?.slug ?? null, publishedStatus: pub?.status ?? null,
+        attachable: Boolean(pub && pub.status === "published"), proposedCandidate: null, problems,
+      };
+    } else if (c.restaurantSlug) {
+      const pub = pubBySlug.get(c.restaurantSlug) ?? null;
+      const matches = candRows.filter((r) => r.slug === c.restaurantSlug);
+      if (pub) {
+        out[c.id] = {
+          kind: "published", candidate: pub.sourceCandidateId ? (candById.get(pub.sourceCandidateId) ? brief(candById.get(pub.sourceCandidateId)!) : null) : null,
+          publishedSlug: pub.slug, publishedStatus: pub.status, attachable: pub.status === "published", proposedCandidate: null, problems,
+        };
+      } else {
+        if (matches.length === 0) problems.push(`No published restaurant or draft has the slug "${c.restaurantSlug}".`);
+        if (matches.length > 1) problems.push(`${matches.length} drafts share the slug "${c.restaurantSlug}"; pick one by ID.`);
+        out[c.id] = {
+          kind: "legacy-slug", candidate: null, publishedSlug: null, publishedStatus: null, attachable: false,
+          proposedCandidate: matches.length === 1 ? brief(matches[0]) : null,
+          problems: [...problems, "Linked by a typed slug only. Link it to the draft by ID so it stays correct when the slug changes."],
+        };
+      }
+    } else {
+      out[c.id] = { kind: "none", candidate: null, publishedSlug: null, publishedStatus: null, attachable: false, proposedCandidate: null, problems: ["Not linked to any restaurant."] };
+    }
+  }
+  return out;
 }

@@ -809,7 +809,8 @@ DATABASE_URL="postgresql://USER:PASSWORD@HOST/DB?sslmode=require"   # Neon conne
 FOODSWIPE_CONTENT_MODE="mixed"                                      # demo | mixed | production; production is DB-published only
 FOODSWIPE_DEFAULT_MARKET="nyc"                                      # public discovery default; missing/blank = nyc
 FOODSWIPE_ENABLE_DC_DISCOVERY="false"                               # opt in only with the local development server
-FOODSWIPE_ADMIN_SECRET="a-long-random-string"                       # gate for admin writes
+FOODSWIPE_ADMIN_SECRET="a-long-random-string"                       # publication credential: full admin access (human administrator)
+FOODSWIPE_ADMIN_DRAFT_SECRET="a-different-long-random-string"        # OPTIONAL draft credential for ingestion agents (see docs/admin-credentials.md)
 YOUTUBE_API_KEY="..."                                              # optional — YouTube metadata enrichment
 GOOGLE_MAPS_API_KEY="..."                                          # optional — Google Place Photos on profiles
 LOGODEV_TOKEN="pk_..."                                             # optional — brand-logo hero fallback (publishable token)
@@ -993,6 +994,11 @@ The app deploys cleanly to Vercel:
    `LOGODEV_TOKEN`) only if you want those features; each degrades cleanly when unset.
 3. Create the `restaurant_videos` table once — via the Neon SQL editor using the
    committed migration, or `db:push` from a non-intercepted network.
+4. Admin audit log (Admin Hardening B): apply `drizzle/0013_admin_events.sql` in one
+   transaction **before** deploying the code that writes to it, and not with `db:push`
+   (it would skip the append-only triggers). The normal rollback is to redeploy the
+   previous code and keep the table. See
+   [docs/admin-audit-log.md](docs/admin-audit-log.md).
 
 The build does not require a database; routes read environment variables at
 request time. Because deployment runs on a clean network, the Neon driver

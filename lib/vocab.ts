@@ -17,6 +17,7 @@ export const CUISINES = [
   "southern", "diner", "mexican", "street food", "bar food", "british", "omakase",
   "cafe", "bakery", "vegetarian", "persian", "kebab", "ice cream", "indian", "korean",
   "ethiopian", "laotian", "seafood", "pizza", "bagels",
+  "chinese", "thai", "vietnamese", "dim sum",
 ] as const satisfies readonly Cuisine[];
 
 export const DIETARY = [

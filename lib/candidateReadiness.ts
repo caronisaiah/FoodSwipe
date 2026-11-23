@@ -1,5 +1,6 @@
 import { filterCuisines, filterVibes } from "@/lib/vocab";
 import { cleanPublicReasonText } from "@/lib/publicReasonText";
+import { validateLatLng } from "@/lib/adminValidation";
 
 export type PromotionConflict = "already-promoted" | "place-already-published";
 export type HeroMediaReadinessStatus = "approved" | "needs_review" | "fallback_only" | "missing";
@@ -87,8 +88,14 @@ export function missingPromotionRequiredFields(c: CandidateReadinessInput): stri
   if (!str(c.name)) missing.push("name");
   if (!str(c.address)) missing.push("address");
   if (!(finiteNumber(c.priceLevel) && c.priceLevel >= 1 && c.priceLevel <= 4)) missing.push("priceLevel");
-  if (!finiteNumber(c.lat)) missing.push("lat");
-  if (!finiteNumber(c.lng)) missing.push("lng");
+  // Coordinates must be real, in-range numbers (not merely present): out-of-range values cannot publish.
+  if (!finiteNumber(c.lat) || !finiteNumber(c.lng)) {
+    if (!finiteNumber(c.lat)) missing.push("lat");
+    if (!finiteNumber(c.lng)) missing.push("lng");
+  } else {
+    const ll = validateLatLng(c.lat, c.lng);
+    if (!ll.ok) for (const e of ll.errors) if (!missing.includes(e.field)) missing.push(e.field);
+  }
   if (filterCuisines(c.cuisineTags ?? []).length === 0) missing.push("cuisineTags");
   if (filterVibes(c.vibeTags ?? []).length === 0 && filterVibes(c.bestFor ?? []).length === 0) {
     missing.push("vibeTags|bestFor");

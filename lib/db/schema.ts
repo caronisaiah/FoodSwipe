@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   check,
   doublePrecision,
@@ -448,3 +449,56 @@ export const restaurantEvidenceDocuments = pgTable("restaurant_evidence_document
 
 export type RestaurantEvidenceRow = typeof restaurantEvidenceDocuments.$inferSelect;
 export type NewRestaurantEvidenceRow = typeof restaurantEvidenceDocuments.$inferInsert;
+
+/**
+ * Admin Hardening B — APPEND-ONLY audit log of consequential admin mutations.
+ *
+ * One row per meaningful, SUCCESSFUL change. Rows are written by the same single SQL statement
+ * (data-modifying CTE) that performs the change, so a change and its event commit or roll back together
+ * (see lib/db/audit.ts). Database triggers (migration 0013) reject UPDATE, DELETE and TRUNCATE.
+ *
+ * Who: `actorIdentity` is a NON-SECRET label derived from which shared admin credential authenticated
+ * the request (e.g. "publish-credential" or "draft-credential", or an operator-chosen label). It is NOT a
+ * per-person identity: possession of a credential does not prove which human (or agent) used it.
+ * `actorAssurance` states that explicitly. Credential values, auth headers, env values and raw request
+ * bodies are never stored; `changes` holds allow-listed fields only, long values clipped.
+ */
+export const adminEvents = pgTable("admin_events", {
+  /** Monotonic ordering / cursor. Gaps are possible (rolled-back statements consume values). */
+  seq: bigint("seq", { mode: "number" }).generatedAlwaysAsIdentity().notNull(),
+  id: text("id").primaryKey(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+  /** "<resource>.<verb>", e.g. "restaurant_candidate.approved". Taxonomy in lib/adminAudit.ts. */
+  action: text("action").notNull(),
+  /** "restaurant_candidate" | "restaurant" | "video_candidate" | "restaurant_video" */
+  resourceType: text("resource_type").notNull(),
+  /** Stable id of the primary record (never a slug; slugs can change at promotion). */
+  resourceId: text("resource_id").notNull(),
+  relatedResourceType: text("related_resource_type"),
+  relatedResourceId: text("related_resource_id"),
+  actorIdentity: text("actor_identity").notNull(),
+  /** Authorization scope the credential carried: "draft" | "publish". */
+  authScope: text("auth_scope").notNull(),
+  /** Always "shared-credential" today: the identity names a credential, not a verified person. */
+  actorAssurance: text("actor_assurance").notNull().default("shared-credential"),
+  /** Correlates the events written by one HTTP request. */
+  requestId: text("request_id").notNull(),
+  /** { field: { from, to } } for edits, { field: { to } } for creations. Allow-listed fields only. */
+  changes: jsonb("changes").notNull().default(sql`'{}'::jsonb`),
+  /** Small, non-secret context (override acknowledgements, import source, ...). */
+  details: jsonb("details").notNull().default(sql`'{}'::jsonb`),
+  /** Human-supplied reason / review note, when the request carried one. */
+  reason: text("reason"),
+}, (t) => [
+  uniqueIndex("admin_events_seq_key").on(t.seq),
+  index("admin_events_resource_idx").on(t.resourceType, t.resourceId, t.seq),
+  index("admin_events_related_idx").on(t.relatedResourceId, t.seq),
+  index("admin_events_request_idx").on(t.requestId),
+  index("admin_events_occurred_idx").on(t.occurredAt),
+  check("admin_events_scope_check", sql`${t.authScope} in ('draft', 'publish')`),
+  check("admin_events_actor_nonblank", sql`length(trim(${t.actorIdentity})) > 0 and length(trim(${t.requestId})) > 0`),
+  check("admin_events_resource_nonblank", sql`length(trim(${t.resourceId})) > 0 and length(trim(${t.action})) > 0`),
+  check("admin_events_payload_bounded", sql`octet_length(${t.changes}::text) <= 24000 and octet_length(${t.details}::text) <= 4000 and coalesce(length(${t.reason}), 0) <= 1000`),
+]);
+
+export type AdminEventRow = typeof adminEvents.$inferSelect;

@@ -1,5 +1,6 @@
-import { hasValidAdminSecret, isAdminConfigured } from "@/lib/adminAuth";
+import { auditContext, guardAdmin } from "@/lib/adminGuard";
 import { getAppRestaurantById } from "@/lib/db/restaurants";
+import { getPublishedRefBySlug } from "@/lib/db/identity";
 import { createVideoCandidate, isDbConfigured } from "@/lib/db/videoCandidates";
 import { resolveSocialVideo, type ResolvedSocialVideo } from "@/lib/socialVideo";
 import { scoreDiscoveryLead, type ScoreRestaurantInput } from "@/lib/discovery/scoreDiscoveryLead";
@@ -57,15 +58,9 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ slug: string }> },
 ): Promise<Response> {
-  if (!isAdminConfigured()) {
-    return Response.json(
-      { error: "Admin API is disabled (FOODSWIPE_ADMIN_SECRET not set)." },
-      { status: 503 },
-    );
-  }
-  if (!hasValidAdminSecret(req)) {
-    return Response.json({ error: "Unauthorized." }, { status: 401 });
-  }
+  const auth = guardAdmin(req, "draft");
+  if (!auth.ok) return auth.response;
+  const audit = auditContext(auth, { details: { via: "discovery_search" } });
   // This slice WRITES, so (unlike the dry-run search/query routes) it requires a DB.
   if (!isDbConfigured()) {
     return Response.json(
@@ -76,6 +71,8 @@ export async function POST(
 
   const { slug } = await params;
   const restaurant = await getAppRestaurantById(slug);
+  // Link by the stable candidate id when this published restaurant was promoted from one.
+  const publishedRef = restaurant ? await getPublishedRefBySlug(restaurant.id) : null;
   if (!restaurant) {
     return Response.json({ error: "Unknown restaurant." }, { status: 404 });
   }
@@ -198,10 +195,11 @@ export async function POST(
         resolverError: r.resolverError,
         // Server-controlled review routing — the resolved restaurant's slug.
         restaurantSlug: restaurant.id,
+        candidateRestaurantId: publishedRef?.sourceCandidateId ?? null,
         matchConfidence,
         matchReasons: [...matchReasons, provenance],
         reviewNotes: reviewNote,
-      });
+      }, audit);
       const item: CreatedItem = {
         id: candidate.id,
         sourceUrl: candidate.sourceUrl,

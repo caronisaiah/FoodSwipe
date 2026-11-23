@@ -1,9 +1,10 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, isDbConfigured } from "./index";
+import { auditSql, auditedUpdate, decodeRow, executeRows } from "./audit";
+import { AUDIT_FIELDS, type AuditContext } from "@/lib/adminAudit";
 import {
   restaurantHeroMediaSelections,
   restaurants,
-  type NewRestaurantHeroMediaSelectionRow,
   type RestaurantHeroMediaSelectionRow,
 } from "./schema";
 
@@ -105,13 +106,6 @@ function rowToSelection(row: RestaurantHeroMediaSelectionRow): HeroMediaSelectio
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
-}
-
-async function insertSelection(values: NewRestaurantHeroMediaSelectionRow): Promise<HeroMediaSelection> {
-  const db = getDb();
-  if (!db) throw new Error("DATABASE_URL not configured");
-  const [row] = await db.insert(restaurantHeroMediaSelections).values(values).returning();
-  return rowToSelection(row);
 }
 
 export async function getApprovedHeroSelectionForCandidate(
@@ -216,9 +210,9 @@ export async function getApprovedHeroSelectionForRestaurantSlug(
 
 export async function upsertApprovedHeroSelectionForCandidate(
   input: UpsertCandidateHeroSelectionInput,
+  ctx: AuditContext,
 ): Promise<HeroMediaSelection> {
-  const db = getDb();
-  if (!db) throw new Error("DATABASE_URL not configured");
+  if (!getDb()) throw new Error("DATABASE_URL not configured");
   const candidateRestaurantId = cleanText(input.candidateRestaurantId, 200);
   const sourcePlaceId = cleanPlaceId(input.sourcePlaceId);
   const selectedPhotoOrdinal = validHeroPhotoOrdinal(input.selectedPhotoOrdinal);
@@ -226,60 +220,68 @@ export async function upsertApprovedHeroSelectionForCandidate(
     throw new Error("Invalid hero selection input");
   }
 
-  const now = new Date();
-  await db
-    .update(restaurantHeroMediaSelections)
-    .set({ approvalState: "cleared", updatedAt: now })
-    .where(and(
-      eq(restaurantHeroMediaSelections.targetType, "candidate"),
-      eq(restaurantHeroMediaSelections.candidateRestaurantId, candidateRestaurantId),
-      eq(restaurantHeroMediaSelections.approvalState, "approved"),
-    ));
-
-  return insertSelection({
-    id: crypto.randomUUID(),
-    targetType: "candidate",
-    candidateRestaurantId,
-    restaurantId: null,
-    sourceProvider: "google_places",
-    relationship: "exact_location",
-    sourcePlaceId,
-    selectedPhotoOrdinal,
-    approvalState: "approved",
-    reviewerNotes: cleanText(input.reviewerNotes),
-    selectionReason:
-      cleanText(input.selectionReason) ?? "Selected from exact-location Google photo candidates",
-    riskNote: cleanText(input.riskNote),
-    approvedAt: now,
-    updatedAt: now,
-  });
+  const now = new Date().toISOString();
+  const table = restaurantHeroMediaSelections;
+  // ONE statement: clear the previous approval, insert the new one and write the event. The insert reads
+  // `cleared` (via `dep`) so the old approved row is retired before the unique "one approved selection
+  // per candidate" index is checked for the new one. `prev` is the pre-change snapshot used for the diff.
+  const rows = await executeRows(sql`
+    with prev as (
+      select * from ${table}
+      where target_type = 'candidate' and candidate_restaurant_id = ${candidateRestaurantId} and approval_state = 'approved'
+    ), cleared as (
+      update ${table} set approval_state = 'cleared', updated_at = ${now}::timestamptz
+      where target_type = 'candidate' and candidate_restaurant_id = ${candidateRestaurantId} and approval_state = 'approved'
+      returning id
+    ), cur as (
+      insert into ${table} (
+        id, target_type, candidate_restaurant_id, restaurant_id, source_provider, relationship, source_place_id,
+        selected_photo_ordinal, approval_state, reviewer_notes, selection_reason, risk_note, approved_at, updated_at
+      )
+      select ${crypto.randomUUID()}, 'candidate', ${candidateRestaurantId}, null, 'google_places', 'exact_location', ${sourcePlaceId},
+        ${selectedPhotoOrdinal}, 'approved', ${cleanText(input.reviewerNotes)}::text,
+        ${cleanText(input.selectionReason) ?? "Selected from exact-location Google photo candidates"}::text,
+        ${cleanText(input.riskNote)}::text, ${now}::timestamptz, ${now}::timestamptz
+      from (select count(*) as n from cleared) dep
+      returning *
+    ), ev as (${auditSql.eventInsert({
+      ctx, resourceType: "restaurant_candidate", resourceIdColumn: "candidate_restaurant_id",
+      fields: AUDIT_FIELDS.hero_selection, action: "restaurant_candidate.hero_selected",
+    }, "optional", false)})
+    select to_jsonb(cur) as row from cur`);
+  if (!rows[0]) throw new Error("Hero selection was not saved.");
+  return rowToSelection(decodeRow(table, rows[0].row));
 }
 
 export async function clearApprovedHeroSelectionForCandidate(
   candidateRestaurantId: string,
+  ctx: AuditContext,
 ): Promise<number> {
-  const db = getDb();
-  if (!db) throw new Error("DATABASE_URL not configured");
+  if (!getDb()) throw new Error("DATABASE_URL not configured");
   const id = cleanText(candidateRestaurantId, 200);
   if (!id) return 0;
-  const rows = await db
-    .update(restaurantHeroMediaSelections)
-    .set({ approvalState: "cleared", updatedAt: new Date() })
-    .where(and(
+  const result = await auditedUpdate({
+    table: restaurantHeroMediaSelections,
+    where: and(
       eq(restaurantHeroMediaSelections.targetType, "candidate"),
       eq(restaurantHeroMediaSelections.candidateRestaurantId, id),
       eq(restaurantHeroMediaSelections.approvalState, "approved"),
-    ))
-    .returning({ id: restaurantHeroMediaSelections.id });
-  return rows.length;
+    )!,
+    set: { approvalState: "cleared", updatedAt: new Date() },
+    audit: {
+      ctx, resourceType: "restaurant_candidate", resourceIdColumn: "candidate_restaurant_id",
+      fields: AUDIT_FIELDS.hero_selection, action: "restaurant_candidate.hero_cleared",
+    },
+  });
+  return result ? 1 : 0;
 }
 
 export async function cloneCandidateHeroSelectionToRestaurant(
   candidateRestaurantId: string,
   restaurantId: string,
+  ctx: AuditContext,
 ): Promise<CloneHeroSelectionResult> {
-  const db = getDb();
-  if (!db) return { ok: false, cloned: false, selection: null, warning: "Database not configured." };
+  if (!getDb()) return { ok: false, cloned: false, selection: null, warning: "Database not configured." };
   const candidateId = cleanText(candidateRestaurantId, 200);
   const publishedId = cleanText(restaurantId, 200);
   if (!candidateId || !publishedId) {
@@ -292,25 +294,35 @@ export async function cloneCandidateHeroSelectionToRestaurant(
   const source = await getApprovedHeroSelectionForCandidate(candidateId);
   if (!source) return { ok: true, cloned: false, selection: null };
 
-  const now = new Date();
+  const now = new Date().toISOString();
+  const table = restaurantHeroMediaSelections;
   try {
-    const selection = await insertSelection({
-      id: crypto.randomUUID(),
-      targetType: "restaurant",
-      candidateRestaurantId: null,
-      restaurantId: publishedId,
-      sourceProvider: source.sourceProvider,
-      relationship: source.relationship,
-      sourcePlaceId: source.sourcePlaceId,
-      selectedPhotoOrdinal: source.selectedPhotoOrdinal,
-      approvalState: "approved",
-      reviewerNotes: source.reviewerNotes,
-      selectionReason: source.selectionReason,
-      riskNote: source.riskNote,
-      approvedAt: source.approvedAt ? new Date(source.approvedAt) : now,
-      updatedAt: now,
-    });
-    return { ok: true, cloned: true, selection };
+    // One statement: copy the candidate's approved selection to the published restaurant and record the
+    // `restaurant.hero_inherited` event. `not exists` keeps a concurrent clone from double-inserting.
+    const rows = await executeRows(sql`
+      with cur as (
+        insert into ${table} (
+          id, target_type, candidate_restaurant_id, restaurant_id, source_provider, relationship, source_place_id,
+          selected_photo_ordinal, approval_state, reviewer_notes, selection_reason, risk_note, approved_at, updated_at
+        )
+        select ${crypto.randomUUID()}, 'restaurant', null, ${publishedId}, s.source_provider, s.relationship, s.source_place_id,
+          s.selected_photo_ordinal, 'approved', s.reviewer_notes, s.selection_reason, s.risk_note,
+          coalesce(s.approved_at, ${now}::timestamptz), ${now}::timestamptz
+        from ${table} s
+        where s.target_type = 'candidate' and s.candidate_restaurant_id = ${candidateId} and s.approval_state = 'approved'
+          and not exists (
+            select 1 from ${table} x where x.target_type = 'restaurant' and x.restaurant_id = ${publishedId} and x.approval_state = 'approved')
+        limit 1
+        returning *
+      ), ev as (${auditSql.eventInsert({
+        ctx, resourceType: "restaurant", resourceIdColumn: "restaurant_id",
+        related: { type: "restaurant_candidate", id: sql`${candidateId}` },
+        fields: AUDIT_FIELDS.hero_selection, action: "restaurant.hero_inherited",
+      }, "none", false)})
+      select to_jsonb(cur) as row from cur`);
+    if (rows[0]) return { ok: true, cloned: true, selection: rowToSelection(decodeRow(table, rows[0].row)) };
+    const afterRace = await getApprovedHeroSelectionForRestaurant(publishedId);
+    return { ok: true, cloned: false, selection: afterRace };
   } catch {
     const afterRace = await getApprovedHeroSelectionForRestaurant(publishedId);
     if (afterRace) return { ok: true, cloned: false, selection: afterRace };

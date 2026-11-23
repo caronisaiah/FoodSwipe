@@ -1,5 +1,7 @@
-import { hasValidAdminSecret, isAdminConfigured } from "@/lib/adminAuth";
-import { getCandidateRestaurant, isDbConfigured, type CandidateRestaurant } from "@/lib/db/candidates";
+import { auditContext, guardAdmin } from "@/lib/adminGuard";
+import { cleanReason, readOptionalReason } from "@/lib/adminAudit";
+import type { AdminScope } from "@/lib/adminAuth";
+import { getCandidateRestaurant, type CandidateRestaurant } from "@/lib/db/candidates";
 import {
   clearApprovedHeroSelectionForCandidate,
   getApprovedHeroSelectionForCandidate,
@@ -46,23 +48,16 @@ function httpStatusFor(status: PlacePhotoStatus): number {
 
 type CandidateGuardResult =
   | { ok: false; response: Response }
-  | { ok: true; candidate: CandidateRestaurant };
+  | { ok: true; candidate: CandidateRestaurant; audit: ReturnType<typeof auditContext> };
 
-async function guardCandidate(req: Request, id: string): Promise<CandidateGuardResult> {
-  if (!isAdminConfigured()) {
-    return { ok: false, response: json({ error: "Admin API is disabled (FOODSWIPE_ADMIN_SECRET not set)." }, 503) };
-  }
-  if (!hasValidAdminSecret(req)) {
-    return { ok: false, response: json({ error: "Unauthorized." }, 401) };
-  }
-  if (!isDbConfigured()) {
-    return { ok: false, response: json({ error: "Database not configured (DATABASE_URL not set)." }, 503) };
-  }
+async function guardCandidate(req: Request, id: string, required: AdminScope): Promise<CandidateGuardResult> {
+  const auth = guardAdmin(req, required);
+  if (!auth.ok) return { ok: false, response: auth.response };
   const candidate = await getCandidateRestaurant(id);
   if (!candidate) {
     return { ok: false, response: json({ error: "Candidate not found." }, 404) };
   }
-  return { ok: true, candidate };
+  return { ok: true, candidate, audit: auditContext(auth) };
 }
 
 /*
@@ -77,7 +72,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const { id } = await params;
-  const guarded = await guardCandidate(req, id);
+  const guarded = await guardCandidate(req, id, "draft");
   if (!guarded.ok) return guarded.response;
   const { candidate } = guarded;
   const selection = await getApprovedHeroSelectionForCandidate(candidate.id);
@@ -131,9 +126,10 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const { id } = await params;
-  const guarded = await guardCandidate(req, id);
+  const guarded = await guardCandidate(req, id, "publish");
   if (!guarded.ok) return guarded.response;
   const { candidate } = guarded;
+  let audit = guarded.audit;
   if (!candidate.googlePlaceId) {
     return json({ error: "Candidate has no Google Place ID." }, 422);
   }
@@ -145,6 +141,10 @@ export async function PUT(
   } catch {
     return json({ error: "Invalid JSON body." }, 400);
   }
+
+  const reason = cleanReason(body.auditReason);
+  if (!reason.ok) return json({ error: reason.message, code: "invalid_reason" }, 422);
+  audit = { ...audit, reason: reason.reason };
 
   const sourcePlaceId = cleanString(body.sourcePlaceId);
   if (!sourcePlaceId) return json({ error: "sourcePlaceId is required." }, 400);
@@ -177,7 +177,7 @@ export async function PUT(
     reviewerNotes: cleanString(body.reviewerNotes),
     selectionReason:
       cleanString(body.selectionReason) ?? "Selected from exact-location Google photo candidates",
-  });
+  }, audit);
 
   return json({
     status: "ok",
@@ -197,10 +197,12 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const { id } = await params;
-  const guarded = await guardCandidate(req, id);
+  const guarded = await guardCandidate(req, id, "publish");
   if (!guarded.ok) return guarded.response;
   const { candidate } = guarded;
-  const clearedCount = await clearApprovedHeroSelectionForCandidate(candidate.id);
+  const reason = await readOptionalReason(req);
+  if (!reason.ok) return json({ error: reason.message, code: "invalid_reason" }, 400);
+  const clearedCount = await clearApprovedHeroSelectionForCandidate(candidate.id, { ...guarded.audit, reason: reason.reason });
   return json({
     status: "cleared",
     candidate: { id: candidate.id, googlePlaceId: candidate.googlePlaceId },

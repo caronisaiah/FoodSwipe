@@ -1,4 +1,4 @@
-import { hasValidAdminSecret, isAdminConfigured } from "@/lib/adminAuth";
+import { guardAdmin } from "@/lib/adminGuard";
 import { getAppRestaurantById } from "@/lib/db/restaurants";
 import { generateDiscoveryQueries } from "@/lib/discovery/queryGenerator";
 import { braveProvider, SearchAuthError, type RawSearchResult } from "@/lib/discovery/searchProvider";
@@ -41,15 +41,8 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ slug: string }> },
 ): Promise<Response> {
-  if (!isAdminConfigured()) {
-    return Response.json(
-      { error: "Admin API is disabled (FOODSWIPE_ADMIN_SECRET not set)." },
-      { status: 503 },
-    );
-  }
-  if (!hasValidAdminSecret(req)) {
-    return Response.json({ error: "Unauthorized." }, { status: 401 });
-  }
+  const auth = guardAdmin(req, "draft", { requireDb: false });
+  if (!auth.ok) return auth.response;
   if (!braveProvider.isConfigured()) {
     return Response.json(
       { error: "Brave Search is not configured (BRAVE_SEARCH_API_KEY not set)." },

@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useRef, useState } from "react";
 import Link from "next/link";
 import { isEmbedUrlAllowed } from "@/lib/video";
 import MaterialIcon from "@/components/MaterialIcon";
-import { getMarketShortName, type Market } from "@/lib/markets";
+import AdminRestaurantPicker, { type PickedRestaurant } from "@/components/AdminRestaurantPicker";
 
 /*
   Internal social-video REVIEW CONSOLE — NOT a public feature.
@@ -29,6 +29,46 @@ const STATUS_TONE: Record<string, string> = {
 };
 const PLATFORM_LABEL: Record<string, string> = { tiktok: "TikTok", instagram: "Instagram", youtube: "YouTube" };
 
+/** Which credential this session uses. The server enforces it; the UI only greys out dead ends. */
+type AdminScope = "draft" | "publish";
+const AdminScopeContext = createContext<AdminScope | null>(null);
+function useCanPublish(): boolean {
+  return useContext(AdminScopeContext) !== "draft";
+}
+const DRAFT_HINT = "The draft credential cannot do this. Sign in with the publication credential.";
+
+interface BriefRestaurant { id: string; name: string; slug: string | null; market: string; status: string }
+/** How a video lead is linked to a restaurant, resolved by the server from stable ids. */
+interface Association {
+  kind: "candidate" | "published" | "legacy-slug" | "none";
+  candidate: BriefRestaurant | null;
+  publishedSlug: string | null;
+  publishedStatus: string | null;
+  attachable: boolean;
+  proposedCandidate: BriefRestaurant | null;
+  problems: string[];
+}
+
+interface ApiErrorBody { error?: string; errors?: { field: string; message: string }[] }
+function apiErrorText(data: ApiErrorBody, fallback: string): string {
+  const list = (data.errors ?? []).map((e) => `${e.field}: ${e.message}`);
+  if (list.length > 1) return `${data.error ?? fallback} — ${list.join(" · ")}`;
+  return data.error ?? fallback;
+}
+
+/** The restaurant a candidate points at, as picker state (null when unlinked or linked only by a typed slug). */
+function pickFromAssociation(a: Association | null | undefined): PickedRestaurant | null {
+  if (!a) return null;
+  if (a.candidate) {
+    return { kind: "candidate", id: a.candidate.id, name: a.candidate.name, slug: a.candidate.slug, market: a.candidate.market, status: a.candidate.status, address: null, googlePlaceId: null, publishedSlug: a.publishedSlug };
+  }
+  if (a.kind === "published" && a.publishedSlug) {
+    return { kind: "published", id: a.publishedSlug, name: a.publishedSlug, slug: a.publishedSlug, market: "", status: a.publishedStatus ?? "published", address: null, googlePlaceId: null, publishedSlug: a.publishedSlug };
+  }
+  return null;
+}
+const pickKey = (p: PickedRestaurant | null) => (p ? `${p.kind}:${p.kind === "published" ? p.slug : p.id}` : "");
+
 interface VideoCandidate {
   id: string;
   status: string;
@@ -37,6 +77,8 @@ interface VideoCandidate {
   normalizedSourceUrl: string;
   platformVideoId: string | null;
   restaurantSlug: string | null;
+  candidateRestaurantId?: string | null;
+  association?: Association | null;
   proposedRestaurantName: string | null;
   creatorHandle: string | null;
   creatorName: string | null;
@@ -60,22 +102,6 @@ interface VideoCandidate {
 
 type Msg = { type: "ok" | "err"; text: string } | null;
 
-/** A pickable restaurant for the slug combobox (id IS the public slug). */
-interface RestaurantOption {
-  id: string;
-  name: string;
-  neighborhood: string;
-  market: Market;
-}
-
-interface PublishedRestaurantOption {
-  slug: string;
-  name: string;
-  neighborhood?: string;
-  market: Market;
-  status: string;
-}
-
 function parseList(s: string): string[] {
   return s.split(",").map((t) => t.trim()).filter((t) => t.length > 0);
 }
@@ -90,56 +116,17 @@ export default function AdminVideoCandidates() {
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<Msg>(null);
+  const [adminScope, setAdminScope] = useState<AdminScope | null>(null);
+  const deepLinkHandled = useRef(false);
   const loadSeq = useRef(0);
-
-  // Authenticated, all-market published inventory; typed slugs still work.
-  const [options, setOptions] = useState<RestaurantOption[]>([]);
-  const [optionsLoading, setOptionsLoading] = useState(false);
-  const [optionsError, setOptionsError] = useState<string | null>(null);
-  useEffect(() => {
-    if (!secret.trim()) return;
-    const controller = new AbortController();
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch("/api/admin/restaurants/published", {
-          headers: { "x-foodswipe-admin-secret": secret },
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        const data = (await res.json()) as { restaurants?: PublishedRestaurantOption[]; error?: string };
-        if (controller.signal.aborted) return;
-        if (!res.ok || !Array.isArray(data.restaurants)) {
-          setOptionsError(data.error ?? "Could not load published restaurants (check the secret).");
-          return;
-        }
-        const bySlug = new Map(data.restaurants
-          .filter((r) => r.status === "published" && Boolean(r.slug))
-          .map((r) => [r.slug, r]));
-        setOptions([...bySlug.values()]
-          .map((r) => ({ id: r.slug, name: r.name, neighborhood: r.neighborhood ?? "", market: r.market }))
-          .sort((a, b) => a.name.localeCompare(b.name)));
-      } catch {
-        if (!controller.signal.aborted) setOptionsError("Network error loading published restaurants. Re-enter the secret to retry.");
-      } finally {
-        if (!controller.signal.aborted) setOptionsLoading(false);
-      }
-    }, 300);
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [secret]);
 
   function changeSecret(value: string) {
     setSecret(value);
-    setOptions([]);
-    setOptionsError(null);
-    setOptionsLoading(Boolean(value.trim()));
   }
 
   // Intake form
   const [sourceUrl, setSourceUrl] = useState("");
-  const [intakeSlug, setIntakeSlug] = useState("");
+  const [intakePick, setIntakePick] = useState<PickedRestaurant | null>(null);
   const [intakeProposed, setIntakeProposed] = useState("");
   const [intakeNotes, setIntakeNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -161,14 +148,23 @@ export default function AdminVideoCandidates() {
       const res = await fetch(`/api/admin/videos/candidates${qs ? `?${qs}` : ""}`, {
         headers: { "x-foodswipe-admin-secret": secret },
       });
-      const data = (await res.json()) as { candidates?: VideoCandidate[]; error?: string };
+      const data = (await res.json()) as { candidates?: VideoCandidate[]; error?: string; adminScope?: AdminScope };
       if (seq !== loadSeq.current) return;
       if (!res.ok) {
         setList([]);
         setError(data.error ?? `Load failed (${res.status}).`);
         return;
       }
-      setList(Array.isArray(data.candidates) ? data.candidates : []);
+      const loaded = Array.isArray(data.candidates) ? data.candidates : [];
+      setList(loaded);
+      setAdminScope(data.adminScope === "draft" || data.adminScope === "publish" ? data.adminScope : null);
+      // Direct links (…/candidates?candidate=<id>) open that record once, after the first load.
+      const wanted = typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("candidate");
+      if (wanted && !deepLinkHandled.current && loaded.some((c) => c.id === wanted)) {
+        deepLinkHandled.current = true;
+        setExpandedId(wanted);
+        requestAnimationFrame(() => document.getElementById(`video-candidate-${wanted}`)?.scrollIntoView({ block: "center" }));
+      }
       setLoadedOnce(true);
     } catch {
       if (seq === loadSeq.current) setError("Network error — could not reach the admin API.");
@@ -187,6 +183,7 @@ export default function AdminVideoCandidates() {
   }
 
   function onChanged(updated: VideoCandidate) {
+    // The server returns the association separately; keep whatever we already know if it is absent.
     setActionMsg({ type: "ok", text: `Saved candidate → ${updated.status}.` });
     setList((rows) => {
       if (statusFilter !== "all" && updated.status !== statusFilter) {
@@ -215,12 +212,13 @@ export default function AdminVideoCandidates() {
         headers: { "Content-Type": "application/json", "x-foodswipe-admin-secret": secret },
         body: JSON.stringify({
           sourceUrl: sourceUrl.trim(),
-          restaurantSlug: intakeSlug.trim() || undefined,
+          ...(intakePick?.kind === "candidate" ? { candidateRestaurantId: intakePick.id } : {}),
+          ...(intakePick?.kind === "published" ? { restaurantSlug: intakePick.slug } : {}),
           proposedRestaurantName: intakeProposed.trim() || undefined,
           reviewNotes: intakeNotes.trim() || undefined,
         }),
       });
-      const data = (await res.json()) as { candidate?: VideoCandidate; error?: string };
+      const data = (await res.json()) as { candidate?: VideoCandidate; error?: string; errors?: { field: string; message: string }[]; code?: string };
       if (res.status === 409 && data.candidate) {
         setIntakeMsg({ type: "err", text: "Already in the queue — showing the existing candidate." });
         if (loadedOnce) await load(statusFilter, platformFilter);
@@ -228,13 +226,14 @@ export default function AdminVideoCandidates() {
         return;
       }
       if (!res.ok || !data.candidate) {
-        setIntakeMsg({ type: "err", text: data.error ?? `Intake failed (${res.status}).` });
+        setIntakeMsg({ type: "err", text: apiErrorText(data, `Intake failed (${res.status}).`) });
         return;
       }
       setIntakeMsg({ type: "ok", text: `Queued ${PLATFORM_LABEL[data.candidate.platform] ?? data.candidate.platform} candidate for review.` });
       setSourceUrl("");
       setIntakeProposed("");
       setIntakeNotes("");
+      setIntakePick(null);
       if (loadedOnce) await load(statusFilter, platformFilter);
       else void load(statusFilter, platformFilter);
     } catch {
@@ -245,6 +244,7 @@ export default function AdminVideoCandidates() {
   }
 
   return (
+    <AdminScopeContext.Provider value={adminScope}>
     <div className="mx-auto min-h-dvh w-full max-w-3xl px-3 pb-16 pt-[max(env(safe-area-inset-top),0.75rem)]">
       <div className="mb-4 rounded-xl border border-chili/40 bg-chili/10 p-2.5 text-xs text-cream">
         <p className="flex items-center gap-1.5 font-display font-bold text-chili-soft">
@@ -287,8 +287,13 @@ export default function AdminVideoCandidates() {
         </label>
       </div>
 
-      {optionsLoading && <p role="status" className="mb-2 text-xs text-haze">Loading published restaurants…</p>}
-      {optionsError && <p role="status" className="mb-2 text-xs text-chili-soft">{optionsError} Typed slugs still work.</p>}
+      {adminScope && (
+        <p data-testid="admin-scope" className={`-mt-2 mb-3 text-[11px] font-semibold ${adminScope === "draft" ? "text-saffron" : "text-mint"}`}>
+          {adminScope === "draft"
+            ? "Draft credential: you can add and edit leads. Approving, rejecting and attaching need the publication credential."
+            : "Publication credential: full access."}
+        </p>
+      )}
 
       {/* Intake */}
       <section className="mb-5 rounded-xl bg-surface p-3 ring-1 ring-inset ring-white/10">
@@ -305,16 +310,11 @@ export default function AdminVideoCandidates() {
             className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze/50 focus:ring-saffron/60"
           />
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-            <SlugCombobox
-              value={intakeSlug}
-              onChange={setIntakeSlug}
-              options={options}
-              placeholder="restaurant slug — type a name to search"
-            />
+            <AdminRestaurantPicker secret={secret} value={intakePick} onChange={setIntakePick} label="Restaurant (linked by id)" />
             <input
               value={intakeProposed}
               onChange={(e) => setIntakeProposed(e.target.value)}
-              placeholder="or proposed restaurant name"
+              placeholder="or proposed restaurant name (not linked)"
               aria-label="Proposed restaurant name"
               className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze/50 focus:ring-saffron/60"
             />
@@ -382,7 +382,6 @@ export default function AdminVideoCandidates() {
               key={c.id}
               candidate={c}
               secret={secret}
-              options={options}
               expanded={expandedId === c.id}
               onToggle={() => setExpandedId((id) => (id === c.id ? null : c.id))}
               onChanged={onChanged}
@@ -391,26 +390,38 @@ export default function AdminVideoCandidates() {
         </ul>
       )}
     </div>
+    </AdminScopeContext.Provider>
   );
+}
+
+/** One-line description of where a lead points, from the server-resolved association. */
+function linkLabel(c: VideoCandidate): string {
+  const a = c.association;
+  if (a?.candidate) {
+    const live = a.publishedSlug ? `live /${a.publishedSlug}` : `draft · ${a.candidate.status}`;
+    return `→ ${a.candidate.name} (${a.candidate.market.toUpperCase()}, ${live})`;
+  }
+  if (a?.kind === "published" && a.publishedSlug) return `→ /${a.publishedSlug} (live)`;
+  if (a?.kind === "legacy-slug") return `→ typed slug "${c.restaurantSlug}" (not linked by id)`;
+  if (c.proposedRestaurantName) return `→ ${c.proposedRestaurantName} (not linked)`;
+  return "no restaurant linked";
 }
 
 function CandidateRow({
   candidate,
   secret,
-  options,
   expanded,
   onToggle,
   onChanged,
 }: {
   candidate: VideoCandidate;
   secret: string;
-  options: RestaurantOption[];
   expanded: boolean;
   onToggle: () => void;
   onChanged: (updated: VideoCandidate) => void;
 }) {
   return (
-    <li className="bg-surface">
+    <li id={`video-candidate-${candidate.id}`} className="bg-surface">
       <button
         type="button"
         onClick={onToggle}
@@ -425,7 +436,7 @@ function CandidateRow({
             {candidate.creatorName || candidate.creatorHandle || candidate.caption || candidate.sourceUrl}
           </p>
           <p className="truncate text-[11px] text-haze">
-            {candidate.restaurantSlug ? `→ /${candidate.restaurantSlug}` : candidate.proposedRestaurantName ? `→ ${candidate.proposedRestaurantName}` : "no restaurant set"}
+            {linkLabel(candidate)}
             {candidate.matchConfidence !== null ? ` · conf ${candidate.matchConfidence}` : ""}
           </p>
         </div>
@@ -435,7 +446,7 @@ function CandidateRow({
         <MaterialIcon name={expanded ? "expand_less" : "expand_more"} className="shrink-0 text-base text-haze" />
       </button>
       {expanded && (
-        <CandidateDetail key={candidate.updatedAt} candidate={candidate} secret={secret} options={options} onChanged={onChanged} />
+        <CandidateDetail key={candidate.updatedAt} candidate={candidate} secret={secret} onChanged={onChanged} />
       )}
     </li>
   );
@@ -444,15 +455,17 @@ function CandidateRow({
 function CandidateDetail({
   candidate,
   secret,
-  options,
   onChanged,
 }: {
   candidate: VideoCandidate;
   secret: string;
-  options: RestaurantOption[];
   onChanged: (updated: VideoCandidate) => void;
 }) {
-  const [restaurantSlug, setRestaurantSlug] = useState(candidate.restaurantSlug ?? "");
+  const canPublish = useCanPublish();
+  const association = candidate.association ?? null;
+  const initialPick = pickFromAssociation(association);
+  const [pick, setPick] = useState<PickedRestaurant | null>(initialPick);
+  const [creatorName, setCreatorName] = useState(candidate.creatorName ?? "");
   const [proposed, setProposed] = useState(candidate.proposedRestaurantName ?? "");
   const [creatorHandle, setCreatorHandle] = useState(candidate.creatorHandle ?? "");
   const [caption, setCaption] = useState(candidate.caption ?? "");
@@ -467,10 +480,36 @@ function CandidateDetail({
   // Inline preview for any official, allowlisted embed (YouTube / TikTok / Instagram).
   const canEmbed = isEmbedUrlAllowed(candidate.embedUrl);
   const verticalEmbed = candidate.platform === "tiktok" || candidate.platform === "instagram";
-  const savedSlug = candidate.restaurantSlug;
-  const targetChanged = restaurantSlug.trim() !== (savedSlug ?? "");
+  const publishedSlug = association?.publishedSlug ?? null;
+  const targetChanged = pickKey(pick) !== pickKey(initialPick);
   const reviewLocked = candidate.status === "attached" || Boolean(candidate.attachedVideoId);
-  const canAttach = !reviewLocked && candidate.status === "approved" && Boolean(savedSlug) && !targetChanged;
+  // Attach needs: the publication credential, an approved lead, and a restaurant that is PUBLISHED right now
+  // (resolved by the server from the linked record, not from a typed slug).
+  const canAttach = canPublish && !reviewLocked && candidate.status === "approved" && Boolean(association?.attachable) && Boolean(publishedSlug) && !targetChanged;
+
+  async function linkProposed() {
+    const proposed = association?.proposedCandidate;
+    if (!proposed || reviewLocked || saving || !secret.trim()) return;
+    setSaving(true);
+    setMsg(null);
+    try {
+      const res = await fetch(`/api/admin/videos/candidates/${candidate.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "x-foodswipe-admin-secret": secret },
+        body: JSON.stringify({ candidateRestaurantId: proposed.id }),
+      });
+      const data = (await res.json()) as { candidate?: VideoCandidate; association?: Association | null; error?: string; errors?: { field: string; message: string }[] };
+      if (!res.ok || !data.candidate) {
+        setMsg({ type: "err", text: apiErrorText(data, `Link failed (${res.status}).`) });
+        return;
+      }
+      onChanged({ ...data.candidate, association: data.association ?? null });
+    } catch {
+      setMsg({ type: "err", text: "Network error while linking." });
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function save(overrideStatus?: string) {
     if (reviewLocked || saving || attaching) return;
@@ -487,22 +526,29 @@ function CandidateDetail({
         headers: { "Content-Type": "application/json", "x-foodswipe-admin-secret": secret },
         body: JSON.stringify({
           ...(overrideStatus ? { status: overrideStatus } : {}),
-          restaurantSlug,
+          ...(targetChanged
+            ? pick?.kind === "candidate"
+              ? { candidateRestaurantId: pick.id }
+              : pick?.kind === "published"
+                ? { restaurantSlug: pick.slug }
+                : { candidateRestaurantId: null, restaurantSlug: null }
+            : {}),
           proposedRestaurantName: proposed,
-          creatorHandle,
-          caption,
-          attributionText: attribution,
+          creatorHandle: creatorHandle.trim() || null,
+          creatorName: creatorName.trim() || null,
+          caption: caption.trim() || null,
+          attributionText: attribution.trim() || null,
           matchConfidence: conf,
           matchReasons: parseList(reasons),
           reviewNotes: notes,
         }),
       });
-      const data = (await res.json()) as { candidate?: VideoCandidate; error?: string };
+      const data = (await res.json()) as { candidate?: VideoCandidate; association?: Association | null; error?: string; errors?: { field: string; message: string }[] };
       if (!res.ok || !data.candidate) {
-        setMsg({ type: "err", text: data.error ?? `Save failed (${res.status}).` });
+        setMsg({ type: "err", text: apiErrorText(data, `Save failed (${res.status}).`) });
         return;
       }
-      onChanged(data.candidate);
+      onChanged({ ...data.candidate, association: data.association ?? candidate.association ?? null });
     } catch {
       setMsg({ type: "err", text: "Network error saving changes." });
     } finally {
@@ -518,15 +564,15 @@ function CandidateDetail({
       const res = await fetch(`/api/admin/videos/candidates/${candidate.id}/attach`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-foodswipe-admin-secret": secret },
-        body: JSON.stringify({ expectedRestaurantSlug: savedSlug }),
+        body: JSON.stringify({ expectedRestaurantSlug: publishedSlug }),
       });
-      const data = (await res.json()) as { candidate?: VideoCandidate; videoId?: string; error?: string };
+      const data = (await res.json()) as { candidate?: VideoCandidate; videoId?: string; restaurantSlug?: string; error?: string; errors?: { field: string; message: string }[] };
       if (!res.ok || !data.candidate) {
-        setMsg({ type: "err", text: data.error ?? `Attach failed (${res.status}).` });
+        setMsg({ type: "err", text: apiErrorText(data, `Attach failed (${res.status}).`) });
         return;
       }
-      setMsg({ type: "ok", text: `Attached to /${data.candidate.restaurantSlug} (video ${data.videoId?.slice(0, 8)}…).` });
-      onChanged(data.candidate);
+      setMsg({ type: "ok", text: `Attached to /${data.restaurantSlug ?? data.candidate.restaurantSlug} (video ${data.videoId?.slice(0, 8)}…).` });
+      onChanged({ ...data.candidate, association: candidate.association ?? null });
     } catch {
       setMsg({ type: "err", text: "Network error during attach." });
     } finally {
@@ -617,15 +663,36 @@ function CandidateDetail({
 
       {/* Editable review fields */}
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-        <label className="block">
-          <span className="mb-1 flex items-baseline justify-between gap-2">
-            <span className="text-xs font-semibold text-cream">Restaurant slug</span>
-            <span className="text-[9px] text-haze">type a name to search</span>
-          </span>
-          <SlugCombobox value={restaurantSlug} onChange={setRestaurantSlug} options={options} placeholder="le-diplomate" />
-        </label>
+        <div className="sm:col-span-2 space-y-1.5" data-testid="association">
+          <AdminRestaurantPicker secret={secret} value={pick} onChange={setPick} label="Linked restaurant (by id)" disabled={reviewLocked} />
+          {association?.kind === "candidate" && association.candidate && (
+            <p className="text-[11px] text-haze">
+              Linked to the draft <span className="font-semibold text-cream">{association.candidate.name}</span> ({association.candidate.market.toUpperCase()}, {association.candidate.status}).{" "}
+              {association.attachable ? <>It is published as <span className="font-mono text-cream">/{association.publishedSlug}</span>.</> : "It is not published yet, so this video cannot be attached; the link follows the restaurant when it is promoted, even if its slug changes."}{" "}
+              <a className="text-saffron underline-offset-2 hover:underline" href={`/admin/restaurants/candidates?candidate=${association.candidate.id}`}>Open restaurant →</a>
+            </p>
+          )}
+          {association?.kind === "published" && (
+            <p className="text-[11px] text-haze">Linked to the live restaurant <span className="font-mono text-cream">/{association.publishedSlug}</span>.</p>
+          )}
+          {association?.kind === "legacy-slug" && (
+            <div data-testid="legacy-link-warning" className="rounded-lg bg-saffron/10 p-2 text-[11px] text-saffron ring-1 ring-inset ring-saffron/30">
+              <p className="font-semibold">Linked by a typed slug only (&ldquo;{candidate.restaurantSlug}&rdquo;).</p>
+              <p className="mt-0.5">{association.problems.join(" ")}</p>
+              {association.proposedCandidate && (
+                <button type="button" onClick={() => void linkProposed()} disabled={saving || reviewLocked}
+                  className="mt-1.5 rounded-md bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-cream ring-1 ring-inset ring-white/15 hover:bg-white/20 disabled:opacity-40">
+                  Link to {association.proposedCandidate.name} ({association.proposedCandidate.market.toUpperCase()}, {association.proposedCandidate.status})
+                </button>
+              )}
+            </div>
+          )}
+          {association?.kind === "none" && <p className="text-[11px] text-saffron">Not linked to any restaurant yet.</p>}
+          {targetChanged && <p role="status" className="text-[11px] text-saffron">The link changes when you Save.</p>}
+        </div>
         <TField label="Proposed name" value={proposed} onChange={setProposed} />
-        <TField label="Creator handle" value={creatorHandle} onChange={setCreatorHandle} />
+        <TField label="Creator handle" hint="starts with @" value={creatorHandle} onChange={setCreatorHandle} />
+        <TField label="Creator name" hint="shown as the credit" value={creatorName} onChange={setCreatorName} />
         <TField label="Match confidence (0–100)" value={confidence} onChange={setConfidence} placeholder="0–100" />
       </div>
       <TField label="Caption" value={caption} onChange={setCaption} />
@@ -647,11 +714,11 @@ function CandidateDetail({
           className="rounded-md bg-white/10 px-3 py-1.5 text-xs font-semibold text-cream ring-1 ring-inset ring-white/15 hover:bg-white/20 disabled:opacity-40">
           {saving ? "Saving…" : "Save"}
         </button>
-        <button type="button" onClick={() => void save("approved")} disabled={reviewLocked || saving || attaching}
+        <button type="button" onClick={() => void save("approved")} disabled={reviewLocked || saving || attaching || !canPublish} title={!canPublish ? DRAFT_HINT : undefined}
           className="flex items-center gap-1 rounded-md px-2 py-1.5 text-xs font-semibold text-mint ring-1 ring-inset ring-mint/30 hover:bg-mint/10 disabled:opacity-40">
           <MaterialIcon name="check_circle" className="text-sm" /> Approve
         </button>
-        <button type="button" onClick={() => void save("rejected")} disabled={reviewLocked || saving || attaching}
+        <button type="button" onClick={() => void save("rejected")} disabled={reviewLocked || saving || attaching || !canPublish} title={!canPublish ? DRAFT_HINT : undefined}
           className="flex items-center gap-1 rounded-md px-2 py-1.5 text-xs font-semibold text-chili-soft ring-1 ring-inset ring-chili/30 hover:bg-chili/10 disabled:opacity-40">
           <MaterialIcon name="cancel" className="text-sm" /> Reject
         </button>
@@ -659,7 +726,7 @@ function CandidateDetail({
           type="button"
           onClick={() => void attach()}
           disabled={saving || attaching || !canAttach || !secret.trim()}
-          title={canAttach && savedSlug ? `Attach to /${savedSlug}` : undefined}
+          title={!canPublish ? DRAFT_HINT : canAttach && publishedSlug ? `Attach to /${publishedSlug}` : undefined}
           className="ml-auto flex items-center gap-1 rounded-md bg-brand-gradient px-3 py-1.5 text-xs font-bold text-ink transition active:scale-[0.98] disabled:opacity-40"
         >
           <MaterialIcon name="link" className="text-sm" />
@@ -669,93 +736,17 @@ function CandidateDetail({
       {reviewLocked ? (
         <p className="text-[10px] text-haze">Review edits are locked for candidates with an attachment record.</p>
       ) : targetChanged ? (
-        <p className="text-[10px] text-haze">Save the new restaurant before attaching.</p>
+        <p className="text-[10px] text-haze">Save the new restaurant link before attaching.</p>
       ) : canAttach ? (
-        <p className="text-[10px] text-haze">Attachment target <span className="font-mono text-cream">/{savedSlug}</span></p>
+        <p className="text-[10px] text-haze">Attachment target <span className="font-mono text-cream">/{publishedSlug}</span></p>
       ) : (
         <p className="text-[10px] text-haze">
-          Attach needs status <span className="text-cream">approved</span> and a saved restaurant slug.
+          Attach needs the publication credential, status <span className="text-cream">approved</span>, and a linked restaurant that is already published.
         </p>
       )}
       {msg && (
         <p className={`text-[11px] ${msg.type === "ok" ? "text-mint" : "text-chili-soft"}`}>{msg.text}</p>
       )}
-    </div>
-  );
-}
-
-/**
- * Restaurant-slug typeahead. Type a name OR a slug; published restaurants from
- * all markets appear in a dropdown, and picking one stores the actual slug (the
- * value attach resolves). Still accepts free-typed slugs, and shows whether the
- * current value is an exact known slug so a mistyped name is obvious before attach.
- */
-function SlugCombobox({
-  value,
-  onChange,
-  options,
-  placeholder,
-}: {
-  value: string;
-  onChange: (slug: string) => void;
-  options: RestaurantOption[];
-  placeholder?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const q = value.trim().toLowerCase();
-  const matches =
-    q.length === 0
-      ? options.slice(0, 8)
-      : options.filter((o) => [o.id, o.name, o.neighborhood, getMarketShortName(o.market)]
-          .some((text) => text.toLowerCase().includes(q))).slice(0, 8);
-  const exact = options.find((o) => o.id === value.trim());
-
-  return (
-    <div className="relative">
-      <input
-        value={value}
-        onChange={(e) => {
-          onChange(e.target.value);
-          setOpen(true);
-        }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
-        placeholder={placeholder}
-        aria-label="Restaurant slug"
-        autoComplete="off"
-        className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze/50 focus:ring-saffron/60"
-      />
-      {open && matches.length > 0 && (
-        <ul className="absolute z-30 mt-1 max-h-56 w-full overflow-auto rounded-lg bg-surface-2 py-1 shadow-xl ring-1 ring-inset ring-white/15">
-          {matches.map((o) => (
-            <li key={o.id}>
-              <button
-                type="button"
-                // Prevent the input's blur (which closes the list) from firing before the click.
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  onChange(o.id);
-                  setOpen(false);
-                }}
-                className="flex w-full items-baseline gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-white/10"
-              >
-                <span className="min-w-0 truncate text-cream">{o.name}</span>
-                <span className="min-w-0 truncate text-haze">{[o.neighborhood, getMarketShortName(o.market)].filter(Boolean).join(" · ")}</span>
-                <span className="ml-auto max-w-[40%] shrink-0 truncate font-mono text-[10px] text-haze">/{o.id}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      {value.trim() !== "" &&
-        (exact ? (
-          <p className="mt-0.5 flex items-center gap-1 text-[10px] text-mint">
-            <MaterialIcon name="check_circle" className="text-[11px]" />
-            {exact.name}
-          </p>
-        ) : (
-          <p className="mt-0.5 text-[10px] text-haze">No exact slug match — pick one from the list.</p>
-        ))}
     </div>
   );
 }

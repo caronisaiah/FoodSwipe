@@ -13,6 +13,12 @@
     "test:photo-gallery": "node scripts/photo-gallery-check.mjs",
     "test:gallery-ui": "node scripts/gallery-ui-check.mjs",
     "test:map-v2": "node scripts/map-v2-check.mjs",
+    "test:admin-authz": "node scripts/admin-authz-check.mjs",
+    "test:admin-api": "node scripts/admin-api-check.mjs",
+    "test:admin-attach": "node scripts/admin-attach-sql-check.mjs",
+    "test:admin-import": "node scripts/restaurant-import-check.mjs",
+    "test:admin-mapping": "node scripts/admin-mapping-check.mjs",
+    "test:admin-audit": "node scripts/admin-audit-unit-check.mjs && node scripts/admin-audit-integration-check.mjs",
     "content:audit": "node scripts/content-audit.mjs",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
@@ -28,6 +34,7 @@
     "react-dom": "19.2.4"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.17",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

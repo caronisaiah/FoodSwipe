@@ -1,5 +1,5 @@
-import { hasValidAdminSecret, isAdminConfigured } from "@/lib/adminAuth";
-import { isDbConfigured } from "@/lib/db/candidates";
+import { auditContext, guardAdmin } from "@/lib/adminGuard";
+import { readOptionalReason } from "@/lib/adminAudit";
 import { hidePublishedRestaurant } from "@/lib/db/restaurants";
 
 /*
@@ -13,25 +13,14 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  if (!isAdminConfigured()) {
-    return Response.json(
-      { error: "Admin API is disabled (FOODSWIPE_ADMIN_SECRET not set)." },
-      { status: 503 },
-    );
-  }
-  if (!hasValidAdminSecret(req)) {
-    return Response.json({ error: "Unauthorized." }, { status: 401 });
-  }
-  if (!isDbConfigured()) {
-    return Response.json(
-      { error: "Database not configured (DATABASE_URL not set)." },
-      { status: 503 },
-    );
-  }
+  const auth = guardAdmin(req, "publish");
+  if (!auth.ok) return auth.response;
 
   const { id } = await params;
+  const reason = await readOptionalReason(req);
+  if (!reason.ok) return Response.json({ error: reason.message, code: "invalid_reason" }, { status: 400 });
   try {
-    const restaurant = await hidePublishedRestaurant(id);
+    const restaurant = await hidePublishedRestaurant(id, auditContext(auth, { reason: reason.reason }));
     if (!restaurant) {
       return Response.json({ error: "Published restaurant not found." }, { status: 404 });
     }
