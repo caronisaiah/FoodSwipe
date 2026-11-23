@@ -47,16 +47,16 @@ type MarketFilter = "all" | string;
  * Which credential the loaded session uses. The server enforces the boundary on every route; this only
  * greys out controls the draft credential could never use, so a draft session is not offered dead ends.
  */
-type AdminScope = "draft" | "publish";
-const AdminScopeContext = createContext<AdminScope | null>(null);
-function useCanPublish(): boolean {
+export type AdminScope = "draft" | "publish";
+export const AdminScopeContext = createContext<AdminScope | null>(null);
+export function useCanPublish(): boolean {
   return useContext(AdminScopeContext) !== "draft";
 }
-const DRAFT_HINT = "The draft credential cannot do this. Sign in with the publication credential.";
+export const DRAFT_HINT = "The draft credential cannot do this. Sign in with the publication credential.";
 
 interface ApiErrorBody { error?: string; errors?: { field: string; message: string }[] }
 /** The API returns { error, errors[] }: show every field problem, not just the first. */
-function apiErrorText(data: ApiErrorBody, fallback: string): string {
+export function apiErrorText(data: ApiErrorBody, fallback: string): string {
   const list = (data.errors ?? []).map((e) => `${e.field}: ${e.message}`);
   if (list.length > 1) return `${data.error ?? fallback} — ${list.join(" · ")}`;
   return data.error ?? fallback;
@@ -78,7 +78,7 @@ const LABEL: Record<string, string> = {
   needs_media: "Needs media",
 };
 
-const STATUS_TONE: Record<string, string> = {
+export const STATUS_TONE: Record<string, string> = {
   needs_review: "bg-saffron/15 text-saffron ring-saffron/30",
   approved: "bg-mint/15 text-mint ring-mint/30",
   rejected: "bg-chili/15 text-chili-soft ring-chili/30",
@@ -92,7 +92,7 @@ const CONFIDENCE_TONE: Record<string, string> = {
 };
 
 // Compact controlled-vocab hints (full vocab lives in lib/types.ts).
-const VOCAB_HINT = {
+export const VOCAB_HINT = {
   cuisine: "e.g. mexican, tacos, ramen, italian, pizza, bakery, coffee",
   dietary: "vegan, vegetarian, halal, gluten-free, no pork",
   vibe: "quick bite, date night, group dinner, late night, casual, hidden gem",
@@ -147,7 +147,7 @@ interface HeroPhotoCandidatesResponse {
   diagnostics?: HeroPhotoCandidatesDiagnostics;
 }
 
-interface HeroMediaSelection {
+export interface HeroMediaSelection {
   id: string;
   targetType: "candidate" | "restaurant";
   candidateRestaurantId: string | null;
@@ -178,7 +178,7 @@ interface CandidatePromotionConflict {
 }
 
 /** Mirrors the CandidateRestaurant shape returned by the admin API. */
-interface Candidate {
+export interface Candidate {
   id: string;
   slug: string | null;
   name: string;
@@ -189,6 +189,8 @@ interface Candidate {
   websiteDomain: string | null;
   address: string | null;
   neighborhood: string | null;
+  lat?: number | null;
+  lng?: number | null;
   priceLevel: number | null;
   cuisineTags: string[];
   dietaryTags: string[];
@@ -246,18 +248,18 @@ interface ImportOutcome {
   error?: string;
 }
 
-type Msg = { type: "ok" | "err"; text: string } | null;
+export type Msg = { type: "ok" | "err"; text: string } | null;
 
 /* ----- helpers ----- */
 
-function parseList(s: string): string[] {
+export function parseList(s: string): string[] {
   return s
     .split(",")
     .map((t) => t.trim())
     .filter((t) => t.length > 0);
 }
 
-function mergeDraftList(current: string, incoming?: string[]): string {
+export function mergeDraftList(current: string, incoming?: string[]): string {
   if (!incoming || incoming.length === 0) return current;
   const next = parseList(current);
   const seen = new Set(next.map((t) => t.toLowerCase()));
@@ -288,7 +290,7 @@ function expiryState(iso: string | null): ExpiryState {
   return "none";
 }
 
-function shortDate(iso: string | null): string {
+export function shortDate(iso: string | null): string {
   if (!iso) return "—";
   const t = new Date(iso);
   return Number.isNaN(t.getTime()) ? "—" : t.toISOString().slice(0, 10);
@@ -298,11 +300,11 @@ function priceLabel(level: number | null): string {
   return level && level >= 1 && level <= 4 ? "$".repeat(level) : "—";
 }
 
-function priceDraftValue(level: number | null): string {
+export function priceDraftValue(level: number | null): string {
   return typeof level === "number" && level >= 1 && level <= 4 ? String(Math.round(level)) : "";
 }
 
-function pricePayload(value: string): number | null {
+export function pricePayload(value: string): number | null {
   const n = Number(value);
   return Number.isInteger(n) && n >= 1 && n <= 4 ? n : null;
 }
@@ -1192,6 +1194,12 @@ function CandidateDetail({
   const readiness = readinessFor(candidate);
   return (
     <div className="border-t border-line bg-ink-2/40 p-3">
+      <p className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-saffron/10 p-2 text-[11px] text-cream ring-1 ring-inset ring-saffron/30">
+        <span>Review identity, details, photos, video leads and publication readiness for this restaurant on one page.</span>
+        <Link href={`/admin/restaurants/candidates/${candidate.id}`} data-testid="open-full-review" className="rounded-md bg-brand-gradient px-3 py-1.5 text-xs font-bold text-ink">
+          Open full review →
+        </Link>
+      </p>
       <div className="grid min-w-0 gap-3 sm:grid-cols-[180px_minmax(0,1fr)]">
         {/* Left: photo (lazy — loads on expand) + provenance. Stable across saves
             (NOT keyed by updatedAt) so a save never refetches the Google photo. */}
@@ -1750,7 +1758,7 @@ function PreviewCard({ row, selected, disabled, onToggle }: {
 
 /* ----- exact-location Google hero photo candidates (read-only) ----- */
 
-function HeroPhotoCandidatesPanel({
+export function HeroPhotoCandidatesPanel({
   candidateId,
   googlePlaceId,
   secret,
@@ -2127,7 +2135,7 @@ function photoUnavailableMessage(status?: string) {
 
 /* ----- candidate photo (lazy: only mounts when a row is expanded) ----- */
 
-function CandidatePhoto({
+export function CandidatePhoto({
   candidateId,
   secret,
   name,
@@ -2191,7 +2199,7 @@ function CandidatePhoto({
 
 /* ----- primitives ----- */
 
-function TagField({
+export function TagField({
   label,
   hint,
   value,
@@ -2245,7 +2253,7 @@ function TagField({
   );
 }
 
-function Field({
+export function Field({
   label,
   hint,
   children,
@@ -2265,7 +2273,7 @@ function Field({
   );
 }
 
-function TextInput({
+export function TextInput({
   value,
   onChange,
   placeholder,
@@ -2287,7 +2295,7 @@ function TextInput({
   );
 }
 
-function PriceLevelSelect({
+export function PriceLevelSelect({
   value,
   onChange,
 }: {
@@ -2309,7 +2317,7 @@ function PriceLevelSelect({
   );
 }
 
-function Textarea({
+export function Textarea({
   value,
   onChange,
   placeholder,
@@ -2329,7 +2337,7 @@ function Textarea({
   );
 }
 
-function Meta({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+export function Meta({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return (
     <>
       <dt className="text-haze">{label}</dt>
