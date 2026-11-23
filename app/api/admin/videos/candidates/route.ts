@@ -1,4 +1,4 @@
-import { adminError, adminJson, adminUrl, validationError } from "@/lib/adminApi";
+import { adminError, adminJson, adminUrl, reviewUrlFor, validationError } from "@/lib/adminApi";
 import { auditContext, guardAdmin } from "@/lib/adminGuard";
 import { splitAuditReason } from "@/lib/adminAudit";
 import { validateVideoCandidateBody } from "@/lib/adminVideoValidation";
@@ -46,6 +46,7 @@ export async function GET(req: Request): Promise<Response> {
         ...c,
         association: associations[c.id] ?? null,
         adminUrl: adminUrl(req, "/admin/videos/candidates", { candidate: c.id }),
+        restaurantReviewUrl: reviewUrlFor(req, c.candidateRestaurantId, associations[c.id]),
       })),
       adminScope: auth.scope,
     });
@@ -118,7 +119,7 @@ export async function POST(req: Request): Promise<Response> {
     const warnings = association.kind === "none"
       ? [{ code: "no_restaurant_linked", message: "The video is not linked to a restaurant yet." }]
       : [];
-    return adminJson({ candidate, id: candidate.id, adminUrl: link, association: summaries[candidate.id] ?? null, warnings }, 201);
+    return adminJson({ candidate, id: candidate.id, adminUrl: link, restaurantReviewUrl: reviewUrlFor(req, candidate.candidateRestaurantId, summaries[candidate.id]), association: summaries[candidate.id] ?? null, warnings }, 201);
   } catch {
     return adminError(500, "create_failed", "Failed to create candidate. Check the queue for it before retrying.", { retryable: false });
   }

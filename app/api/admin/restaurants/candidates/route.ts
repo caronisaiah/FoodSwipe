@@ -1,4 +1,4 @@
-import { adminError, adminJson, adminUrl, validationError } from "@/lib/adminApi";
+import { adminError, adminJson, candidateReviewUrl, validationError } from "@/lib/adminApi";
 import { auditContext, guardAdmin } from "@/lib/adminGuard";
 import { splitAuditReason } from "@/lib/adminAudit";
 import { validateCandidateBody } from "@/lib/adminValidation";
@@ -13,11 +13,7 @@ import {
   type CandidateStatus,
 } from "@/lib/db/candidates";
 import { findPlaceIdConflict, listIdentityRecords } from "@/lib/db/identity";
-import { getCandidateEvidenceMetaMap } from "@/lib/db/restaurantEvidence";
-import { getApprovedHeroSelectionMapForCandidates } from "@/lib/db/heroMediaSelections";
-import { getCandidatePromotionConflictMap } from "@/lib/db/restaurants";
-import { getCandidateVideoMetaMap } from "@/lib/db/videoCandidates";
-import { computeCandidateReadiness } from "@/lib/candidateReadiness";
+import { enrichCandidates } from "@/lib/db/candidateEnrichment";
 
 /*
   Restaurant candidate ingestion — INTERNAL, admin credential required. These routes manage a REVIEW
@@ -51,37 +47,10 @@ export async function GET(req: Request): Promise<Response> {
 
   try {
     const candidates = await listCandidateRestaurants(status);
-    const candidateIds = candidates.map((c) => c.id);
-    const [evidenceMeta, videoMeta, promotionConflicts, heroSelections] = await Promise.all([
-      getCandidateEvidenceMetaMap(candidateIds),
-      getCandidateVideoMetaMap(candidates.map((c) => ({ id: c.id, slug: c.slug }))),
-      getCandidatePromotionConflictMap(candidates.map((c) => ({ id: c.id, googlePlaceId: c.googlePlaceId }))),
-      getApprovedHeroSelectionMapForCandidates(candidateIds),
-    ]);
-    const enriched = candidates.map((candidate) => {
-      const websiteEvidenceMeta = evidenceMeta[candidate.id] ?? { total: 0, okDocs: 0, latestFetchedAt: null, stale: false };
-      const video = videoMeta[candidate.id] ?? { total: 0, approvedOrAttached: 0 };
-      const promotionConflict = promotionConflicts[candidate.id] ?? null;
-      const heroMediaSelection = heroSelections[candidate.id] ?? null;
-      const hasApprovedHeroSelection = Boolean(heroMediaSelection);
-      return {
-        ...candidate,
-        adminUrl: adminUrl(req, "/admin/restaurants/candidates", { candidate: candidate.id }),
-        websiteEvidenceMeta,
-        videoMeta: video,
-        promotionConflict,
-        heroMediaSelection,
-        hasApprovedHeroSelection,
-        readiness: computeCandidateReadiness({
-          ...candidate,
-          hasApprovedHeroSelection,
-          websiteEvidenceOkDocs: websiteEvidenceMeta.okDocs,
-          videoCandidateCount: video.total,
-          approvedOrAttachedVideoCount: video.approvedOrAttached,
-          promotionConflict: promotionConflict?.conflict ?? null,
-        }),
-      };
-    });
+    const enriched = (await enrichCandidates(candidates)).map((candidate) => ({
+      ...candidate,
+      adminUrl: candidateReviewUrl(req, candidate.id),
+    }));
     return adminJson({ candidates: enriched, adminScope: auth.scope });
   } catch {
     return adminError(500, "list_failed", "Failed to list candidates.", { retryable: true });
@@ -116,7 +85,7 @@ export async function POST(req: Request): Promise<Response> {
           field: "googlePlaceId",
           existing: {
             kind: existing.kind, id: existing.id, name: existing.name, slug: existing.slug, status: existing.status, market: existing.market,
-            adminUrl: existing.kind === "candidate" ? adminUrl(req, "/admin/restaurants/candidates", { candidate: existing.id }) : undefined,
+            adminUrl: existing.kind === "candidate" ? candidateReviewUrl(req, existing.id) : undefined,
           },
         });
       }
@@ -157,7 +126,7 @@ export async function POST(req: Request): Promise<Response> {
       notes: write.reviewNotes ?? null,
     });
     return adminJson(
-      { candidate, id: candidate.id, adminUrl: adminUrl(req, "/admin/restaurants/candidates", { candidate: candidate.id }), warnings },
+      { candidate, id: candidate.id, adminUrl: candidateReviewUrl(req, candidate.id), warnings },
       201,
     );
   } catch {

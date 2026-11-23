@@ -669,7 +669,7 @@ function CandidateDetail({
             <p className="text-[11px] text-haze">
               Linked to the draft <span className="font-semibold text-cream">{association.candidate.name}</span> ({association.candidate.market.toUpperCase()}, {association.candidate.status}).{" "}
               {association.attachable ? <>It is published as <span className="font-mono text-cream">/{association.publishedSlug}</span>.</> : "It is not published yet, so this video cannot be attached; the link follows the restaurant when it is promoted, even if its slug changes."}{" "}
-              <a className="text-saffron underline-offset-2 hover:underline" href={`/admin/restaurants/candidates?candidate=${association.candidate.id}`}>Open restaurant →</a>
+              <a className="text-saffron underline-offset-2 hover:underline" href={`/admin/restaurants/candidates/${association.candidate.id}`}>Review this restaurant →</a>
             </p>
           )}
           {association?.kind === "published" && (

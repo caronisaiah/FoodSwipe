@@ -74,3 +74,15 @@ export async function getApprovedMapLocations(market: Market): Promise<MapLocati
   const videoCounts = await getRealVideoCounts(locations.map(({ slug }) => slug));
   return locations.map((location) => ({ ...location, videoCount: videoCounts.get(location.slug) ?? 0 }));
 }
+
+/**
+ * The review status of every independently sourced map location proposed for one published restaurant.
+ * READ-ONLY; used by the admin review workspace to say whether the public map can show the restaurant.
+ */
+export async function getLocationStatusesForRestaurant(restaurantId: string): Promise<string[]> {
+  const db = getDb();
+  if (!db || !restaurantId) return [];
+  const rows = await db.select({ status: restaurantLocations.status }).from(restaurantLocations)
+    .where(eq(restaurantLocations.restaurantId, restaurantId));
+  return rows.map((r) => r.status);
+}

@@ -26,6 +26,7 @@ const POLICY = {
   "app/api/admin/restaurants/candidates/[id]/hero-media-selection/route.ts": { GET: "draft", PUT: "publish", DELETE: "publish" },
   "app/api/admin/restaurants/candidates/[id]/photo-candidates/route.ts": { GET: "draft" },
   "app/api/admin/restaurants/candidates/[id]/photo/route.ts": { GET: "draft" },
+  "app/api/admin/restaurants/candidates/[id]/review/route.ts": { GET: "draft" },
   "app/api/admin/restaurants/candidates/[id]/promote/route.ts": { POST: "publish" },
   "app/api/admin/restaurants/candidates/[id]/route.ts": { PATCH: "draft" }, // status/approved-edit rules checked in the API suite
   "app/api/admin/restaurants/candidates/[id]/suggest-tags/route.ts": { GET: "draft" },

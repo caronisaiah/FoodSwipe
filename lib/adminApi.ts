@@ -37,6 +37,28 @@ export function validationError(errors: FieldError[]): Response {
   });
 }
 
+/**
+ * Absolute URL of the unified review workspace for one restaurant candidate, by its stable id. This is where a
+ * candidate's admin links point: identity, details, photos, video leads, readiness and history on one page.
+ */
+export function candidateReviewUrl(req: Request, candidateId: string): string {
+  return new URL(`/admin/restaurants/candidates/${encodeURIComponent(candidateId)}`, new URL(req.url).origin).toString();
+}
+
+/**
+ * The review page of the restaurant a video lead belongs to, or null. Uses the lead's stable id link when it has one;
+ * a lead linked only by a typed slug falls back to the single draft that slug identifies (shown as a proposal, never
+ * written), so a reviewer can always get from a lead to its restaurant.
+ */
+export function reviewUrlFor(
+  req: Request,
+  candidateRestaurantId: string | null,
+  association: { proposedCandidate: { id: string } | null; candidate: { id: string } | null } | null | undefined,
+): string | null {
+  const id = candidateRestaurantId ?? association?.candidate?.id ?? association?.proposedCandidate?.id ?? null;
+  return id ? candidateReviewUrl(req, id) : null;
+}
+
 /** Absolute admin URL for a record, using the request's own origin. */
 export function adminUrl(req: Request, path: string, params: Record<string, string> = {}): string {
   const url = new URL(path, new URL(req.url).origin);

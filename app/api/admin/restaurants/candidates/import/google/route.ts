@@ -1,4 +1,4 @@
-import { adminError, adminJson, adminUrl, validationError } from "@/lib/adminApi";
+import { adminError, adminJson, candidateReviewUrl, validationError } from "@/lib/adminApi";
 import { auditContext, guardAdmin } from "@/lib/adminGuard";
 import { validateMarket } from "@/lib/adminValidation";
 import { findPossibleDuplicates } from "@/lib/duplicateWarnings";
@@ -474,7 +474,7 @@ async function importRequest(req: Request): Promise<Response> {
   return adminJson(
     {
       requested: selectedPlaceIds.length, imported, skippedDuplicates, failed, market, duplicates, outcomes,
-      candidates: created.map((c) => ({ ...c, adminUrl: adminUrl(req, "/admin/restaurants/candidates", { candidate: c.id }) })),
+      candidates: created.map((c) => ({ ...c, adminUrl: candidateReviewUrl(req, c.id) })),
     },
     imported > 0 ? 201 : 200,
   );

@@ -24,3 +24,6 @@ Every consequential change is written to the append-only `admin_events` table in
 ## Notes
 - The shared secrets are still bearer secrets. Rotate by changing the env var and redeploying. Per-agent revocation and per-person identity are the follow-up task; until then two agents sharing the draft secret are indistinguishable in the log, and do not run unattended or large-batch ingestion.
 - Never paste a secret into chat or a command line. Read it from an environment variable. A reason typed into `auditReason` that contains a configured secret is refused.
+
+## Review workspace
+`GET /api/admin/restaurants/candidates/[id]/review` (draft or publication credential, read-only) powers the review workspace; the draft credential gets no audit history from it. See [admin-review-workspace.md](admin-review-workspace.md).
