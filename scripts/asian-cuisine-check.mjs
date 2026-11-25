@@ -83,7 +83,7 @@ check("with no broad intent every seeded place scores exactly as before", () => 
 // --- Grouping from the active market ---------------------------------------------------------------
 const option = (value) => CRAVING_OPTIONS.find((o) => o.value === value);
 const market = (...values) => values.map(option);
-const slots = (options) => groups.groupAsianOptions(options).rows.map(({ option: o, group }) => group ? "ASIAN" : o.value);
+const slots = (options, opts) => groups.groupAsianOptions(options, opts).rows.map((row) => "group" in row ? "ASIAN" : row.option.value);
 
 check("the group takes the first member's slot and every other row keeps its order", () => {
   const options = market("american", "burgers", "thai", "pizza", "chinese", "mexican", "noodles", "korean", "seafood");
@@ -94,9 +94,40 @@ check("children are only what the market carries, never noodles or invented tags
   const { members } = groups.groupAsianOptions(market("thai", "ramen", "noodles", "burgers", "dim sum"));
   same(members.map((m) => m.value), ["thai", "ramen", "dim sum"]);
 });
-check("fewer than two members means no group", () => {
+check("one or zero members and no Asian intent: no group, ordinary rows (NYC-sized markets unaffected)", () => {
   same(slots(market("burgers", "thai", "pizza")), ["burgers", "thai", "pizza"]);
   same(slots(market("burgers", "pizza")), ["burgers", "pizza"]);
+  // A lone member that is itself selected is still an ordinary row, not a disclosure.
+  same(slots(market("burgers", "thai", "pizza"), { selected: ["thai"] }), ["burgers", "thai", "pizza"]);
+});
+check("two or more members always group, with or without intent", () => {
+  same(slots(market("burgers", "thai", "korean"), { broadOnly: true }), ["burgers", "ASIAN"]);
+  same(slots(market("burgers", "thai", "korean"), { allAsian: true }), ["burgers", "ASIAN"]);
+});
+check("one member plus a broad-only tag (asian/laotian) offers All Asian", () => {
+  const out = groups.groupAsianOptions(market("burgers", "thai", "pizza"), { broadOnly: true });
+  same(out.rows.map((r) => "group" in r ? "ASIAN" : r.option.value), ["burgers", "ASIAN", "pizza"]);
+  assert.equal(out.canChooseAll, true);
+  assert.equal(groups.groupAsianOptions(market("burgers", "pizza"), { broadOnly: false }).canChooseAll, false);
+  assert.equal(groups.groupAsianOptions(market("burgers", "pizza"), { broadOnly: true }).canChooseAll, true);
+  assert.equal(groups.hasBroadOnlyAsianTag(["laotian", "street food"]), true);
+  assert.equal(groups.hasBroadOnlyAsianTag(["asian"]), true);
+  assert.equal(groups.hasBroadOnlyAsianTag(["thai", "noodles"]), false);
+});
+check("stored All Asian keeps the row visible with 1 or 0 members, in place (last when no member)", () => {
+  same(slots(market("burgers", "thai", "pizza"), { allAsian: true }), ["burgers", "ASIAN", "pizza"]);
+  same(slots(market("burgers", "pizza"), { allAsian: true }), ["burgers", "pizza", "ASIAN"]);
+  assert.equal(groups.groupAsianOptions(market("burgers", "pizza"), { allAsian: true }).canChooseAll, false);
+});
+check("selected specifics the market lacks keep the row visible with 1 or 0 members", () => {
+  same(slots(market("burgers", "korean", "pizza"), { selected: ["thai"] }), ["burgers", "ASIAN", "pizza"]);
+  same(slots(market("burgers", "pizza"), { selected: ["thai", "sushi"] }), ["burgers", "pizza", "ASIAN"]);
+  // ...and clearing them drops the row again (nothing hidden is left active).
+  same(slots(market("burgers", "pizza"), { selected: [] }), ["burgers", "pizza"]);
+});
+check("non-Asian rows keep their order whenever the group is added", () => {
+  const options = market("american", "burgers", "pizza", "mexican", "seafood");
+  same(slots(options, { allAsian: true }).filter((s) => s !== "ASIAN"), ["american", "burgers", "pizza", "mexican", "seafood"]);
 });
 check("a market change surfaces selected specifics the new market lacks", () => {
   const dc = groups.groupAsianOptions(market("thai", "chinese", "korean", "burgers")).members;
@@ -155,6 +186,23 @@ check("a record saved before this field existed reads as no broad choice, losing
   same({ ...read, broadCuisines: undefined }, { ...legacy, broadCuisines: undefined });
   const app = browser(new Map([[KEY, JSON.stringify(legacy)]]));
   same(app.usePreferences().preferences.cravings, ["thai", "burgers"]);
+});
+check("an inconsistent stored record (broad + specifics) resolves to the broad choice", () => {
+  const { normalizePreferences } = browser();
+  const read = normalizePreferences({ broadCuisines: ["asian"], cravings: ["thai", "burgers", "sushi"] });
+  same(read.broadCuisines, ["asian"]);
+  same(read.cravings, ["burgers"]);
+  // Ranking agrees with the repaired record: one Asian match, burgers untouched.
+  assert.equal(craving(place(["thai", "burgers"]), read), 56);
+  const app = browser(new Map([[KEY, JSON.stringify({ broadCuisines: ["asian"], cravings: ["thai"] })]]));
+  same(app.usePreferences().preferences.cravings, []);
+});
+check("a lone ordinary Asian checkbox toggles through the exclusive setter", () => {
+  const broad = prefs({ broadCuisines: ["asian"], cravings: ["burgers"] });
+  const picked = groups.setAsianChoice(broad, "thai", true);
+  same(picked.broadCuisines, []);
+  same(picked.cravings, ["burgers", "thai"]);
+  same(groups.setAsianChoice(picked, "thai", false).cravings, ["burgers"]);
 });
 check("malformed broad values are dropped, valid ones de-duplicated", () => {
   const { normalizePreferences } = browser();

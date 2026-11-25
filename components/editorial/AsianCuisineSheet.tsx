@@ -16,22 +16,32 @@ export interface AsianChoice {
  * Asian" and the specifics are mutually exclusive; the parent owns that rule.
  */
 export default function AsianCuisineSheet({
-  choices, unavailable, allAsian, selected, onAll, onChoice,
+  choices, unavailable, canChooseAll, allAsian, selected, onAll, onChoice, onOpenChange,
 }: {
   /** Specific choices present in the active market, in list order. */
   choices: AsianChoice[];
   /** Selected specifics this market does not carry. Kept visible so they can be cleared. */
   unavailable: AsianChoice[];
+  /** Whether "All Asian" can match anything in this market. */
+  canChooseAll: boolean;
   allAsian: boolean;
   /** Values of the selected specifics (market or not). */
   selected: Craving[];
   onAll: (checked: boolean) => void;
   onChoice: (value: Craving, checked: boolean) => void;
+  /** Lets the parent keep this row mounted while the sheet is open. */
+  onOpenChange: (open: boolean) => void;
 }) {
   const id = useId();
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
+  // Rows shown when the sheet opened stay listed (unchecked, so they can be re-checked)
+  // until it closes. Clearing one must not remove the control the user is focused on.
+  const [held, setHeld] = useState<{ all: boolean; unavailable: AsianChoice[] }>({ all: false, unavailable: [] });
+  const listedUnavailable = unavailable.concat(
+    held.unavailable.filter((row) => !unavailable.some(({ value }) => value === row.value)),
+  );
 
   const count = selected.length;
   const summary = allAsian ? "All" : count > 0 ? String(count) : null;
@@ -52,6 +62,8 @@ export default function AsianCuisineSheet({
           aria-label={`Asian cuisines, ${state}`}
           onClick={() => {
             setOpen(true);
+            setHeld({ all: canChooseAll || allAsian, unavailable });
+            onOpenChange(true);
             dialog.current?.showModal();
           }}
         >
@@ -69,6 +81,8 @@ export default function AsianCuisineSheet({
         aria-labelledby={`${id}-title`}
         onClose={() => {
           setOpen(false);
+          setHeld({ all: false, unavailable: [] });
+          onOpenChange(false);
           trigger.current?.focus({ preventScroll: true });
         }}
         onClick={(event) => {
@@ -85,7 +99,14 @@ export default function AsianCuisineSheet({
           <h2 id={`${id}-title`} className="editorial-section-title">Asian cuisines</h2>
           <button type="button" className="asian-done" onClick={() => dialog.current?.close()}>Done</button>
         </div>
-        <PreferenceCheck label="All Asian" checked={allAsian} onChange={onAll} />
+        {(canChooseAll || allAsian || held.all) && (
+          <PreferenceCheck
+            label="All Asian"
+            note={canChooseAll ? undefined : "None in this market"}
+            checked={allAsian}
+            onChange={onAll}
+          />
+        )}
         <div className="editorial-checklist editorial-checklist-cuisine">
           {choices.map(({ value, label }) => (
             <PreferenceCheck
@@ -95,12 +116,12 @@ export default function AsianCuisineSheet({
               onChange={(checked) => onChoice(value, checked)}
             />
           ))}
-          {unavailable.map(({ value, label }) => (
+          {listedUnavailable.map(({ value, label }) => (
             <div key={value} className="asian-unavailable">
               <PreferenceCheck
                 label={label}
                 note="Not in this market"
-                checked
+                checked={selected.includes(value)}
                 onChange={(checked) => onChoice(value, checked)}
               />
             </div>

@@ -1,14 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { selectDiscoveryMarket } from "@/app/discoveryMarketActions";
 import EditorialHeader from "@/components/editorial/EditorialHeader";
 import MaterialIcon from "@/components/MaterialIcon";
 import DiscoveryCity from "@/components/editorial/DiscoveryCity";
 import AsianCuisineSheet from "@/components/editorial/AsianCuisineSheet";
 import { PreferenceCheck, SegmentedPreference } from "@/components/editorial/PreferenceControls";
-import { groupAsianOptions, selectedAsianChoices, setAllAsian, setAsianChoice, unavailableAsianChoices, wantsAllAsian } from "@/lib/cuisineGroups";
+import {
+  groupAsianOptions, hasBroadOnlyAsianTag, isAsianChoice, selectedAsianChoices, setAllAsian, setAsianChoice,
+  unavailableAsianChoices, wantsAllAsian,
+} from "@/lib/cuisineGroups";
 import type { Market } from "@/lib/markets";
 import { BUDGET_OPTIONS, CRAVING_OPTIONS, VIBE_OPTIONS } from "@/lib/options";
 import { usePreferences } from "@/lib/storage";
@@ -31,6 +34,7 @@ export default function PreferenceOnboarding({ market, selectableMarkets, resetS
   });
   const [switching, startSwitch] = useTransition();
   const [switchError, setSwitchError] = useState(false);
+  const [asianSheetOpen, setAsianSheetOpen] = useState(false);
 
   const restaurants = catalogue.status === "ready" ? catalogue.restaurants : [];
   // Only cuisines this market actually has, most-represented first (ties keep the editorial order).
@@ -39,7 +43,21 @@ export default function PreferenceOnboarding({ market, selectableMarkets, resetS
     .map((option) => ({ ...option, count: restaurants.filter((place) => place.cuisineTags.includes(option.value)).length }))
     .filter(({ count }) => count > 0)
     .sort((a, b) => b.count - a.count);
-  const asian = groupAsianOptions(cuisines);
+  const asian = groupAsianOptions(cuisines, {
+    selected: preferences.cravings,
+    allAsian: wantsAllAsian(preferences),
+    broadOnly: restaurants.some((place) => hasBroadOnlyAsianTag(place.cuisineTags)),
+    pinned: asianSheetOpen,
+  });
+  const hasAsianRow = asian.rows.some((row) => "group" in row);
+  const hadAsianRow = useRef(false);
+  useEffect(() => {
+    // If the row goes away (its last hidden selection was cleared), keep focus on the page.
+    if (hadAsianRow.current && !hasAsianRow && (!document.activeElement || document.activeElement === document.body)) {
+      preferenceSection.current?.focus({ preventScroll: true });
+    }
+    hadAsianRow.current = hasAsianRow;
+  }, [hasAsianRow]);
   const selectedAsian = selectedAsianChoices(preferences.cravings);
   const unavailableAsian = unavailableAsianChoices(preferences.cravings, asian.members)
     .map((value) => ({ value, label: CRAVING_OPTIONS.find((option) => option.value === value)?.label ?? value }));
@@ -89,28 +107,31 @@ export default function PreferenceOnboarding({ market, selectableMarkets, resetS
             value={preferences.budget}
             onChange={(budget) => setPreferences((previous) => ({ ...previous, budget }))}
           />
-          {cuisines.length > 1 && (
+          {(cuisines.length > 1 || (catalogue.status === "ready" && hasAsianRow)) && (
             <fieldset className="editorial-field">
               <legend>Cuisine</legend>
               <div className="editorial-checklist editorial-checklist-cuisine">
-                {asian.rows.map(({ option: { value, label }, group }) => group ? (
+                {asian.rows.map((row) => "group" in row ? (
                   <AsianCuisineSheet
                     key="asian"
                     choices={asian.members}
                     unavailable={unavailableAsian}
+                    canChooseAll={asian.canChooseAll}
                     allAsian={wantsAllAsian(preferences)}
+                    onOpenChange={setAsianSheetOpen}
                     selected={selectedAsian}
                     onAll={(checked) => setPreferences((previous) => setAllAsian(previous, checked))}
                     onChoice={(choice, checked) => setPreferences((previous) => setAsianChoice(previous, choice, checked))}
                   />
                 ) : (
                   <PreferenceCheck
-                    key={value}
-                    label={label}
-                    checked={preferences.cravings.includes(value)}
-                    onChange={(checked) => setPreferences((previous) => ({
-                      ...previous, cravings: updateChoice(previous.cravings, value, checked),
-                    }))}
+                    key={row.option.value}
+                    label={row.option.label}
+                    checked={preferences.cravings.includes(row.option.value)}
+                    onChange={(checked) => setPreferences((previous) => isAsianChoice(row.option.value)
+                      // A lone Asian choice is still exclusive with "All Asian".
+                      ? setAsianChoice(previous, row.option.value, checked)
+                      : { ...previous, cravings: updateChoice(previous.cravings, row.option.value, checked) })}
                   />
                 ))}
               </div>

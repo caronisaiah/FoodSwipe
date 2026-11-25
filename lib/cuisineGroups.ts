@@ -37,25 +37,52 @@ export function wantsAllAsian(prefs: Pick<UserPreferences, "broadCuisines">): bo
   return prefs.broadCuisines.includes("asian");
 }
 
+/** Tags that only the broad choice can reach: no specific Tune choice exists for them. */
+export function hasBroadOnlyAsianTag(cuisineTags: readonly string[]): boolean {
+  return cuisineTags.some((tag) => {
+    const lower = tag.toLowerCase();
+    return lower === "asian" || lower === "laotian";
+  });
+}
+
+export type CuisineRow<Option> = { option: Option } | { group: true };
+
 /**
  * Split cuisine options into the Asian members present in this market and everything
- * else. The group replaces the first member in the list (the first grouped slot), so
- * unrelated ordering is untouched. Fewer than two members means there is nothing worth
- * grouping, so the list is returned as-is.
+ * else, and decide whether the market shows the "Asian" group row. It does when
+ *  - two or more members are present, or one member plus a broad-only Asian tag (so
+ *    "All Asian" has something the single member does not), or
+ *  - the user already holds Asian intent that must stay visible and clearable: "All
+ *    Asian", or a selected specific this market no longer carries.
+ * Otherwise (including one ordinary member, selected or not) the list is returned
+ * as-is. The group replaces the first member's slot, so unrelated ordering is
+ * untouched; with no member to replace it goes last.
+ *
+ * `canChooseAll` says whether "All Asian" can match anything here.
  */
-export function groupAsianOptions<Option extends { value: Craving }>(options: readonly Option[]): {
-  members: Option[];
-  rows: { option: Option; group?: true }[];
-} {
+export function groupAsianOptions<Option extends { value: Craving }>(
+  options: readonly Option[],
+  { selected = [], allAsian = false, broadOnly = false, pinned = false }: {
+    /** The user's specific cravings (any market). */
+    selected?: readonly Craving[];
+    allAsian?: boolean;
+    /** The market has restaurants only the broad choice reaches (asian / laotian tags). */
+    broadOnly?: boolean;
+    /** Keep the row while its sheet is open, so clearing the last selection cannot unmount it. */
+    pinned?: boolean;
+  } = {},
+): { members: Option[]; rows: CuisineRow<Option>[]; canChooseAll: boolean } {
   const members = options.filter(({ value }) => isAsianChoice(value));
-  if (members.length < 2) return { members: [], rows: options.map((option) => ({ option })) };
-  return {
-    members,
-    rows: options.flatMap((option) => {
-      if (option === members[0]) return [{ option, group: true as const }];
-      return isAsianChoice(option.value) ? [] : [{ option }];
-    }),
-  };
+  const canChooseAll = members.length > 0 || broadOnly;
+  const holdsHiddenIntent = pinned || allAsian || unavailableAsianChoices(selected, members).length > 0;
+  const grouped = members.length >= 2 || (members.length === 1 && broadOnly) || holdsHiddenIntent;
+  if (!grouped) return { members: [], rows: options.map((option) => ({ option })), canChooseAll };
+  const rows: CuisineRow<Option>[] = options.flatMap((option): CuisineRow<Option>[] => {
+    if (option === members[0]) return [{ group: true }];
+    return isAsianChoice(option.value) ? [] : [{ option }];
+  });
+  if (members.length === 0) rows.push({ group: true });
+  return { members, rows, canChooseAll };
 }
 
 /** Specific Asian choices the user holds, in stored order. */
