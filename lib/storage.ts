@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import type {
+  BroadCuisine,
   Craving,
   Dietary,
   ManualVideoEntry,
@@ -35,6 +36,7 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   maxDistanceMiles: 5,
   budget: 3,
   cravings: [],
+  broadCuisines: [],
   vibes: [],
   dietary: [],
 };
@@ -51,7 +53,7 @@ function asStringArray<T extends string>(v: unknown): T[] {
   return Array.isArray(v) ? (v.filter((x) => typeof x === "string") as T[]) : [];
 }
 
-function normalizePreferences(v: unknown): UserPreferences {
+export function normalizePreferences(v: unknown): UserPreferences {
   const o = v && typeof v === "object" ? (v as Record<string, unknown>) : {};
   const distance = [1, 3, 5, 10].includes(o.maxDistanceMiles as number)
     ? (o.maxDistanceMiles as 1 | 3 | 5 | 10)
@@ -65,6 +67,9 @@ function normalizePreferences(v: unknown): UserPreferences {
     maxDistanceMiles: distance,
     budget,
     cravings: asStringArray<Craving>(o.cravings),
+    // Older records have no such field; unknown values are dropped, known ones deduped.
+    broadCuisines: asStringArray<BroadCuisine>(o.broadCuisines)
+      .filter((value, index, all) => value === "asian" && all.indexOf(value) === index),
     vibes: asStringArray<Vibe>(o.vibes),
     dietary: asStringArray<Dietary>(o.dietary),
   };

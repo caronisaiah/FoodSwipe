@@ -6,7 +6,9 @@ import { selectDiscoveryMarket } from "@/app/discoveryMarketActions";
 import EditorialHeader from "@/components/editorial/EditorialHeader";
 import MaterialIcon from "@/components/MaterialIcon";
 import DiscoveryCity from "@/components/editorial/DiscoveryCity";
+import AsianCuisineSheet from "@/components/editorial/AsianCuisineSheet";
 import { PreferenceCheck, SegmentedPreference } from "@/components/editorial/PreferenceControls";
+import { groupAsianOptions, selectedAsianChoices, setAllAsian, setAsianChoice, unavailableAsianChoices, wantsAllAsian } from "@/lib/cuisineGroups";
 import type { Market } from "@/lib/markets";
 import { BUDGET_OPTIONS, CRAVING_OPTIONS, VIBE_OPTIONS } from "@/lib/options";
 import { usePreferences } from "@/lib/storage";
@@ -37,6 +39,10 @@ export default function PreferenceOnboarding({ market, selectableMarkets, resetS
     .map((option) => ({ ...option, count: restaurants.filter((place) => place.cuisineTags.includes(option.value)).length }))
     .filter(({ count }) => count > 0)
     .sort((a, b) => b.count - a.count);
+  const asian = groupAsianOptions(cuisines);
+  const selectedAsian = selectedAsianChoices(preferences.cravings);
+  const unavailableAsian = unavailableAsianChoices(preferences.cravings, asian.members)
+    .map((value) => ({ value, label: CRAVING_OPTIONS.find((option) => option.value === value)?.label ?? value }));
   const occasions = VIBE_OPTIONS.filter(({ value }) => restaurants.some((place) => place.vibeTags.includes(value)));
   const optionStatus = !market ? "Cuisine and occasion choices are unavailable."
     : catalogue.status === "loading" ? "Loading cuisine and occasion choices…"
@@ -87,7 +93,17 @@ export default function PreferenceOnboarding({ market, selectableMarkets, resetS
             <fieldset className="editorial-field">
               <legend>Cuisine</legend>
               <div className="editorial-checklist editorial-checklist-cuisine">
-                {cuisines.map(({ value, label }) => (
+                {asian.rows.map(({ option: { value, label }, group }) => group ? (
+                  <AsianCuisineSheet
+                    key="asian"
+                    choices={asian.members}
+                    unavailable={unavailableAsian}
+                    allAsian={wantsAllAsian(preferences)}
+                    selected={selectedAsian}
+                    onAll={(checked) => setPreferences((previous) => setAllAsian(previous, checked))}
+                    onChoice={(choice, checked) => setPreferences((previous) => setAsianChoice(previous, choice, checked))}
+                  />
+                ) : (
                   <PreferenceCheck
                     key={value}
                     label={label}

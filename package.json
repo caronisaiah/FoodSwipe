@@ -23,7 +23,8 @@
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "test:admin-review": "node scripts/admin-review-check.mjs"
+    "test:admin-review": "node scripts/admin-review-check.mjs",
+    "test:tune-asian": "node scripts/asian-cuisine-check.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

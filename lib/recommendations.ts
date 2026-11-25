@@ -5,6 +5,7 @@ import type {
 } from "./types";
 import { priceLabel } from "./options";
 import { videoHasSource } from "./video";
+import { hasAsianTag, isAsianChoice, wantsAllAsian } from "./cuisineGroups";
 
 /**
  * Lightweight, transparent ranking for the swipe feed.
@@ -47,9 +48,14 @@ interface Factor {
 }
 
 function craving(r: Restaurant, prefs: UserPreferences): Factor {
-  if (prefs.cravings.length === 0) return { points: 0 };
+  const allAsian = wantsAllAsian(prefs);
+  // "All Asian" is one broad match. The specific Asian choices are not scored again
+  // beside it (Tune never stores both, but stored data is untrusted), so a place
+  // never collects the Asian points twice.
+  const specifics = allAsian ? prefs.cravings.filter((c) => !isAsianChoice(c)) : prefs.cravings;
   const tags = new Set(r.cuisineTags.map((t) => t.toLowerCase()));
-  const hits = prefs.cravings.filter((c) => tags.has(c.toLowerCase()));
+  const hits: string[] = specifics.filter((c) => tags.has(c.toLowerCase()));
+  if (allAsian && hasAsianTag(r.cuisineTags)) hits.unshift("Asian");
   if (hits.length === 0) return { points: 0 };
   return {
     points: hits.length * W.cravingPerMatch,
