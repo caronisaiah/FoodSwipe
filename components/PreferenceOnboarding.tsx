@@ -31,9 +31,12 @@ export default function PreferenceOnboarding({ market, selectableMarkets, resetS
   const [switchError, setSwitchError] = useState(false);
 
   const restaurants = catalogue.status === "ready" ? catalogue.restaurants : [];
-  const cuisines = CRAVING_OPTIONS.filter(({ value }) =>
-    value !== "halal" && value !== "vegan" && restaurants.some((place) => place.cuisineTags.includes(value)),
-  );
+  // Only cuisines this market actually has, most-represented first (ties keep the editorial order).
+  const cuisines = CRAVING_OPTIONS
+    .filter(({ value }) => value !== "halal" && value !== "vegan")
+    .map((option) => ({ ...option, count: restaurants.filter((place) => place.cuisineTags.includes(option.value)).length }))
+    .filter(({ count }) => count > 0)
+    .sort((a, b) => b.count - a.count);
   const occasions = VIBE_OPTIONS.filter(({ value }) => restaurants.some((place) => place.vibeTags.includes(value)));
   const optionStatus = !market ? "Cuisine and occasion choices are unavailable."
     : catalogue.status === "loading" ? "Loading cuisine and occasion choices…"

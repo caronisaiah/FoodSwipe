@@ -26,7 +26,28 @@ export type Craving =
   | "dessert"
   | "mediterranean"
   | "halal"
-  | "vegan";
+  | "vegan"
+  // Cuisines the live catalogue already carries; the Tune cuisine list shows each one only when
+  // the selected market has a restaurant with that tag.
+  | "american"
+  | "italian"
+  | "pizza"
+  | "mexican"
+  | "thai"
+  | "chinese"
+  | "indian"
+  | "korean"
+  | "japanese"
+  | "vietnamese"
+  | "french"
+  | "seafood"
+  | "brunch"
+  | "noodles"
+  // Phase 16: "dim sum" is a food category like "ramen" or "sushi", so it sits in the same list
+  // rather than introducing a second taxonomy dimension.
+  | "dim sum"
+  | "diner"
+  | "filipino";
 
 /**
  * Cuisine tags on a restaurant. Superset of `Craving` (so every craving can
@@ -35,20 +56,11 @@ export type Craving =
  */
 export type Cuisine =
   | Craving
-  | "filipino"
   | "asian"
   | "dinner"
   | "middle eastern"
-  | "french"
-  | "brunch"
-  | "american"
   | "new american"
-  | "italian"
-  | "japanese"
-  | "noodles"
   | "southern"
-  | "diner"
-  | "mexican"
   | "street food"
   | "bar food"
   | "british"
@@ -60,20 +72,9 @@ export type Cuisine =
   | "kebab"
   | "ice cream"
   // v1.5.1 launch-demo seed additions
-  | "indian"
-  | "korean"
   | "ethiopian"
   | "laotian"
-  | "seafood"
-  | "pizza"
-  | "bagels"
-  // Phase 16 (Asian catalogue): specific cuisines the vocabulary lacked. "dim sum" is a food
-  // category like "ramen", "sushi" or "kebab" already are, so it sits in the same list instead of
-  // introducing a second taxonomy dimension.
-  | "chinese"
-  | "thai"
-  | "vietnamese"
-  | "dim sum";
+  | "bagels";
 
 /** Controlled vocab for vibe / occasion tags. */
 export type Vibe =
