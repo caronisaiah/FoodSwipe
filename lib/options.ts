@@ -24,6 +24,23 @@ export const CRAVING_OPTIONS: Option<Craving>[] = [
   { value: "mediterranean", label: "Mediterranean", emoji: "🥙" },
   { value: "halal", label: "Halal", emoji: "🧆" },
   { value: "vegan", label: "Vegan", emoji: "🥗" },
+  { value: "american", label: "American", emoji: "🍽️" },
+  { value: "italian", label: "Italian", emoji: "🍕" },
+  { value: "pizza", label: "Pizza", emoji: "🍕" },
+  { value: "mexican", label: "Mexican", emoji: "🌯" },
+  { value: "thai", label: "Thai", emoji: "🌶️" },
+  { value: "chinese", label: "Chinese", emoji: "🥡" },
+  { value: "indian", label: "Indian", emoji: "🍛" },
+  { value: "korean", label: "Korean", emoji: "🥘" },
+  { value: "japanese", label: "Japanese", emoji: "🍱" },
+  { value: "vietnamese", label: "Vietnamese", emoji: "🍲" },
+  { value: "french", label: "French", emoji: "🥐" },
+  { value: "seafood", label: "Seafood", emoji: "🦞" },
+  { value: "brunch", label: "Brunch", emoji: "🍳" },
+  { value: "noodles", label: "Noodles", emoji: "🍜" },
+  { value: "dim sum", label: "Dim sum", emoji: "🥟" },
+  { value: "diner", label: "Diner", emoji: "🥞" },
+  { value: "filipino", label: "Filipino", emoji: "🍢" },
 ];
 
 export const VIBE_OPTIONS: Option<Vibe>[] = [
