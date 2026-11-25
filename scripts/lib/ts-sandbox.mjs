@@ -7,7 +7,7 @@ import { runInNewContext } from "node:vm";
 
 const require = createRequire(import.meta.url);
 
-export function createSandbox({ root, overrides = {}, env = {} }) {
+export function createSandbox({ root, overrides = {}, env = {}, globals = {} }) {
   const ts = require(join(root, "node_modules/typescript"));
   const cache = new Map();
   const processObj = { env };
@@ -45,7 +45,7 @@ export function createSandbox({ root, overrides = {}, env = {} }) {
       return require(join(root, "node_modules", name));
     };
     runInNewContext(output, {
-      module: mod, exports: mod.exports, require: localRequire, process: processObj,
+      ...globals, module: mod, exports: mod.exports, require: localRequire, process: processObj,
       console: { info() {}, warn() {}, error() {}, log() {} },
       Request, Response, Headers, URL, URLSearchParams, Date, Buffer, TextEncoder, TextDecoder,
       crypto: globalThis.crypto, setTimeout, clearTimeout, AbortSignal, fetch: async () => { throw new Error("network blocked in tests"); },

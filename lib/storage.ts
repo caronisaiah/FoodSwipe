@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import type {
+  BroadCuisine,
   Craving,
   Dietary,
   ManualVideoEntry,
@@ -11,6 +12,7 @@ import type {
   Vibe,
 } from "./types";
 import { normalizeVideo } from "./video";
+import { isAsianChoice } from "./cuisineGroups";
 import type { Market } from "./markets";
 import {
   addFavorite, removeFavorite, undoFavorite, selectFavorites, selectSeen, restartMarket, recordSwipe,
@@ -35,6 +37,7 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   maxDistanceMiles: 5,
   budget: 3,
   cravings: [],
+  broadCuisines: [],
   vibes: [],
   dietary: [],
 };
@@ -51,7 +54,7 @@ function asStringArray<T extends string>(v: unknown): T[] {
   return Array.isArray(v) ? (v.filter((x) => typeof x === "string") as T[]) : [];
 }
 
-function normalizePreferences(v: unknown): UserPreferences {
+export function normalizePreferences(v: unknown): UserPreferences {
   const o = v && typeof v === "object" ? (v as Record<string, unknown>) : {};
   const distance = [1, 3, 5, 10].includes(o.maxDistanceMiles as number)
     ? (o.maxDistanceMiles as 1 | 3 | 5 | 10)
@@ -59,12 +62,20 @@ function normalizePreferences(v: unknown): UserPreferences {
   const budget = [1, 2, 3, 4].includes(o.budget as number)
     ? (o.budget as PriceLevel)
     : DEFAULT_PREFERENCES.budget;
+  const broadCuisines = asStringArray<BroadCuisine>(o.broadCuisines)
+    .filter((value, index, all) => value === "asian" && all.indexOf(value) === index);
+  let cravings = asStringArray<Craving>(o.cravings);
+  // "All Asian" and specific Asian choices are exclusive. A record holding both (hand-edited
+  // or from a bug) resolves to the broad choice, which already covered the specifics.
+  if (broadCuisines.length > 0) cravings = cravings.filter((value) => !isAsianChoice(value));
   return {
     location:
       typeof o.location === "string" ? o.location : DEFAULT_PREFERENCES.location,
     maxDistanceMiles: distance,
     budget,
-    cravings: asStringArray<Craving>(o.cravings),
+    cravings,
+    // Older records have no such field; unknown values are dropped, known ones deduped.
+    broadCuisines,
     vibes: asStringArray<Vibe>(o.vibes),
     dietary: asStringArray<Dietary>(o.dietary),
   };

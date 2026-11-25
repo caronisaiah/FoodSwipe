@@ -44,10 +44,13 @@ export function SegmentedPreference<Value extends string | number>({
 
 export function PreferenceCheck({
   label,
+  note,
   checked,
   onChange,
 }: {
   label: string;
+  /** Quiet qualifier after the label, e.g. why a selected choice is not offered. */
+  note?: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
 }) {
@@ -55,7 +58,7 @@ export function PreferenceCheck({
     <label className="editorial-choice editorial-checkbox">
       <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
       <span className="editorial-choice-face">
-        <span>{label}</span>
+        <span>{label}{note && <small className="editorial-choice-note"> · {note}</small>}</span>
         <span className="editorial-checkmark" aria-hidden="true"><MaterialIcon name="check" /></span>
       </span>
     </label>

@@ -222,6 +222,9 @@ export type SavedRestaurant = Pick<Restaurant,
 /** @deprecated Legacy component props. Use PlacePhoto from "@/lib/placePhoto" for complete attribution. */
 export type PlacePhoto = Pick<import("./placePhoto").PlacePhoto, "photoUri" | "attributions">;
 
+/** Broad cuisine groups a user can prefer without naming a specific cuisine. */
+export type BroadCuisine = "asian";
+
 /** User-selected discovery preferences captured during onboarding. */
 export interface UserPreferences {
   /** Free-text neighborhood / city label. Defaults to "Washington, DC". */
@@ -231,6 +234,11 @@ export interface UserPreferences {
   /** Highest price tier the user is comfortable with. */
   budget: PriceLevel;
   cravings: Craving[];
+  /**
+   * Broad cuisine intent, kept apart from `cravings` so "All Asian" stays distinct from
+   * the specific Asian choices. Absent in records saved before it existed (read as none).
+   */
+  broadCuisines: BroadCuisine[];
   vibes: Vibe[];
   dietary: Dietary[];
 }
