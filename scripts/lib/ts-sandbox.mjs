@@ -45,10 +45,12 @@ export function createSandbox({ root, overrides = {}, env = {}, globals = {} }) 
       return require(join(root, "node_modules", name));
     };
     runInNewContext(output, {
-      ...globals, module: mod, exports: mod.exports, require: localRequire, process: processObj,
       console: { info() {}, warn() {}, error() {}, log() {} },
       Request, Response, Headers, URL, URLSearchParams, Date, Buffer, TextEncoder, TextDecoder,
-      crypto: globalThis.crypto, setTimeout, clearTimeout, AbortSignal, fetch: async () => { throw new Error("network blocked in tests"); },
+      crypto: globalThis.crypto, setTimeout, clearTimeout, AbortSignal, AbortController, ReadableStream,
+      // Network is blocked unless a test injects its own mock through `globals.fetch`.
+      fetch: async () => { throw new Error("network blocked in tests"); },
+      ...globals, module: mod, exports: mod.exports, require: localRequire, process: processObj,
     }, { filename: relative });
     return mod.exports;
   }

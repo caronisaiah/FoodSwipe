@@ -82,6 +82,7 @@ export default function AdminRestaurantPicker({
   }
 
   function pick(row: PickedRestaurant) {
+    if (disabled) return; // saving: the target is frozen
     onChange(row);
     setOpen(false);
     setQuery("");
@@ -92,20 +93,20 @@ export default function AdminRestaurantPicker({
     <div className="relative min-w-0" data-testid="restaurant-picker">
       <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-haze">{label}</span>
       {value ? (
-        <div className="flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-2 ring-1 ring-inset ring-mint/30" data-testid="picked-restaurant">
-          <MaterialIcon name="storefront" className="text-sm text-mint" />
+        <div className="flex items-start gap-2 rounded-lg bg-surface-2 px-3 py-2 ring-1 ring-inset ring-mint/30" data-testid="picked-restaurant">
+          <MaterialIcon name="storefront" className="mt-0.5 text-sm text-mint" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-cream">
               {value.name} <span className="ml-1 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-bold">{value.market.toUpperCase()}</span>
             </p>
-            <p className="truncate text-[11px] text-haze">
+            <p className="break-words text-[11px] text-haze" data-testid="picked-restaurant-address">
               {value.kind === "candidate" ? `draft · ${value.status}` : `live · ${value.status}`}
               {value.publishedSlug ? ` · /${value.publishedSlug}` : ""}
               {value.address ? ` · ${value.address}` : ""}
             </p>
           </div>
           {!disabled && (
-            <button type="button" onClick={() => onChange(null)} aria-label="Clear restaurant" className="rounded-md px-2 py-1 text-xs text-haze hover:text-cream">
+            <button type="button" onClick={() => onChange(null)} aria-label="Change restaurant" className="shrink-0 rounded-md px-2 py-1 text-xs text-haze hover:text-cream">
               Change
             </button>
           )}
@@ -125,18 +126,18 @@ export default function AdminRestaurantPicker({
             aria-autocomplete="list"
             className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze/70 focus:ring-saffron/60 disabled:opacity-50"
           />
-          {open && (query.trim() || error) && (
+          {open && !disabled && (query.trim() || error) && (
             <ul id="restaurant-picker-results" role="listbox" className="absolute z-20 mt-1 max-h-64 w-full overflow-auto rounded-lg bg-ink-2 p-1 shadow-xl ring-1 ring-inset ring-white/15">
               {busy && <li className="px-2 py-1.5 text-xs text-haze">Searching…</li>}
               {error && <li role="status" className="px-2 py-1.5 text-xs text-chili-soft">{error}</li>}
               {!busy && !error && results.length === 0 && <li className="px-2 py-1.5 text-xs text-haze">No restaurant found. Import or create the restaurant first.</li>}
               {results.map((row) => (
                 <li key={`${row.kind}-${row.id}`} role="option" aria-selected={false}>
-                  <button type="button" onClick={() => pick(row)} className="flex w-full min-w-0 items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-white/10">
+                  <button type="button" disabled={disabled} onClick={() => pick(row)} className="flex w-full min-w-0 items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-white/10">
                     <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-bold text-cream">{row.market.toUpperCase()}</span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-semibold text-cream">{row.name}</span>
-                      <span className="block truncate text-[11px] text-haze">
+                      <span className="block break-words text-[11px] text-haze">
                         {row.kind === "candidate" ? `draft · ${row.status}` : `live · ${row.status}`}
                         {row.publishedSlug ? ` · /${row.publishedSlug}` : ""}
                         {row.address ? ` · ${row.address}` : ""}

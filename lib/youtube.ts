@@ -1,4 +1,5 @@
 import type { Video } from "./types";
+import { fetchJsonBounded, parseHttpsUrl } from "./safeFetch";
 import { normalizeVideo } from "./video";
 
 /**
@@ -26,6 +27,8 @@ const YOUTUBE_HOSTS = new Set<string>([
   "www.youtube-nocookie.com",
 ]);
 
+const YOUTUBE_API_HOSTS: ReadonlySet<string> = new Set(["www.googleapis.com"]);
+
 // A YouTube video id is exactly 11 url-safe base64 chars.
 const YOUTUBE_ID_RE = /^[A-Za-z0-9_-]{11}$/;
 
@@ -35,15 +38,9 @@ const YOUTUBE_ID_RE = /^[A-Za-z0-9_-]{11}$/;
  * ignores extra query params. Rejects non-YouTube hosts and malformed URLs.
  */
 export function extractYouTubeId(raw: unknown): string | null {
-  if (typeof raw !== "string" || raw.trim() === "") return null;
-
-  let url: URL;
-  try {
-    url = new URL(raw.trim());
-  } catch {
-    return null; // malformed / not a URL
-  }
-  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  // https only, no userinfo, default port only (shared gate with the social resolver).
+  const url = parseHttpsUrl(raw);
+  if (!url) return null;
 
   const host = url.hostname.toLowerCase();
   if (!YOUTUBE_HOSTS.has(host)) return null;
@@ -141,10 +138,12 @@ export async function fetchYouTubeMetadata(
     endpoint.searchParams.set("id", videoId);
     endpoint.searchParams.set("key", key);
 
-    const res = await fetch(endpoint, { headers: { accept: "application/json" } });
+    // Fixed official host, redirects disabled (the API key is in the query string and must never
+    // follow a redirect), bounded time and size.
+    const res = await fetchJsonBounded(endpoint, { allowedHosts: YOUTUBE_API_HOSTS });
     if (!res.ok) return { status: "failed" };
 
-    const data = (await res.json()) as {
+    const data = res.data as {
       items?: { snippet?: Record<string, unknown> }[];
     };
     const snippet = data.items?.[0]?.snippet;
