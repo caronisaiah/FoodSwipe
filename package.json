@@ -15,6 +15,8 @@
     "test:map-v2": "node scripts/map-v2-check.mjs",
     "test:admin-authz": "node scripts/admin-authz-check.mjs",
     "test:admin-api": "node scripts/admin-api-check.mjs",
+    "test:social-resolver": "node scripts/social-resolver-check.mjs",
+    "test:social-intake-routes": "node scripts/social-intake-route-check.mjs",
     "test:admin-attach": "node scripts/admin-attach-sql-check.mjs",
     "test:admin-import": "node scripts/restaurant-import-check.mjs",
     "test:admin-mapping": "node scripts/admin-mapping-check.mjs",

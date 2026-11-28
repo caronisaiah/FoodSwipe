@@ -100,7 +100,7 @@ interface VideoCandidate {
   updatedAt: string;
 }
 
-type Msg = { type: "ok" | "err"; text: string } | null;
+type Msg = { type: "ok" | "err"; text: string; href?: string; hrefLabel?: string } | null;
 
 function parseList(s: string): string[] {
   return s.split(",").map((t) => t.trim()).filter((t) => t.length > 0);
@@ -119,9 +119,34 @@ export default function AdminVideoCandidates() {
   const [adminScope, setAdminScope] = useState<AdminScope | null>(null);
   const deepLinkHandled = useRef(false);
   const loadSeq = useRef(0);
+  const intakeSeq = useRef(0);
+  const submittingRef = useRef(false); // synchronous mirror of `submitting`, for handlers that may run mid-save
+  const epochRef = useRef(0); // current credential generation; rows capture the one they rendered under
+  // Bumped on every credential edit; remounts the restaurant picker so its search state cannot outlive a credential.
+  const [credEpoch, setCredEpoch] = useState(0);
 
+  /**
+   * A different credential is a different session: drop everything fetched or selected under the old one and
+   * invalidate any request still in flight (loads, intake, picker searches) so a late response cannot repopulate it.
+   */
   function changeSecret(value: string) {
+    loadSeq.current++;
+    intakeSeq.current++;
+    epochRef.current++;
+    submittingRef.current = false;
+    deepLinkHandled.current = false;
     setSecret(value);
+    setCredEpoch((n) => n + 1);
+    setList([]);
+    setLoading(false);
+    setLoadedOnce(false);
+    setError(null);
+    setExpandedId(null);
+    setActionMsg(null);
+    setAdminScope(null);
+    setIntakeMsg(null);
+    setIntakePick(null);
+    setSubmitting(false);
   }
 
   // Intake form
@@ -132,10 +157,26 @@ export default function AdminVideoCandidates() {
   const [submitting, setSubmitting] = useState(false);
   const [intakeMsg, setIntakeMsg] = useState<Msg>(null);
 
-  async function load(status: StatusFilter, platform: PlatformFilter) {
+  /** Loads a filtered page of leads. Resolves to the rows shown, or null when nothing was (re)loaded. */
+  /** Selection is ignored while a save is in flight, so the displayed target is always the submitted one. */
+  function selectIntakePick(p: PickedRestaurant | null) {
+    if (submittingRef.current) return;
+    setIntakePick(p);
+  }
+
+  async function load(status: StatusFilter, platform: PlatformFilter): Promise<VideoCandidate[] | null> {
     if (!secret.trim()) {
       setError("Enter the admin secret first.");
-      return;
+      return null;
+    }
+    // A direct link to one lead (?candidate=<id>) must find it whatever its status: on the first authenticated
+    // load, widen the filters to All. (The id is only compared to rows; it is never sent or stored.)
+    const linked = typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("candidate");
+    if (linked && !deepLinkHandled.current && !loadedOnce) {
+      status = "all";
+      platform = "all";
+      setStatusFilter("all");
+      setPlatformFilter("all");
     }
     const seq = ++loadSeq.current;
     setLoading(true);
@@ -149,11 +190,11 @@ export default function AdminVideoCandidates() {
         headers: { "x-foodswipe-admin-secret": secret },
       });
       const data = (await res.json()) as { candidates?: VideoCandidate[]; error?: string; adminScope?: AdminScope };
-      if (seq !== loadSeq.current) return;
+      if (seq !== loadSeq.current) return null;
       if (!res.ok) {
         setList([]);
         setError(data.error ?? `Load failed (${res.status}).`);
-        return;
+        return null;
       }
       const loaded = Array.isArray(data.candidates) ? data.candidates : [];
       setList(loaded);
@@ -166,8 +207,10 @@ export default function AdminVideoCandidates() {
         requestAnimationFrame(() => document.getElementById(`video-candidate-${wanted}`)?.scrollIntoView({ block: "center" }));
       }
       setLoadedOnce(true);
+      return loaded;
     } catch {
       if (seq === loadSeq.current) setError("Network error — could not reach the admin API.");
+      return null;
     } finally {
       if (seq === loadSeq.current) setLoading(false);
     }
@@ -180,6 +223,12 @@ export default function AdminVideoCandidates() {
   function selectPlatform(p: PlatformFilter) {
     setPlatformFilter(p);
     if (loadedOnce && secret.trim()) void load(statusFilter, p);
+  }
+
+  /** A row's late callback from an earlier credential generation must not touch the current session. */
+  function onChangedFor(gen: number, updated: VideoCandidate) {
+    if (gen !== epochRef.current) return;
+    onChanged(updated);
   }
 
   function onChanged(updated: VideoCandidate) {
@@ -204,6 +253,11 @@ export default function AdminVideoCandidates() {
       setIntakeMsg({ type: "err", text: "Paste a TikTok / Instagram / YouTube URL." });
       return;
     }
+    // The target is read ONCE, here; the form is frozen while the request is in flight, and a response that
+    // arrives after a credential change (intakeSeq bumped) is ignored.
+    const mine = ++intakeSeq.current;
+    const target = intakePick;
+    submittingRef.current = true;
     setSubmitting(true);
     setIntakeMsg(null);
     try {
@@ -212,34 +266,66 @@ export default function AdminVideoCandidates() {
         headers: { "Content-Type": "application/json", "x-foodswipe-admin-secret": secret },
         body: JSON.stringify({
           sourceUrl: sourceUrl.trim(),
-          ...(intakePick?.kind === "candidate" ? { candidateRestaurantId: intakePick.id } : {}),
-          ...(intakePick?.kind === "published" ? { restaurantSlug: intakePick.slug } : {}),
+          ...(target?.kind === "candidate" ? { candidateRestaurantId: target.id } : {}),
+          ...(target?.kind === "published" ? { restaurantSlug: target.slug } : {}),
           proposedRestaurantName: intakeProposed.trim() || undefined,
           reviewNotes: intakeNotes.trim() || undefined,
         }),
       });
-      const data = (await res.json()) as { candidate?: VideoCandidate; error?: string; errors?: { field: string; message: string }[]; code?: string };
+      const data = (await res.json()) as {
+        candidate?: VideoCandidate;
+        existing?: { id?: string; status?: string };
+        error?: string;
+        errors?: { field: string; message: string }[];
+        code?: string;
+      };
+      if (mine !== intakeSeq.current) return;
       if (res.status === 409 && data.candidate) {
-        setIntakeMsg({ type: "err", text: "Already in the queue — showing the existing candidate." });
-        if (loadedOnce) await load(statusFilter, platformFilter);
-        setExpandedId(data.candidate.id);
+        // Report only what the API told us about the EXISTING lead; never relink it or imply it is visible.
+        const existing = data.candidate;
+        const status = data.existing?.status ?? existing.status;
+        const where = existing.candidateRestaurantId
+          ? `linked to restaurant record ${existing.candidateRestaurantId}`
+          : existing.restaurantSlug
+            ? `linked to /${existing.restaurantSlug}`
+            : existing.proposedRestaurantName
+              ? `proposed restaurant "${existing.proposedRestaurantName}" (not linked)`
+              : "not linked to a restaurant";
+        const base = `Already in the queue — lead ${existing.id}, status ${status}, ${where}. Nothing was added or changed; your URL and restaurant are kept.`;
+        const href = `/admin/videos/candidates?candidate=${encodeURIComponent(existing.id)}`;
+        // Make it findable: show that status (all platforms), then open it only if it really is in the loaded rows.
+        const knownStatus = (STATUS_FILTERS as readonly string[]).includes(status) ? (status as StatusFilter) : "all";
+        setStatusFilter(knownStatus);
+        setPlatformFilter("all");
+        const rows = await load(knownStatus, "all");
+        if (mine !== intakeSeq.current) return;
+        if (rows?.some((c) => c.id === existing.id)) {
+          setExpandedId(existing.id);
+          setIntakeMsg({ type: "err", text: `${base} Showing it below under the "${knownStatus}" filter.` });
+        } else {
+          setIntakeMsg({ type: "err", text: `${base} It is not in the list that loaded; open it by ID.`, href, hrefLabel: "Open lead in a new tab (enter the secret there)" });
+        }
         return;
       }
       if (!res.ok || !data.candidate) {
+        // Failure: every input stays exactly as typed so it can be corrected and resubmitted.
         setIntakeMsg({ type: "err", text: apiErrorText(data, `Intake failed (${res.status}).`) });
         return;
       }
       setIntakeMsg({ type: "ok", text: `Queued ${PLATFORM_LABEL[data.candidate.platform] ?? data.candidate.platform} candidate for review.` });
+      // Success: clear the per-video fields, KEEP the restaurant for the next link from the same branch
+      // (change it explicitly with "Change").
       setSourceUrl("");
-      setIntakeProposed("");
       setIntakeNotes("");
-      setIntakePick(null);
       if (loadedOnce) await load(statusFilter, platformFilter);
       else void load(statusFilter, platformFilter);
     } catch {
-      setIntakeMsg({ type: "err", text: "Network error — could not reach the intake API." });
+      if (mine === intakeSeq.current) setIntakeMsg({ type: "err", text: "Network error — could not reach the intake API." });
     } finally {
-      setSubmitting(false);
+      if (mine === intakeSeq.current) {
+        submittingRef.current = false;
+        setSubmitting(false);
+      }
     }
   }
 
@@ -305,15 +391,17 @@ export default function AdminVideoCandidates() {
           <input
             value={sourceUrl}
             onChange={(e) => setSourceUrl(e.target.value)}
+            disabled={submitting}
             placeholder="https://www.tiktok.com/@user/video/…  ·  instagram.com/reel/…  ·  youtube.com/watch?v=…"
             aria-label="Video URL"
             className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze/50 focus:ring-saffron/60"
           />
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-            <AdminRestaurantPicker secret={secret} value={intakePick} onChange={setIntakePick} label="Restaurant (linked by id)" />
+            <AdminRestaurantPicker key={credEpoch} secret={secret} value={intakePick} onChange={selectIntakePick} label="Restaurant (linked by id)" disabled={submitting} />
             <input
               value={intakeProposed}
               onChange={(e) => setIntakeProposed(e.target.value)}
+              disabled={submitting}
               placeholder="or proposed restaurant name (not linked)"
               aria-label="Proposed restaurant name"
               className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze/50 focus:ring-saffron/60"
@@ -322,6 +410,7 @@ export default function AdminVideoCandidates() {
           <input
             value={intakeNotes}
             onChange={(e) => setIntakeNotes(e.target.value)}
+            disabled={submitting}
             placeholder="review notes (optional)"
             aria-label="Review notes"
             className="w-full rounded-lg bg-surface-2 px-3 py-2 text-sm text-cream outline-none ring-1 ring-inset ring-white/10 placeholder:text-haze/50 focus:ring-saffron/60"
@@ -335,8 +424,16 @@ export default function AdminVideoCandidates() {
           </button>
         </form>
         {intakeMsg && (
-          <p className={`mt-2 text-xs ${intakeMsg.type === "ok" ? "text-mint" : "text-chili-soft"}`}>
+          <p role="status" className={`mt-2 text-xs ${intakeMsg.type === "ok" ? "text-mint" : "text-chili-soft"}`}>
             {intakeMsg.text}
+            {intakeMsg.href && (
+              <>
+                {" "}
+                <a href={intakeMsg.href} target="_blank" rel="noopener noreferrer" className="font-semibold underline underline-offset-2">
+                  {intakeMsg.hrefLabel ?? "Open"}
+                </a>
+              </>
+            )}
           </p>
         )}
       </section>
@@ -384,7 +481,7 @@ export default function AdminVideoCandidates() {
               secret={secret}
               expanded={expandedId === c.id}
               onToggle={() => setExpandedId((id) => (id === c.id ? null : c.id))}
-              onChanged={onChanged}
+              onChanged={(u) => onChangedFor(credEpoch, u)}
             />
           ))}
         </ul>
